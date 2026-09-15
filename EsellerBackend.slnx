@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Eseller.API/Eseller.API.csproj" />
+  <Project Path="Eseller.Application/Eseller.Application.csproj" />
+  <Project Path="Eseller.Domain/Eseller.Domain.csproj" />
+  <Project Path="Eseller.Infrastructure/Eseller.Infrastructure.csproj" />
+</Solution>
