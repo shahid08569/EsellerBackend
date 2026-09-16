@@ -10,10 +10,11 @@ using Eseller.Domain.Entities.Shipping;
 using Eseller.Domain.Entities.ShippingConfig;
 using Eseller.Domain.Entities.Wallet;
 using Microsoft.EntityFrameworkCore;
+using Eseller.Application.Abstractions;
 
 namespace Eseller.Infrastructure.Persistence;
 
-public class EsellerDbContext : DbContext
+public class EsellerDbContext : DbContext,IApplicationDbContext
 {
     public EsellerDbContext(DbContextOptions<EsellerDbContext> options)
         : base(options)

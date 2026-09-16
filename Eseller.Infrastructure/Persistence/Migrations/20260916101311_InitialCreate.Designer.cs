@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Eseller.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(EsellerDbContext))]
-    [Migration("20260916075201_InitialCreate")]
+    [Migration("20260916101311_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
