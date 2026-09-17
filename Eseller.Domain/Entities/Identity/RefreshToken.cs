@@ -11,4 +11,15 @@ public class RefreshToken : BaseEntity
     public DateTime ExpiresAt { get; set; }
     public DateTime? RevokedAt { get; set; }
     public DateTime CreatedAt { get; set; }
+
+    public void Revoke(DateTime timestamp)
+    {
+        RevokedAt = timestamp;
+    }
+
+    public void SetReplacedBy(Guid newTokenId)
+    {
+        ReplacedByTokenId = newTokenId;
+    }
+
 }

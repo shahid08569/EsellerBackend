@@ -1,4 +1,6 @@
-﻿using Eseller.Domain.Entities.Affiliate;
+﻿using Eseller.Application.Abstractions;
+using Eseller.Domain.Common;
+using Eseller.Domain.Entities.Affiliate;
 using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Entities.Content;
 using Eseller.Domain.Entities.Engagement;
@@ -10,7 +12,7 @@ using Eseller.Domain.Entities.Shipping;
 using Eseller.Domain.Entities.ShippingConfig;
 using Eseller.Domain.Entities.Wallet;
 using Microsoft.EntityFrameworkCore;
-using Eseller.Application.Abstractions;
+
 
 namespace Eseller.Infrastructure.Persistence;
 
@@ -31,6 +33,8 @@ public class EsellerDbContext : DbContext,IApplicationDbContext
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<VerificationToken> VerificationTokens => Set<VerificationToken>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+
+    public DbSet<LocationLog> LocationLogs => Set<LocationLog>();
 
     // Catalog
     public DbSet<Category> Categories => Set<Category>();
@@ -107,5 +111,26 @@ public class EsellerDbContext : DbContext,IApplicationDbContext
         base.OnModelCreating(modelBuilder);
         // Apply all IEntityTypeConfiguration<T> from this assembly
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(EsellerDbContext).Assembly);
+    }
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var now = DateTime.UtcNow;
+
+        foreach (var entry in ChangeTracker.Entries<AuditableEntity>())
+        {
+            switch (entry.State)
+            {
+                case EntityState.Added:
+                    entry.Entity.SetCreatedAt(now);
+                    entry.Entity.SetUpdatedAt(now);
+                    break;
+
+                case EntityState.Modified:
+                    entry.Entity.SetUpdatedAt(now);
+                    break;
+            }
+        }
+
+        return base.SaveChangesAsync(cancellationToken);
     }
 }

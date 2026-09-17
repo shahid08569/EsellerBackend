@@ -25,6 +25,7 @@ public interface IApplicationDbContext
     DbSet<RefreshToken> RefreshTokens { get; }
     DbSet<VerificationToken> VerificationTokens { get; }
     DbSet<AuditLog> AuditLogs { get; }
+    DbSet<LocationLog> LocationLogs { get; }
 
     // Catalog
     DbSet<Category> Categories { get; }
