@@ -35,6 +35,6 @@ public class ShopConfiguration : IEntityTypeConfiguration<Shop>
         builder.HasIndex(s => s.ShopkeeperId);
         builder.HasIndex(s => s.IsActive);
 
-        builder.HasQueryFilter(s => s.IsActive);
+        builder.HasQueryFilter(s => s.DeletedAt == null);
     }
 }
