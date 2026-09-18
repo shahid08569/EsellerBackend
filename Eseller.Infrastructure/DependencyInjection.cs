@@ -40,6 +40,10 @@ public static class DependencyInjection
 
         var jwtSettings = configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
             ?? throw new InvalidOperationException("JWT settings are not configured.");
+
+        // File Upload
+        services.Configure<FileStorageSettings>(configuration.GetSection(FileStorageSettings.SectionName));
+
         // JWT Authentication
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
@@ -75,6 +79,8 @@ public static class DependencyInjection
         services.AddScoped<ISmsService, MockSmsService>();
         services.AddScoped<IVerificationTokenService, VerificationTokenService>();
         services.AddScoped<ILocationService, LocationService>();
+        services.AddScoped<DatabaseSeeder>();
+        services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
         return services;
     }

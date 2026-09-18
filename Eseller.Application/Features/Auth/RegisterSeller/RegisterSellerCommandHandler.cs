@@ -1,5 +1,6 @@
 ﻿using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
+using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Entities.Identity;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -52,7 +53,16 @@ public class RegisterSellerCommandHandler
                 "Email is already registered.",
                 "EMAIL_TAKEN");
 
-        // 3. Create Account
+        // 3. Check Store URL uniqueness
+        var storeUrlExists = await _context.Shops
+            .AnyAsync(s => s.Slug == request.StoreUrl, cancellationToken);
+
+        if (storeUrlExists)
+            return Result.Failure<RegisterSellerResponse>(
+                "Store URL is already taken.",
+                "STORE_URL_TAKEN");
+
+        // 4. Create Account
         var account = new Account
         {
             Username = request.Email,
@@ -66,18 +76,38 @@ public class RegisterSellerCommandHandler
 
         _context.Accounts.Add(account);
 
-        // 4. Create Shopkeeper
-        _context.Shopkeepers.Add(new Shopkeeper
+        // 5. Create Shopkeeper (Pending approval)
+        var shopkeeper = new Shopkeeper
         {
             AccountId = account.Id,
             Name = request.Name,
+            Phone = request.Phone,
             Status = ShopkeeperApprovalStatus.Pending
-        });
+        };
 
-        // 5. Save
+        _context.Shopkeepers.Add(shopkeeper);
+
+        // 6. Create Shop (Inactive — wait for approval)
+        var shop = new Shop
+        {
+            ShopkeeperId = shopkeeper.Id,
+            Name = request.StoreName,
+            Slug = request.StoreUrl,
+            Description = request.StoreDescription,
+            Address = request.Address,
+            City = request.City,
+            Country = request.Country,
+            IsActive = false,
+            Rating = 0,
+            TotalProducts = 0
+        };
+
+        _context.Shops.Add(shop);
+
+        // 7. Save ALL changes
         await _context.SaveChangesAsync(cancellationToken);
 
-        // 6. Generate verification token
+        // 8. Generate verification token
         var code = await _verificationTokenService.CreateTokenAsync(
             account.Id,
             TokenPurpose.EmailVerification,
@@ -85,10 +115,10 @@ public class RegisterSellerCommandHandler
             expiryMinutes: 60 * 24,
             cancellationToken);
 
-        // 7. Send verification email
+        // 9. Send verification email
         await _emailService.SendVerificationEmailAsync(account.Email, code, cancellationToken);
 
-        // 8. Log location
+        // 10. Log location
         await _locationService.LogLocationAsync(
             account.Id,
             request.Latitude,
@@ -99,12 +129,15 @@ public class RegisterSellerCommandHandler
             null,
             cancellationToken);
 
-        // 9. Return
+        // 11. Return
         return Result.Success(new RegisterSellerResponse(
             account.Id,
+            shopkeeper.Id,
+            shop.Id,
             request.Name,
             account.Email,
-            account.RoleType.ToString(),
+            shop.Name,
+            shop.Slug,
             "Pending",
             "Your application is under review. You will be notified once approved."));
     }

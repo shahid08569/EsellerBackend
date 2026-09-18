@@ -16,6 +16,10 @@ public class ShopkeeperConfiguration : IEntityTypeConfiguration<Shopkeeper>
             .IsRequired()
             .HasMaxLength(150);
 
+        builder.Property(s => s.Phone)
+    .IsRequired()
+    .HasMaxLength(30);
+
         builder.Property(s => s.Status)
             .HasConversion<int>()
             .IsRequired();

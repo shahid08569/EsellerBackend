@@ -7,6 +7,7 @@ public class Shopkeeper : AuditableEntity
 {
     public Guid AccountId { get; set; }
     public string Name { get; set; } = string.Empty;
+    public string Phone { get; set; } = string.Empty;
     public ShopkeeperApprovalStatus Status { get; set; } = ShopkeeperApprovalStatus.Pending;
     public Guid? ApprovedByAccountId { get; set; }
     public DateTime? ApprovedAt { get; set; }
