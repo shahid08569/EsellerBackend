@@ -24,6 +24,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
         builder.Property(p => p.IsActive).IsRequired().HasDefaultValue(true);
         builder.Property(p => p.CreatedAt).IsRequired();
         builder.Property(p => p.UpdatedAt).IsRequired();
+        
 
         builder.HasOne<Shop>()
             .WithMany()
@@ -39,6 +40,9 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
             .WithMany()
             .HasForeignKey(p => p.BrandId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Property(p => p.RejectionReason)
+            .HasMaxLength(500);
 
         builder.HasIndex(p => p.Slug).IsUnique();
         builder.HasIndex(p => p.ShopId);

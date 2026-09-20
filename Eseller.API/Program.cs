@@ -1,13 +1,15 @@
 //namespaces
+using Eseller.API.Middleware;
 using Eseller.Application;
 using Eseller.Infrastructure;
 using Eseller.Infrastructure.Persistence;
 using Scalar.AspNetCore;
 using Serilog;
 
+
 var builder = WebApplication.CreateBuilder(args);
 
-// ✅ Serilog — Configuration
+// Serilog — Configuration
 builder.Host.UseSerilog((context, services, configuration) =>
 {
     configuration
@@ -27,7 +29,18 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
 
+//Exception handlers — order matters
+builder.Services.AddExceptionHandler<ValidationExceptionHandler>();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 var app = builder.Build();
+
+//Serilog request logging - middleware
+app.UseSerilogRequestLogging();
+
+// Exception handler 
+app.UseExceptionHandler();
 
 // Seed database
 using (var scope = app.Services.CreateScope())
@@ -35,10 +48,6 @@ using (var scope = app.Services.CreateScope())
     var seeder = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
     await seeder.SeedAsync();
 }
-
-
-//Serilog request logging - middleware
-app.UseSerilogRequestLogging();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
