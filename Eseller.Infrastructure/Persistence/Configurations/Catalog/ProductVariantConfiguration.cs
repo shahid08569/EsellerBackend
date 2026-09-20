@@ -29,6 +29,6 @@ public class ProductVariantConfiguration : IEntityTypeConfiguration<ProductVaria
         builder.HasIndex(pv => pv.ProductId);
         builder.HasIndex(pv => pv.IsActive);
 
-        builder.HasQueryFilter(s => s.IsActive);
+        builder.HasQueryFilter(pv => pv.DeletedAt == null);
     }
 }

@@ -17,6 +17,28 @@ public class Product : AuditableEntity, ISoftDelete
     public decimal? AvgRating { get; set; }
     public string? SeoTitle { get; set; }
     public string? SeoDescription { get; set; }
+    public string? RejectionReason { get; private set; }
     public bool IsActive { get; set; } = true;
     public DateTime? DeletedAt { get; set; }
+
+    public void Approve()
+    {
+        IsApproved = true;
+        IsActive = true;
+        RejectionReason = null;
+    }
+
+    public void Reject(string reason)
+    {
+        IsApproved = false;
+        IsActive = false;
+        RejectionReason = reason;
+    }
+
+    public void ResetToPending()
+    {
+        IsApproved = false;
+        IsActive = true;
+        RejectionReason = null;
+    }
 }

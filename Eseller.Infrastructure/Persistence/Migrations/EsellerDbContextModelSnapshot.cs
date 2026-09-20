@@ -339,6 +339,10 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                         .HasMaxLength(250)
                         .HasColumnType("nvarchar(250)");
 
+                    b.Property<string>("RejectionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
                     b.Property<string>("SeoDescription")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
