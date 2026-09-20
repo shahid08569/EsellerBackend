@@ -1027,6 +1027,10 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("AccountId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<decimal?>("CommissionRate")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("decimal(5,2)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -1490,8 +1494,15 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("AffiliateId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<string>("ReferralCodeSnapshot")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -1503,6 +1514,8 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AffiliateId");
 
                     b.HasIndex("Status");
 
@@ -2793,6 +2806,11 @@ namespace Eseller.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Eseller.Domain.Entities.Orders.OrderRequest", b =>
                 {
+                    b.HasOne("Eseller.Domain.Entities.Identity.Affiliate", null)
+                        .WithMany()
+                        .HasForeignKey("AffiliateId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Eseller.Domain.Entities.Identity.User", null)
                         .WithMany()
                         .HasForeignKey("UserId")

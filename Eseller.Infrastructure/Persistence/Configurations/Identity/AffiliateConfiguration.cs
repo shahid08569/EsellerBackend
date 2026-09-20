@@ -17,6 +17,9 @@ public class AffiliateConfiguration : IEntityTypeConfiguration<AffiliateEntity>
             .IsRequired()
             .HasMaxLength(50);
 
+        builder.Property(a => a.CommissionRate)
+            .HasPrecision(5, 2);
+
         builder.Property(a => a.CreatedAt)
             .IsRequired();
 
