@@ -26,6 +26,7 @@ public interface IApplicationDbContext
     DbSet<VerificationToken> VerificationTokens { get; }
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<LocationLog> LocationLogs { get; }
+    DbSet<Address> Addresses { get; }
 
     // Catalog
     DbSet<Category> Categories { get; }
@@ -53,7 +54,6 @@ public interface IApplicationDbContext
     DbSet<ReturnRequest> ReturnRequests { get; }
     DbSet<ReturnItem> ReturnItems { get; }
     DbSet<Refund> Refunds { get; }
-
     // Customer Engagement
     DbSet<Wishlist> Wishlists { get; }
     DbSet<CompareItem> CompareItems { get; }

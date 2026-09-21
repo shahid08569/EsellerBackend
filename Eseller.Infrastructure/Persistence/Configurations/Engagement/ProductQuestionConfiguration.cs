@@ -15,7 +15,11 @@ public class ProductQuestionConfiguration : IEntityTypeConfiguration<ProductQues
 
         builder.Property(pq => pq.Question).IsRequired().HasMaxLength(2000);
         builder.Property(pq => pq.Answer).HasMaxLength(4000);
+        builder.Property(q => q.IsApproved).IsRequired().HasDefaultValue(false);
         builder.Property(pq => pq.CreatedAt).IsRequired();
+
+        builder.Property(q => q.IsDeleted).IsRequired().HasDefaultValue(false);
+
 
         builder.HasOne<Product>()
             .WithMany()
@@ -33,6 +37,9 @@ public class ProductQuestionConfiguration : IEntityTypeConfiguration<ProductQues
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(pq => pq.ProductId);
+        builder.HasIndex(pq => new { pq.ProductId, pq.IsApproved });
         builder.HasIndex(pq => pq.UserId);
+
+        builder.HasQueryFilter(q => !q.IsDeleted);
     }
 }

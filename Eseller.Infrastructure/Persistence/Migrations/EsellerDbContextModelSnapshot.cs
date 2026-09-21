@@ -34,12 +34,21 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("ClickedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<bool>("Converted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
                     b.Property<string>("IpAddress")
                         .HasMaxLength(45)
                         .HasColumnType("nvarchar(45)");
 
                     b.Property<Guid?>("ProductId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
 
                     b.HasKey("Id");
 
@@ -48,6 +57,8 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.HasIndex("ClickedAt");
 
                     b.HasIndex("ProductId");
+
+                    b.HasIndex("AffiliateId", "Converted");
 
                     b.ToTable("AffiliateClicks", (string)null);
                 });
@@ -64,6 +75,9 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("AffiliateId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTime?>("ApprovedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<decimal>("CommissionAmount")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
@@ -71,8 +85,14 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<Guid>("OrderRequestId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<Guid>("OrderRequestItemId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("PaidAt")
+                        .HasColumnType("datetime2");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -83,9 +103,13 @@ namespace Eseller.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("AffiliateId");
 
+                    b.HasIndex("OrderRequestId");
+
                     b.HasIndex("OrderRequestItemId");
 
                     b.HasIndex("Status");
+
+                    b.HasIndex("AffiliateId", "Status");
 
                     b.ToTable("AffiliateCommissions", (string)null);
                 });
@@ -863,6 +887,22 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("DeletedByAccountId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsApproved")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uniqueidentifier");
 
@@ -881,6 +921,8 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.HasIndex("ProductId");
 
                     b.HasIndex("UserId");
+
+                    b.HasIndex("ProductId", "IsApproved");
 
                     b.ToTable("ProductQuestions", (string)null);
                 });
@@ -1018,6 +1060,85 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.ToTable("Accounts", (string)null);
                 });
 
+            modelBuilder.Entity("Eseller.Domain.Entities.Identity.Address", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AddressLine1")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("AddressLine2")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("City")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("Country")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("FullName")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<bool>("IsDefault")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("Phone")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("PostalCode")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("State")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "IsDefault");
+
+                    b.ToTable("Addresses", (string)null);
+                });
+
             modelBuilder.Entity("Eseller.Domain.Entities.Identity.Affiliate", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1034,10 +1155,29 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
                     b.Property<string>("ReferralCode")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
+
+                    b.Property<int>("TotalClicks")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("TotalConversions")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.Property<decimal>("TotalEarned")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("datetime2");
@@ -1522,6 +1662,58 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("OrderRequests", (string)null);
+                });
+
+            modelBuilder.Entity("Eseller.Domain.Entities.Orders.OrderRequestItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("OrderRequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("PriceAtOrder")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("ProductNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.Property<Guid>("ProductVariantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("SellerOrderId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("TotalPriceSnapshot")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("UnitPriceSnapshot")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("VariantAttributesSnapshot")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderRequestId");
+
+                    b.HasIndex("ProductVariantId");
+
+                    b.HasIndex("SellerOrderId");
+
+                    b.ToTable("OrderRequestItems", (string)null);
                 });
 
             modelBuilder.Entity("Eseller.Domain.Entities.Orders.OrderStatusHistory", b =>
@@ -2406,58 +2598,6 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.ToTable("WalletTransactions", (string)null);
                 });
 
-            modelBuilder.Entity("OrderRequestItem", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("OrderRequestId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<decimal>("PriceAtOrder")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<string>("ProductNameSnapshot")
-                        .IsRequired()
-                        .HasMaxLength(250)
-                        .HasColumnType("nvarchar(250)");
-
-                    b.Property<Guid>("ProductVariantId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("Quantity")
-                        .HasColumnType("int");
-
-                    b.Property<Guid>("SellerOrderId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<decimal>("TotalPriceSnapshot")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<decimal>("UnitPriceSnapshot")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<string>("VariantAttributesSnapshot")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OrderRequestId");
-
-                    b.HasIndex("ProductVariantId");
-
-                    b.HasIndex("SellerOrderId");
-
-                    b.ToTable("OrderRequestItems", (string)null);
-                });
-
             modelBuilder.Entity("Eseller.Domain.Entities.Affiliate.AffiliateClick", b =>
                 {
                     b.HasOne("Eseller.Domain.Entities.Identity.Affiliate", null)
@@ -2469,7 +2609,7 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.HasOne("Eseller.Domain.Entities.Catalog.Product", null)
                         .WithMany()
                         .HasForeignKey("ProductId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.SetNull);
                 });
 
             modelBuilder.Entity("Eseller.Domain.Entities.Affiliate.AffiliateCommission", b =>
@@ -2485,7 +2625,13 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("OrderRequestItem", null)
+                    b.HasOne("Eseller.Domain.Entities.Orders.OrderRequest", null)
+                        .WithMany()
+                        .HasForeignKey("OrderRequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Eseller.Domain.Entities.Orders.OrderRequestItem", null)
                         .WithMany()
                         .HasForeignKey("OrderRequestItemId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -2637,7 +2783,7 @@ namespace Eseller.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Eseller.Domain.Entities.Engagement.Review", b =>
                 {
-                    b.HasOne("OrderRequestItem", null)
+                    b.HasOne("Eseller.Domain.Entities.Orders.OrderRequestItem", null)
                         .WithMany()
                         .HasForeignKey("OrderRequestItemId")
                         .OnDelete(DeleteBehavior.Restrict);
@@ -2663,6 +2809,15 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("Eseller.Domain.Entities.Identity.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Eseller.Domain.Entities.Identity.Address", b =>
+                {
                     b.HasOne("Eseller.Domain.Entities.Identity.User", null)
                         .WithMany()
                         .HasForeignKey("UserId")
@@ -2814,6 +2969,27 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.HasOne("Eseller.Domain.Entities.Identity.User", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Eseller.Domain.Entities.Orders.OrderRequestItem", b =>
+                {
+                    b.HasOne("Eseller.Domain.Entities.Orders.OrderRequest", null)
+                        .WithMany()
+                        .HasForeignKey("OrderRequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Eseller.Domain.Entities.Catalog.ProductVariant", null)
+                        .WithMany()
+                        .HasForeignKey("ProductVariantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Eseller.Domain.Entities.Orders.SellerOrder", null)
+                        .WithMany()
+                        .HasForeignKey("SellerOrderId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
@@ -3012,7 +3188,7 @@ namespace Eseller.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Eseller.Domain.Entities.Shipping.ReturnItem", b =>
                 {
-                    b.HasOne("OrderRequestItem", null)
+                    b.HasOne("Eseller.Domain.Entities.Orders.OrderRequestItem", null)
                         .WithMany()
                         .HasForeignKey("OrderRequestItemId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -3097,27 +3273,6 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("WalletId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("OrderRequestItem", b =>
-                {
-                    b.HasOne("Eseller.Domain.Entities.Orders.OrderRequest", null)
-                        .WithMany()
-                        .HasForeignKey("OrderRequestId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Eseller.Domain.Entities.Catalog.ProductVariant", null)
-                        .WithMany()
-                        .HasForeignKey("ProductVariantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Eseller.Domain.Entities.Orders.SellerOrder", null)
-                        .WithMany()
-                        .HasForeignKey("SellerOrderId")
-                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 #pragma warning restore 612, 618
