@@ -25,6 +25,7 @@ public class CartItemConfiguration : IEntityTypeConfiguration<CartItem>
             .HasForeignKey(ci => ci.ProductVariantId)
             .OnDelete(DeleteBehavior.Restrict);
 
+
         builder.HasIndex(ci => new { ci.CartId, ci.ProductVariantId }).IsUnique();
     }
 }

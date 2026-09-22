@@ -12,9 +12,21 @@ public class AffiliateClickConfiguration : IEntityTypeConfiguration<AffiliateCli
         builder.ToTable("AffiliateClicks");
         builder.HasKey(ac => ac.Id);
 
-        builder.Property(ac => ac.ClickedAt).IsRequired();
-        builder.Property(ac => ac.IpAddress).HasMaxLength(45);
+        // Properties
+        builder.Property(ac => ac.ClickedAt)
+            .IsRequired();
 
+        builder.Property(ac => ac.IpAddress)
+            .HasMaxLength(45);
+
+        builder.Property(ac => ac.UserAgent)
+            .HasMaxLength(500);
+
+        builder.Property(ac => ac.Converted)
+            .IsRequired()
+            .HasDefaultValue(false);
+
+        // FKs
         builder.HasOne<Eseller.Domain.Entities.Identity.Affiliate>()
             .WithMany()
             .HasForeignKey(ac => ac.AffiliateId)
@@ -23,10 +35,12 @@ public class AffiliateClickConfiguration : IEntityTypeConfiguration<AffiliateCli
         builder.HasOne<Product>()
             .WithMany()
             .HasForeignKey(ac => ac.ProductId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.SetNull);
 
+        // Indexes
         builder.HasIndex(ac => ac.AffiliateId);
         builder.HasIndex(ac => ac.ProductId);
         builder.HasIndex(ac => ac.ClickedAt);
+        builder.HasIndex(ac => new { ac.AffiliateId, ac.Converted });
     }
 }

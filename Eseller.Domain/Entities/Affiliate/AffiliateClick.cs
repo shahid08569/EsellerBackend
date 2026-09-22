@@ -8,4 +8,6 @@ public class AffiliateClick : BaseEntity
     public Guid? ProductId { get; set; }
     public DateTime ClickedAt { get; set; }
     public string? IpAddress { get; set; }
+    public string? UserAgent { get; set; } 
+    public bool Converted { get; set; } = false;
 }

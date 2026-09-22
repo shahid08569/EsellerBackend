@@ -26,6 +26,21 @@ public class AffiliateConfiguration : IEntityTypeConfiguration<AffiliateEntity>
         builder.Property(a => a.UpdatedAt)
             .IsRequired();
 
+        builder.Property(a => a.TotalEarned)
+            .HasPrecision(18, 2);
+
+        builder.Property(a => a.TotalClicks)
+            .IsRequired()
+            .HasDefaultValue(0);
+
+        builder.Property(a => a.TotalConversions)
+            .IsRequired()
+            .HasDefaultValue(0);
+
+        builder.Property(a => a.IsActive)
+            .IsRequired()
+            .HasDefaultValue(true);
+
         builder.HasOne<Account>()
             .WithOne()
             .HasForeignKey<AffiliateEntity>(a => a.AccountId)

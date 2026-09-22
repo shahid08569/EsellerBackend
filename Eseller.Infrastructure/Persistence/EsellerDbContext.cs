@@ -33,6 +33,7 @@ public class EsellerDbContext : DbContext,IApplicationDbContext
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<VerificationToken> VerificationTokens => Set<VerificationToken>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<Address> Addresses => Set<Address>();
 
     public DbSet<LocationLog> LocationLogs => Set<LocationLog>();
 

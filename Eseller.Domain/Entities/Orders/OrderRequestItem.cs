@@ -1,5 +1,6 @@
 ﻿using Eseller.Domain.Common;
 
+namespace Eseller.Domain.Entities.Orders;
 public class OrderRequestItem : BaseEntity
 {
     public Guid OrderRequestId { get; set; }

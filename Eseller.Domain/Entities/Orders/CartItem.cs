@@ -8,4 +8,6 @@ public class CartItem : BaseEntity
     public Guid ProductVariantId { get; set; }
     public int Quantity { get; set; }  
     public DateTime CreatedAt { get; set; }
+
+
 }
