@@ -32,7 +32,6 @@ public class UpdateOrderStatusCommandHandler
         if (_currentUserService.AccountId is null)
             return Result.Failure("User is not authenticated.", "UNAUTHENTICATED");
 
-        // Only admin
         var role = _currentUserService.RoleType;
         if (role != RoleType.SuperAdmin && role != RoleType.Partner)
             return Result.Failure("Only admins can update order status.", "FORBIDDEN");
@@ -49,15 +48,16 @@ public class UpdateOrderStatusCommandHandler
         if (oldStatus == newStatus)
             return Result.Failure("Order is already in this status.", "NO_CHANGE");
 
-        // Validate transition
         if (!IsValidTransition(oldStatus, newStatus))
             return Result.Failure(
                 $"Cannot change status from {oldStatus} to {newStatus}.",
                 "INVALID_STATUS_TRANSITION");
 
+        var now = _dateTime.UtcNow;
+
         // Update order status
         order.Status = newStatus;
-        order.SetUpdatedAt(_dateTime.UtcNow);
+        order.SetUpdatedAt(now);
 
         // Log status history
         var changedByType = role == RoleType.SuperAdmin ? "SuperAdmin" : "Partner";
@@ -69,7 +69,7 @@ public class UpdateOrderStatusCommandHandler
             NewStatus = newStatus,
             ChangedByAccountId = _currentUserService.AccountId.Value,
             ChangedByType = changedByType,
-            ChangedAt = _dateTime.UtcNow
+            ChangedAt = now
         });
 
         // Auto chat message
@@ -81,9 +81,83 @@ public class UpdateOrderStatusCommandHandler
             SenderAccountId = _currentUserService.AccountId.Value,
             SenderRole = role == RoleType.SuperAdmin ? ChatSenderRole.SuperAdmin : ChatSenderRole.Partner,
             Message = statusMessage,
-            SentAt = _dateTime.UtcNow,
+            SentAt = now,
             IsRead = false
         });
+
+        // ═══════════════════════════════════════════════════════════
+        // PART 4 — AFFILIATE COMMISSION UPDATE
+        // ═══════════════════════════════════════════════════════════
+     
+        var pendingCommissions = await _context.AffiliateCommissions
+            .Where(c => c.OrderRequestId == order.Id
+                     && c.Status == AffiliateCommissionStatus.Pending)
+            .ToListAsync(cancellationToken);
+
+        var approvedCommissions = await _context.AffiliateCommissions
+            .Where(c => c.OrderRequestId == order.Id
+                     && c.Status == AffiliateCommissionStatus.Approved)
+            .ToListAsync(cancellationToken);
+
+        // DELIVERED → Kuch nahi (SuperAdmin manually approve karega)
+        // (koi code nahi)
+
+        // CANCELLED → Reverse pending + TotalConversions -1
+        if (newStatus == OrderStatus.Cancelled && pendingCommissions.Count > 0)
+        {
+            foreach (var commission in pendingCommissions)
+            {
+                commission.Status = AffiliateCommissionStatus.Reversed;
+
+                var affiliate = await _context.Affiliates
+                    .FirstOrDefaultAsync(a => a.Id == commission.AffiliateId, cancellationToken);
+
+                if (affiliate is not null && affiliate.TotalConversions > 0)
+                {
+                    affiliate.TotalConversions -= 1;
+                    affiliate.SetUpdatedAt(now);
+                }
+            }
+        }
+
+        // REFUNDED → Reverse approved + TotalEarned reverse + Wallet debit
+        else if (newStatus == OrderStatus.Refunded && approvedCommissions.Count > 0)
+        {
+            foreach (var commission in approvedCommissions)
+            {
+                commission.Status = AffiliateCommissionStatus.Reversed;
+
+                var affiliate = await _context.Affiliates
+                    .FirstOrDefaultAsync(a => a.Id == commission.AffiliateId, cancellationToken);
+
+                if (affiliate is not null)
+                {
+                    affiliate.TotalEarned -= commission.CommissionAmount;
+                    affiliate.SetUpdatedAt(now);
+
+                    var wallet = await _context.Wallets
+                        .FirstOrDefaultAsync(w => w.AccountId == affiliate.AccountId, cancellationToken);
+
+                    if (wallet is not null)
+                    {
+                        wallet.Balance -= commission.CommissionAmount;
+                        wallet.SetUpdatedAt(now);
+
+                        _context.WalletTransactions.Add(new Eseller.Domain.Entities.Wallet.WalletTransaction
+                        {
+                            WalletId = wallet.Id,
+                            Direction = WalletDirection.Debit,
+                            TransactionType = WalletTransactionType.AffiliateCommission,
+                            Amount = commission.CommissionAmount,
+                            ReferenceType = "OrderRequest",
+                            ReferenceId = commission.OrderRequestId,
+                            Description = $"Commission reversed for refunded order {commission.OrderRequestId.ToString().Substring(0, 8)}",
+                            CreatedAt = now
+                        });
+                    }
+                }
+            }
+        }
 
         await _context.SaveChangesAsync(cancellationToken);
 

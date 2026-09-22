@@ -1,0 +1,16 @@
+﻿public record AffiliateCommissionDto(
+    Guid Id,
+    Guid AffiliateId,
+    string AffiliateReferralCode,
+    string AffiliateEmail,
+    Guid OrderRequestId,
+    Guid OrderRequestItemId,
+    Guid? AffiliateClickId,
+    decimal CommissionAmount,
+    string Status,
+    DateTime CreatedAt,
+    DateTime? ApprovedAt,
+    DateTime? PaidAt,
+    DateTime? DeliveredAt,           
+    DateTime? AvailableAt,           
+    bool IsAvailableForApproval);   

@@ -37,7 +37,6 @@ public class CreateOrderRequestCommandHandler
         // PART 1 — Validate + Create OrderRequest
         // ═══════════════════════════════════════════════════════════
 
-        // 1. Auth check
         if (_currentUserService.AccountId is null)
             return Result.Failure<Guid>("User is not authenticated.", "UNAUTHENTICATED");
 
@@ -45,7 +44,6 @@ public class CreateOrderRequestCommandHandler
         if (role != RoleType.User)
             return Result.Failure<Guid>("Only customers can place orders.", "FORBIDDEN");
 
-        // 2. Get user
         var user = await _context.Users
             .FirstOrDefaultAsync(u => u.AccountId == _currentUserService.AccountId.Value,
                 cancellationToken);
@@ -53,14 +51,12 @@ public class CreateOrderRequestCommandHandler
         if (user is null)
             return Result.Failure<Guid>("User not found.", "USER_NOT_FOUND");
 
-        // 3. Get cart
         var cart = await _context.Carts
             .FirstOrDefaultAsync(c => c.UserId == user.Id, cancellationToken);
 
         if (cart is null)
             return Result.Failure<Guid>("Cart is empty.", "CART_EMPTY");
 
-        // 4. Get cart items
         var cartItems = await _context.CartItems
             .Where(ci => ci.CartId == cart.Id)
             .ToListAsync(cancellationToken);
@@ -68,7 +64,6 @@ public class CreateOrderRequestCommandHandler
         if (cartItems.Count == 0)
             return Result.Failure<Guid>("Cart is empty.", "CART_EMPTY");
 
-        // 5. Load variants
         var variantIds = cartItems.Select(ci => ci.ProductVariantId).ToList();
 
         var variants = await _context.ProductVariants
@@ -76,7 +71,6 @@ public class CreateOrderRequestCommandHandler
             .Where(pv => variantIds.Contains(pv.Id))
             .ToDictionaryAsync(pv => pv.Id, cancellationToken);
 
-        // 6. Validate variants
         foreach (var cartItem in cartItems)
         {
             var variant = variants.GetValueOrDefault(cartItem.ProductVariantId);
@@ -92,7 +86,6 @@ public class CreateOrderRequestCommandHandler
                     "INSUFFICIENT_STOCK");
         }
 
-        // 7. Load + validate products
         var productIds = variants.Values.Select(v => v.ProductId).Distinct().ToList();
 
         var products = await _context.Products
@@ -108,7 +101,6 @@ public class CreateOrderRequestCommandHandler
                     "PRODUCT_NOT_AVAILABLE");
         }
 
-        // 8. Load + validate shops
         var shopIds = products.Values.Select(p => p.ShopId).Distinct().ToList();
 
         var shops = await _context.Shops
@@ -126,20 +118,21 @@ public class CreateOrderRequestCommandHandler
         // 9. Resolve affiliate
         Guid? affiliateId = null;
         string? referralCodeSnapshot = null;
+        Eseller.Domain.Entities.Identity.Affiliate? affiliateEntity = null;
 
         if (!string.IsNullOrWhiteSpace(request.ReferralCode))
         {
             var normalizedCode = request.ReferralCode.Trim().ToUpperInvariant();
-            var affiliate = await _context.Affiliates
+            affiliateEntity = await _context.Affiliates
                 .FirstOrDefaultAsync(a => a.ReferralCode == normalizedCode, cancellationToken);
 
-            if (affiliate is not null)
+            if (affiliateEntity is not null)
             {
-                if (affiliate.AccountId == _currentUserService.AccountId.Value)
+                if (affiliateEntity.AccountId == _currentUserService.AccountId.Value)
                     return Result.Failure<Guid>("You cannot refer yourself.", "SELF_REFERRAL");
 
-                affiliateId = affiliate.Id;
-                referralCodeSnapshot = affiliate.ReferralCode;
+                affiliateId = affiliateEntity.Id;
+                referralCodeSnapshot = affiliateEntity.ReferralCode;
             }
         }
 
@@ -160,7 +153,6 @@ public class CreateOrderRequestCommandHandler
 
         var now = _dateTime.UtcNow;
 
-        // 11. Group cart items by shop
         var itemsByShop = cartItems
             .GroupBy(ci =>
             {
@@ -170,7 +162,6 @@ public class CreateOrderRequestCommandHandler
             })
             .ToList();
 
-        // 12. Create SellerOrder per shop
         var sellerOrders = new List<SellerOrder>();
 
         foreach (var shopGroup in itemsByShop)
@@ -186,10 +177,13 @@ public class CreateOrderRequestCommandHandler
             sellerOrders.Add(sellerOrder);
         }
 
-        // Save to get SellerOrder IDs
         await _context.SaveChangesAsync(cancellationToken);
 
-        // 13. Create OrderRequestItem per cart item + decrement stock
+        // ═══════════════════════════════════════════════════════════
+        // ✅ AFFILIATE — Collect created items for commission (Part 4)
+        // ═══════════════════════════════════════════════════════════
+        var createdOrderItems = new List<(OrderRequestItem Item, decimal UnitPrice, int Quantity, Guid ProductId)>();
+
         foreach (var shopGroup in itemsByShop)
         {
             var sellerOrder = sellerOrders.First(so => so.ShopId == shopGroup.Key);
@@ -199,7 +193,6 @@ public class CreateOrderRequestCommandHandler
                 var variant = variants[cartItem.ProductVariantId];
                 var product = products[variant.ProductId];
 
-                // Load variant attributes for snapshot
                 var attributes = await _context.VariantAttributeValues
                     .Where(vav => vav.ProductVariantId == variant.Id)
                     .ToListAsync(cancellationToken);
@@ -210,7 +203,6 @@ public class CreateOrderRequestCommandHandler
 
                 var attributesJson = JsonSerializer.Serialize(attributesDict);
 
-                // Create OrderRequestItem
                 var orderItem = new OrderRequestItem
                 {
                     OrderRequestId = orderRequest.Id,
@@ -227,12 +219,14 @@ public class CreateOrderRequestCommandHandler
 
                 _context.OrderRequestItems.Add(orderItem);
 
+                // ✅ Collect for affiliate commission
+                createdOrderItems.Add((orderItem, variant.Price, cartItem.Quantity, product.Id));
+
                 // Decrement stock
                 var previousQty = variant.StockQty;
                 variant.StockQty -= cartItem.Quantity;
                 variant.SetUpdatedAt(now);
 
-                // Log InventoryTransaction
                 _context.InventoryTransactions.Add(new InventoryTransaction
                 {
                     ProductVariantId = variant.Id,
@@ -248,24 +242,76 @@ public class CreateOrderRequestCommandHandler
             }
         }
 
-        // 14. Clear cart
+        // Clear cart
         _context.CartItems.RemoveRange(cartItems);
 
-        // 15. Save all
         await _context.SaveChangesAsync(cancellationToken);
+
+        // ═══════════════════════════════════════════════════════════
+        // ✅ PART 4 — AFFILIATE CONVERSION + COMMISSION
+        // ═══════════════════════════════════════════════════════════
+        if (affiliateId.HasValue && affiliateEntity is not null)
+        {
+            decimal commissionRate = affiliateEntity.CommissionRate ?? 0m;
+            if (commissionRate <= 0)
+            {
+                var setting = await _context.Settings
+                    .FirstOrDefaultAsync(s => s.Key == "AffiliateDefaultCommissionRate", cancellationToken);
+
+                commissionRate = (setting is not null && decimal.TryParse(setting.Value, out var parsed))
+                    ? parsed
+                    : 5m;
+            }
+            foreach (var (orderItem, unitPrice, quantity, productId) in createdOrderItems)
+            {
+                // Find a recent non-converted click for this product (last 30 days)
+                var click = await _context.AffiliateClicks
+                    .Where(c => c.AffiliateId == affiliateId.Value
+                             && c.ProductId == productId
+                             && !c.Converted
+                             && c.ClickedAt > now.AddDays(-30))
+                    .OrderByDescending(c => c.ClickedAt)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                // Calculate commission
+                var commissionAmount = Math.Round(
+                    unitPrice * quantity * commissionRate / 100m, 2);
+
+                var commission = new Eseller.Domain.Entities.Affiliate.AffiliateCommission
+                {
+                    AffiliateId = affiliateId.Value,
+                    OrderRequestId = orderRequest.Id,
+                    OrderRequestItemId = orderItem.Id,
+                    AffiliateClickId = click?.Id,
+                    CommissionAmount = commissionAmount,
+                    Status = AffiliateCommissionStatus.Pending,
+                    CreatedAt = now
+                };
+
+                _context.AffiliateCommissions.Add(commission);
+
+                // Mark click as converted
+                if (click is not null)
+                    click.Converted = true;
+            }
+
+            // Increment affiliate total conversions + total clicks already handled in track
+            affiliateEntity.TotalConversions += 1;
+            affiliateEntity.SetUpdatedAt(now);
+
+            await _context.SaveChangesAsync(cancellationToken);
+        }
 
         // ═══════════════════════════════════════════════════════════
         // PART 3 — Auto-create first chat message
         // ═══════════════════════════════════════════════════════════
 
-        // 16. Load items for message
         var orderItemsForMessage = await _context.OrderRequestItems
             .Where(i => i.OrderRequestId == orderRequest.Id)
             .ToListAsync(cancellationToken);
 
         var messageText = BuildOrderMessage(orderRequest.Id, orderItemsForMessage);
 
-        // 17. Create auto chat message
         _context.ChatMessages.Add(new ChatMessageEntity
         {
             OrderRequestId = orderRequest.Id,
@@ -278,7 +324,6 @@ public class CreateOrderRequestCommandHandler
 
         await _context.SaveChangesAsync(cancellationToken);
 
-        // 18. Return
         return Result.Success(orderRequest.Id);
     }
 
