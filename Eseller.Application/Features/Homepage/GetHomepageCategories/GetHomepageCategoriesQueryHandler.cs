@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Application.Features.Products;
 using MediatR;
@@ -27,7 +27,7 @@ public class GetHomepageCategoriesQueryHandler
         var limit = request.Limit > 20 ? 20 : (request.Limit < 1 ? 11 : request.Limit);
         var productsPerCategory = request.ProductsPerCategory > 20 ? 20 : (request.ProductsPerCategory < 1 ? 8 : request.ProductsPerCategory);
 
-        // ✅ 1. Featured categories fetch karo
+        // ? 1. Featured categories fetch karo
         var categories = await _context.Categories
             .Where(c => c.IsFeaturedOnHomepage && c.IsActive && c.DeletedAt == null)
             .OrderBy(c => c.HomepageDisplayOrder)
@@ -40,7 +40,7 @@ public class GetHomepageCategoriesQueryHandler
 
         var categoryIds = categories.Select(c => c.Id).ToList();
 
-        // ✅ 2. Har category ke products fetch karo (seller storefront only)
+        // ? 2. Har category ke products fetch karo (seller storefront only)
         var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
         var productsByCategory = new Dictionary<Guid, List<Guid>>();
 
@@ -56,7 +56,7 @@ public class GetHomepageCategoriesQueryHandler
             productsByCategory[categoryId] = productIds;
         }
 
-        // ✅ 3. Saare products ek saath load karo (efficient)
+        // ? 3. Saare products ek saath load karo (efficient)
         var allProductIds = productsByCategory.Values
             .SelectMany(ids => ids)
             .Distinct()
@@ -64,7 +64,7 @@ public class GetHomepageCategoriesQueryHandler
 
         var productDtos = await LoadProducts(allProductIds, cancellationToken);
 
-        // ✅ 4. Category sections build karo (order preserve)
+        // ? 4. Category sections build karo (order preserve)
         var result = categories.Select(c =>
         {
             var productIds = productsByCategory.GetValueOrDefault(c.Id, new List<Guid>());
@@ -149,8 +149,7 @@ public class GetHomepageCategoriesQueryHandler
                 p.BasePrice,
                 p.PrimaryImageUrl,
                 p.ShopName,
-                p.ShopSlug,
-                p.CategoryName,
+                p.ShopSlug,p.CategoryName,
                 p.BrandName,
                 p.AvgRating,
                 p.IsFeatured,

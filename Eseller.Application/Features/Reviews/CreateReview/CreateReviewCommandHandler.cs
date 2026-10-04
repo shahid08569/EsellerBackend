@@ -111,7 +111,9 @@ public class CreateReviewCommandHandler
             Rating = request.Rating,
             Title = request.Title,
             Comment = request.Comment,
-            IsApproved = true, // Live immediately so storefront rating updates dynamically
+            // Live on submit so customers see their review immediately.
+            // SuperAdmin can still delete from Reviews management.
+            IsApproved = true,
             CreatedAt = _dateTime.UtcNow
         };
 
@@ -139,7 +141,6 @@ public class CreateReviewCommandHandler
             : (decimal)approved.Average();
         product.SetUpdatedAt(_dateTime.UtcNow);
 
-        // Keep catalog twin / sibling listings in sync when possible
         if (product.SourceProductId.HasValue)
         {
             var catalog = await _context.Products

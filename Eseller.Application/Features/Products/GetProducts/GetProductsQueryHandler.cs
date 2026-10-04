@@ -68,6 +68,7 @@ public class GetProductsQueryHandler
                                 .FirstOrDefault()),
                     ShopName = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Name).FirstOrDefault() ?? string.Empty,
                     ShopSlug = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Slug).FirstOrDefault() ?? string.Empty,
+                    ShopRating = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Rating).FirstOrDefault(),
                     CategoryName = _context.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault() ?? string.Empty,
                     BrandName = p.BrandId == null
                         ? null
@@ -108,7 +109,8 @@ public class GetProductsQueryHandler
                 p.CategoryId,
                 p.BrandId,
                 p.SourceProductId,
-                p.ShopId)).ToList();
+                p.ShopId,
+                p.ShopRating)).ToList();
 
             return Result.Success(new PagedList<ProductListDto>(
                 curatedDtos,
@@ -191,6 +193,7 @@ public class GetProductsQueryHandler
                             .FirstOrDefault()),
                 ShopName = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Name).FirstOrDefault() ?? string.Empty,
                 ShopSlug = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Slug).FirstOrDefault() ?? string.Empty,
+                ShopRating = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Rating).FirstOrDefault(),
                 CategoryName = _context.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault() ?? string.Empty,
                 BrandName = p.BrandId == null
                     ? null
@@ -231,7 +234,8 @@ public class GetProductsQueryHandler
             p.CategoryId,
             p.BrandId,
             p.SourceProductId,
-            p.ShopId)).ToList();
+            p.ShopId,
+            p.ShopRating)).ToList();
 
         var pagedList = new PagedList<ProductListDto>(
             productDtos,

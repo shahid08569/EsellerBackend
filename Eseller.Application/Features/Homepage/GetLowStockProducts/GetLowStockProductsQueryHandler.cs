@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Application.Features.Products;
 using MediatR;
@@ -80,6 +80,7 @@ public class GetLowStockProductsQueryHandler
                             .FirstOrDefault()),
                 ShopName = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Name).FirstOrDefault() ?? string.Empty,
                 ShopSlug = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Slug).FirstOrDefault() ?? string.Empty,
+                ShopRating = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Rating).FirstOrDefault(),
                 CategoryName = _context.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault() ?? string.Empty,
                 BrandName = p.BrandId == null
                     ? null
@@ -104,8 +105,7 @@ public class GetLowStockProductsQueryHandler
                 p.BasePrice,
                 p.PrimaryImageUrl,
                 p.ShopName,
-                p.ShopSlug,
-                p.CategoryName,
+                p.ShopSlug,p.CategoryName,
                 p.BrandName,
                 p.AvgRating,
                 p.IsFeatured,
@@ -113,7 +113,7 @@ public class GetLowStockProductsQueryHandler
                 p.IsApproved ? "Approved" : "Pending",
                 p.RejectionReason,
                 p.CreatedAt,
-                badges.GetValueOrDefault(p.Id)))
+                badges.GetValueOrDefault(p.Id), ShopRating: p.ShopRating))
             .ToList();
     }
 }

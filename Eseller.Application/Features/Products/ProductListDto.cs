@@ -20,4 +20,6 @@ public record ProductListDto(
     Guid? CategoryId = null,
     Guid? BrandId = null,
     Guid? SourceProductId = null,
-    Guid? ShopId = null);
+    Guid? ShopId = null,
+    /// <summary>SuperAdmin platform rating for the store (0–5).</summary>
+    decimal ShopRating = 0);

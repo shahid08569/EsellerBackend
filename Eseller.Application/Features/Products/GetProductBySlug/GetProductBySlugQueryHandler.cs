@@ -50,7 +50,8 @@ public class GetProductBySlugQueryHandler
                 p.SeoTitle,
                 p.SeoDescription,
                 p.IsActive,
-                p.CreatedAt))
+                p.CreatedAt,
+                _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Rating).FirstOrDefault()))
             .FirstOrDefaultAsync(cancellationToken);
 
         if (product is null)

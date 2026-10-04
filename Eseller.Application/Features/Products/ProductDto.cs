@@ -22,4 +22,6 @@ public record ProductDto(
     string? SeoTitle,
     string? SeoDescription,
     bool IsActive,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    /// <summary>SuperAdmin platform rating for the store (0–5).</summary>
+    decimal ShopRating = 0);

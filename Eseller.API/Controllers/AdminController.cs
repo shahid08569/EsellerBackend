@@ -119,7 +119,13 @@ public class AdminController : ControllerBase
             var totOrders = shopId.HasValue && ordersCountByShop.TryGetValue(shopId.Value, out var oCnt) ? oCnt : 0;
             var totRev = shopId.HasValue && revenueByShop.TryGetValue(shopId.Value, out var rev) ? rev : 0m;
             var prodCnt = shopId.HasValue && realProductCountsByShop.TryGetValue(shopId.Value, out var pCnt) ? pCnt : (shop?.TotalProducts ?? 0);
-            var shopRating = shopId.HasValue && ratingByShop.TryGetValue(shopId.Value, out var rVal) ? rVal : 5.0m;
+            // Platform rating = SuperAdmin-set Shop.Rating (authoritative).
+            // Fallback to review average only when admin has not set a rating yet.
+            decimal shopRating = 0m;
+            if (shop is not null && shop.Rating > 0)
+                shopRating = shop.Rating;
+            else if (shopId.HasValue && ratingByShop.TryGetValue(shopId.Value, out var rVal))
+                shopRating = rVal;
 
             return new
             {
