@@ -28,6 +28,11 @@ public class ChatHub : Hub<IChatClient>
         if (!string.IsNullOrEmpty(role))
             await Groups.AddToGroupAsync(Context.ConnectionId, role);
 
+        // Per-account inbox so admin↔seller / admin↔customer alerts arrive
+        // even when the recipient has not joined the order room yet.
+        if (accountId != Guid.Empty)
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"account-{accountId}");
+
         await base.OnConnectedAsync();
     }
 

@@ -1,4 +1,5 @@
-﻿using Eseller.Application.Features.Shops.DeleteShop;
+using Eseller.Application.Abstractions;
+using Eseller.Application.Features.Shops.DeleteShop;
 using Eseller.Application.Features.Shops.DeleteShopBanner;
 using Eseller.Application.Features.Shops.DeleteShopLogo;
 using Eseller.Application.Features.Shops.GetMyShops;
@@ -11,6 +12,7 @@ using Eseller.Application.Features.Shops.UploadShopLogo;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Eseller.API.Controllers;
 
@@ -63,11 +65,12 @@ public class ShopsController : ControllerBase
     [HttpGet]
     [AllowAnonymous]
     public async Task<IActionResult> GetAll(
-   [FromQuery] int pageNumber = 1,
-   [FromQuery] int pageSize = 20,
-   CancellationToken cancellationToken = default)
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] Guid? shopCategoryId = null,
+        CancellationToken cancellationToken = default)
     {
-        var query = new GetShopsQuery(pageNumber, pageSize);
+        var query = new GetShopsQuery(pageNumber, pageSize, shopCategoryId);
         var result = await _sender.Send(query, cancellationToken);
 
         if (!result.IsSuccess)
@@ -100,7 +103,7 @@ public class ShopsController : ControllerBase
     /// Update own shop (authenticated shopkeeper).
     /// </summary>
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Shopkeeper")]
+    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
     public async Task<IActionResult> Update(
         Guid id,
         [FromBody] UpdateShopRequest request,
@@ -130,36 +133,12 @@ public class ShopsController : ControllerBase
         return Ok(new { message = "Shop updated successfully." });
     }
 
-    /// <summary>
-    /// Soft delete own shop (authenticated shopkeeper).
-    /// </summary>
-    [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Shopkeeper")]
-    public async Task<IActionResult> Delete(
-        Guid id,
-        CancellationToken cancellationToken)
-    {
-        var command = new DeleteShopCommand(id);
-        var result = await _sender.Send(command, cancellationToken);
-
-        if (!result.IsSuccess)
-        {
-            return result.ErrorCode switch
-            {
-                "SHOP_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
-                "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
-                _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
-            };
-        }
-
-        return Ok(new { message = "Shop deleted successfully." });
-    }
 
     /// <summary>
     /// Upload shop logo (shopkeeper only).
     /// </summary>
     [HttpPost("{id:guid}/logo")]
-    [Authorize(Roles = "Shopkeeper")]
+    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
     [RequestSizeLimit(5 * 1024 * 1024)]   // 5 MB
     public async Task<IActionResult> UploadLogo(
         Guid id,
@@ -198,7 +177,7 @@ public class ShopsController : ControllerBase
     /// Upload shop banner (shopkeeper only).
     /// </summary>
     [HttpPost("{id:guid}/banner")]
-    [Authorize(Roles = "Shopkeeper")]
+    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
     [RequestSizeLimit(5 * 1024 * 1024)]
     public async Task<IActionResult> UploadBanner(
         Guid id,
@@ -237,7 +216,7 @@ public class ShopsController : ControllerBase
     /// Delete shop logo (shopkeeper only).
     /// </summary>
     [HttpDelete("{id:guid}/logo")]
-    [Authorize(Roles = "Shopkeeper")]
+    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
     public async Task<IActionResult> DeleteLogo(
         Guid id,
         CancellationToken cancellationToken)
@@ -262,7 +241,7 @@ public class ShopsController : ControllerBase
     /// Delete shop banner (shopkeeper only).
     /// </summary>
     [HttpDelete("{id:guid}/banner")]
-    [Authorize(Roles = "Shopkeeper")]
+    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
     public async Task<IActionResult> DeleteBanner(
         Guid id,
         CancellationToken cancellationToken)
@@ -283,6 +262,89 @@ public class ShopsController : ControllerBase
         return Ok(new { message = "Banner deleted successfully." });
     }
 
+    /// <summary>
+    /// Delete shop (SuperAdmin or owning Shopkeeper).
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
+    public async Task<IActionResult> DeleteShop(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var command = new DeleteShopCommand(id);
+        var result = await _sender.Send(command, cancellationToken);
+
+        if (!result.IsSuccess)
+        {
+            return result.ErrorCode switch
+            {
+                "SHOP_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
+                "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
+                _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
+            };
+        }
+
+        return Ok(new { message = "Shop deleted successfully." });
+    }
+
+    /// <summary>
+    /// Request shop tier upgrade (e.g. Bronze -> Gold Elite, Diamond VIP).
+    /// </summary>
+    [HttpPost("tier-upgrade")]
+    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
+    public async Task<IActionResult> RequestTierUpgrade(
+        [FromBody] RequestTierUpgradeRequest request,
+        [FromServices] IApplicationDbContext context,
+        [FromServices] ICurrentUserService currentUserService,
+        CancellationToken cancellationToken)
+    {
+        if (currentUserService.AccountId == null) return Unauthorized();
+
+        var shopkeeper = await context.Shopkeepers
+            .FirstOrDefaultAsync(s => s.AccountId == currentUserService.AccountId.Value, cancellationToken);
+        if (shopkeeper == null) return NotFound(new { error = "Shopkeeper profile not found." });
+
+        var shop = await context.Shops
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null, cancellationToken);
+        if (shop == null) return NotFound(new { error = "Shop not found." });
+
+        var categories = await context.ShopCategories.Where(sc => sc.DeletedAt == null).ToListAsync(cancellationToken);
+        var targetCat = categories.FirstOrDefault(c => 
+            c.Name.Contains(request.RequestedTier, StringComparison.OrdinalIgnoreCase) ||
+            request.RequestedTier.Contains(c.Name, StringComparison.OrdinalIgnoreCase) ||
+            (!string.IsNullOrWhiteSpace(c.BadgeText) && (
+                c.BadgeText.Contains(request.RequestedTier, StringComparison.OrdinalIgnoreCase) ||
+                request.RequestedTier.Contains(c.BadgeText, StringComparison.OrdinalIgnoreCase))));
+
+        var price = targetCat?.PriceUsd > 0 ? targetCat.PriceUsd : request.Price;
+        if (price > 0 && string.IsNullOrWhiteSpace(request.ReceiptUrl))
+            return BadRequest(new { error = "Payment receipt is required for paid package upgrades.", errorCode = "RECEIPT_REQUIRED" });
+
+        var tierReq = new Eseller.Domain.Entities.Catalog.TierUpgradeRequest
+        {
+            ShopId = shop.Id,
+            ShopName = shop.Name,
+            MerchantName = shopkeeper.Name,
+            CurrentTier = !string.IsNullOrWhiteSpace(shop.CustomBadgeText) ? shop.CustomBadgeText : (shop.ShopCategoryId.HasValue ? "Active Tier" : "Bronze (Free)"),
+            RequestedTier = request.RequestedTier,
+            RequestedCategoryId = targetCat?.Id,
+            BadgeText = targetCat?.BadgeText ?? request.RequestedTier,
+            Price = price,
+            PaymentMethod = request.PaymentMethod ?? "Raast / Online Bank Transfer",
+            ReferenceNote = request.ReferenceNote ?? string.Empty,
+            ReceiptUrl = request.ReceiptUrl,
+            Status = "Pending",
+            RequestedAt = DateTime.UtcNow
+        };
+        tierReq.SetCreatedAt(DateTime.UtcNow);
+
+        context.TierUpgradeRequests.Add(tierReq);
+        await context.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { message = "Tier upgrade request submitted for Super Admin review.", requestId = tierReq.Id });
+    }
+
 }
 
 public record UpdateShopRequest(
@@ -292,3 +354,10 @@ public record UpdateShopRequest(
     string? Address,
     string? City,
     string? Country);
+
+public record RequestTierUpgradeRequest(
+    string RequestedTier,
+    decimal Price,
+    string? PaymentMethod,
+    string? ReferenceNote,
+    string? ReceiptUrl);

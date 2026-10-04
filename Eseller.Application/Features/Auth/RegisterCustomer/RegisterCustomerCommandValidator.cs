@@ -34,7 +34,14 @@ public class RegisterCustomerCommandValidator : AbstractValidator<RegisterCustom
             .InclusiveBetween(-180m, 180m);
 
         RuleFor(x => x.DeviceType)
-            .NotEmpty()
-            .Must(dt => dt == "Desktop" || dt == "Mobile" || dt == "Tablet");
+            .Must(dt =>
+            {
+                if (string.IsNullOrWhiteSpace(dt)) return true; // defaulted server-side
+                var v = dt.Trim();
+                return v.Equals("Desktop", StringComparison.OrdinalIgnoreCase)
+                    || v.Equals("Mobile", StringComparison.OrdinalIgnoreCase)
+                    || v.Equals("Tablet", StringComparison.OrdinalIgnoreCase);
+            })
+            .WithMessage("DeviceType must be Desktop, Mobile, or Tablet.");
     }
 }

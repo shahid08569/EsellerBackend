@@ -19,9 +19,11 @@ public class GetShopByIdQueryHandler
         GetShopByIdQuery request,
         CancellationToken cancellationToken)
     {
+        // Inactive (pending-approval) shops must still be readable by their seller.
+        // Soft-deleted shops stay hidden via the global query filter.
         var shop = await _context.Shops
-     .FirstOrDefaultAsync(s => s.Id == request.ShopId && s.IsActive, cancellationToken);
-        
+            .FirstOrDefaultAsync(s => s.Id == request.ShopId, cancellationToken);
+
         if (shop is null)
             return Result.Failure<ShopDetailDto>("Shop not found.", "SHOP_NOT_FOUND");
 

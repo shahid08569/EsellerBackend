@@ -1,9 +1,10 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Infrastructure.Persistence;
 using Eseller.Infrastructure.Services;
 using Eseller.Infrastructure.Settings;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
@@ -19,9 +20,23 @@ public static class DependencyInjection
     {
         // Database
         services.AddDbContext<EsellerDbContext>(options =>
+        {
             options.UseSqlServer(
                 configuration.GetConnectionString("DefaultConnection"),
-                b => b.MigrationsAssembly("Eseller.Infrastructure")));
+                b =>
+                {
+                    b.MigrationsAssembly("Eseller.Infrastructure");
+                    b.CommandTimeout(180);
+                    b.EnableRetryOnFailure(
+                        maxRetryCount: 5,
+                        maxRetryDelay: TimeSpan.FromSeconds(10),
+                        errorNumbersToAdd: null);
+                });
+
+            // Avoid hard-crash on minor model/snapshot drift during local MigrateAsync
+            options.ConfigureWarnings(w =>
+                w.Ignore(RelationalEventId.PendingModelChangesWarning));
+        });
 
         services.AddScoped<IApplicationDbContext>(provider =>
             provider.GetRequiredService<EsellerDbContext>());
@@ -59,6 +74,20 @@ public static class DependencyInjection
                     ValidateLifetime = true,
                     ClockSkew = TimeSpan.Zero
                 };
+
+                options.Events = new JwtBearerEvents
+                {
+                    OnMessageReceived = context =>
+                    {
+                        var accessToken = context.Request.Query["access_token"];
+                        var path = context.HttpContext.Request.Path;
+                        if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                        {
+                            context.Token = accessToken;
+                        }
+                        return Task.CompletedTask;
+                    }
+                };
             });
 
         services.AddAuthorization();
@@ -67,6 +96,12 @@ public static class DependencyInjection
         services.AddHttpClient<IGeocodingService, BigDataCloudGeocodingService>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(10);
+        });
+
+        // HttpClient for Resend transactional email
+        services.AddHttpClient("Resend", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
         });
 
         // Services

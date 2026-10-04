@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Features.AdminReports.GetSalesReport;
+using Eseller.Application.Features.AdminReports.GetSalesReport;
 using Eseller.Application.Features.AdminReports.GetTopProductsReport;
 using Eseller.Application.Features.AdminReports.GetTopSellersReport;
 using MediatR;
@@ -24,11 +24,13 @@ public class AdminReportsController : ControllerBase
     /// </summary>
     [HttpGet("sales")]
     public async Task<IActionResult> GetSalesReport(
-        [FromQuery] DateTime fromDate,
-        [FromQuery] DateTime toDate,
-        CancellationToken cancellationToken)
+        [FromQuery] DateTime? fromDate = null,
+        [FromQuery] DateTime? toDate = null,
+        CancellationToken cancellationToken = default)
     {
-        var query = new GetSalesReportQuery(fromDate, toDate);
+        var start = fromDate ?? DateTime.UtcNow.AddDays(-30);
+        var end = toDate ?? DateTime.UtcNow;
+        var query = new GetSalesReportQuery(start, end);
         var result = await _sender.Send(query, cancellationToken);
 
         if (!result.IsSuccess)
@@ -42,12 +44,14 @@ public class AdminReportsController : ControllerBase
     /// </summary>
     [HttpGet("top-products")]
     public async Task<IActionResult> GetTopProductsReport(
-        [FromQuery] DateTime fromDate,
-        [FromQuery] DateTime toDate,
+        [FromQuery] DateTime? fromDate = null,
+        [FromQuery] DateTime? toDate = null,
         [FromQuery] int limit = 10,
         CancellationToken cancellationToken = default)
     {
-        var query = new GetTopProductsReportQuery(fromDate, toDate, limit);
+        var start = fromDate ?? DateTime.UtcNow.AddDays(-30);
+        var end = toDate ?? DateTime.UtcNow;
+        var query = new GetTopProductsReportQuery(start, end, limit);
         var result = await _sender.Send(query, cancellationToken);
 
         if (!result.IsSuccess)
@@ -61,12 +65,14 @@ public class AdminReportsController : ControllerBase
     /// </summary>
     [HttpGet("top-sellers")]
     public async Task<IActionResult> GetTopSellersReport(
-        [FromQuery] DateTime fromDate,
-        [FromQuery] DateTime toDate,
+        [FromQuery] DateTime? fromDate = null,
+        [FromQuery] DateTime? toDate = null,
         [FromQuery] int limit = 10,
         CancellationToken cancellationToken = default)
     {
-        var query = new GetTopSellersReportQuery(fromDate, toDate, limit);
+        var start = fromDate ?? DateTime.UtcNow.AddDays(-30);
+        var end = toDate ?? DateTime.UtcNow;
+        var query = new GetTopSellersReportQuery(start, end, limit);
         var result = await _sender.Send(query, cancellationToken);
 
         if (!result.IsSuccess)

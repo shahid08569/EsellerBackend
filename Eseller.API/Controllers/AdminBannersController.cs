@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Features.Banners.CreateBanner;
+using Eseller.Application.Features.Banners.CreateBanner;
 using Eseller.Application.Features.Banners.DeleteBanner;
 using Eseller.Application.Features.Banners.GetBannerById;
 using Eseller.Application.Features.Banners.GetHomepageBanners;
@@ -62,7 +62,17 @@ public class AdminBannersController : ControllerBase
         var command = new CreateBannerCommand(
             request.ImageUrl,
             request.LinkUrl,
+            request.Title,
+            request.Subtitle,
+            request.Description,
+            request.Price,
+            request.OriginalPrice,
+            request.ButtonText,
+            request.BackgroundColor,
+            request.TextColor,
+            request.AvailableSizes,
             request.SortOrder,
+            request.IsActive,
             request.StartDate,
             request.EndDate);
 
@@ -88,6 +98,15 @@ public class AdminBannersController : ControllerBase
             id,
             request.ImageUrl,
             request.LinkUrl,
+            request.Title,
+            request.Subtitle,
+            request.Description,
+            request.Price,
+            request.OriginalPrice,
+            request.ButtonText,
+            request.BackgroundColor,
+            request.TextColor,
+            request.AvailableSizes,
             request.SortOrder,
             request.IsActive,
             request.StartDate,
@@ -99,6 +118,27 @@ public class AdminBannersController : ControllerBase
             return HandleError(result);
 
         return Ok(new { message = "Banner updated successfully." });
+    }
+
+    [HttpPost("upload")]
+    public async Task<IActionResult> UploadImage(
+        IFormFile file,
+        [FromServices] Eseller.Application.Abstractions.IFileStorageService fileStorage,
+        CancellationToken cancellationToken)
+    {
+        if (file is null || file.Length == 0)
+            return BadRequest(new { error = "No file provided" });
+
+        var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (!allowedExtensions.Contains(ext))
+            return BadRequest(new { error = "Invalid file type. Only JPG, PNG, and WEBP images are allowed." });
+
+        using var stream = file.OpenReadStream();
+        var uniqueFileName = $"banners/banner-{Guid.NewGuid()}{ext}";
+        var savedPath = await fileStorage.UploadAsync(stream, uniqueFileName, file.ContentType, cancellationToken);
+
+        return Ok(new { imageUrl = savedPath });
     }
 
     [HttpDelete("{id:guid}")]
@@ -141,13 +181,32 @@ public class AdminBannersController : ControllerBase
 public record CreateBannerRequest(
     string ImageUrl,
     string? LinkUrl,
+    string? Title,
+    string? Subtitle,
+    string? Description,
+    decimal? Price,
+    decimal? OriginalPrice,
+    string? ButtonText,
+    string? BackgroundColor,
+    string? TextColor,
+    string? AvailableSizes,
     int SortOrder,
-    DateTime? StartDate,
-    DateTime? EndDate);
+    bool IsActive = true,
+    DateTime? StartDate = null,
+    DateTime? EndDate = null);
 
 public record UpdateBannerRequest(
     string ImageUrl,
     string? LinkUrl,
+    string? Title,
+    string? Subtitle,
+    string? Description,
+    decimal? Price,
+    decimal? OriginalPrice,
+    string? ButtonText,
+    string? BackgroundColor,
+    string? TextColor,
+    string? AvailableSizes,
     int SortOrder,
     bool IsActive,
     DateTime? StartDate,

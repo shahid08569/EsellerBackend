@@ -1,5 +1,6 @@
 ﻿using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
+using Eseller.Application.Features.Products;
 using Eseller.Application.Features.Shops.GetShopById;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -21,9 +22,20 @@ public class GetShopBySlugQueryHandler
         CancellationToken cancellationToken)
     {
         var shop = await _context.Shops
-     .FirstOrDefaultAsync(s => s.Slug == request.Slug && s.IsActive, cancellationToken);
+            .FirstOrDefaultAsync(s => s.Slug == request.Slug && s.IsActive, cancellationToken);
 
         if (shop is null)
+            return Result.Failure<ShopDetailDto>("Shop not found.", "SHOP_NOT_FOUND");
+
+        // Master warehouse is admin-only — never expose on customer site
+        if (shop.Slug == MasterCatalog.ShopSlug || shop.Name == MasterCatalog.ShopName)
+            return Result.Failure<ShopDetailDto>("Shop not found.", "SHOP_NOT_FOUND");
+
+        var listedCount = await MasterCatalog.StorefrontListings(_context, masterShopId: null)
+            .Where(p => p.ShopId == shop.Id)
+            .CountAsync(cancellationToken);
+
+        if (listedCount == 0)
             return Result.Failure<ShopDetailDto>("Shop not found.", "SHOP_NOT_FOUND");
 
         var dto = new ShopDetailDto(
@@ -38,7 +50,7 @@ public class GetShopBySlugQueryHandler
             shop.City,
             shop.Country,
             shop.Rating,
-            shop.TotalProducts,
+            listedCount,
             shop.IsActive,
             shop.CreatedAt);
 

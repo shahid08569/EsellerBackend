@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Identity;
 using RefreshTokenEntity = Eseller.Domain.Entities.Identity.RefreshToken;
@@ -110,10 +110,14 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, R
         // 10. Save
         await _context.SaveChangesAsync(cancellationToken);
 
-        // 11. Return new tokens
+        // 11. Return new tokens + account info (so frontend can restore full auth state)
         return Result.Success(new RefreshTokenResponse(
             newAccessToken,
             newRefreshToken,
-            _dateTime.UtcNow.AddMinutes(15)));
+            _dateTime.UtcNow.AddMinutes(15),
+            account.Id,
+            account.Username,
+            account.Email,
+            account.RoleType.ToString()));
     }
 }

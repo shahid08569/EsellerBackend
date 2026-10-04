@@ -31,6 +31,7 @@ public class UpdateBrandCommandHandler
 
         brand.Name = request.Name;
         brand.IsActive = request.IsActive;
+        brand.LogoUrl = string.IsNullOrWhiteSpace(request.LogoUrl) ? null : request.LogoUrl.Trim();
         brand.SetUpdatedAt(_dateTime.UtcNow);
 
         await _context.SaveChangesAsync(cancellationToken);

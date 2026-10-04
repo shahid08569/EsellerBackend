@@ -26,10 +26,18 @@ public class AffiliateAuthController : ControllerBase
         [FromBody] RegisterAffiliateRequest request,
         CancellationToken cancellationToken)
     {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers["User-Agent"].ToString();
         var command = new RegisterAffiliateCommand(
             request.Name,
             request.Email,
-            request.Password);
+            request.Password,
+              request.Latitude,
+        request.Longitude,
+        request.DeviceType,
+        ipAddress,        
+        userAgent 
+            );
 
         var result = await _sender.Send(command, cancellationToken);
 
@@ -80,4 +88,7 @@ public class AffiliateAuthController : ControllerBase
 public record RegisterAffiliateRequest(
     string Name,
     string Email,
-    string Password);
+    string Password,
+    decimal Latitude,
+    decimal Longitude,
+    string DeviceType);

@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -109,7 +109,14 @@ public class GetOrderByIdQueryHandler
             order.ReferralCodeSnapshot,
             itemDtos,
             order.CreatedAt,
-            order.UpdatedAt);
+            order.UpdatedAt,
+            order.CustomerName,
+            order.CustomerPhone,
+            order.ShippingAddress,
+            order.City,
+            order.State,
+            order.Country,
+            order.OrderNotes);
 
         return Result.Success(dto);
     }

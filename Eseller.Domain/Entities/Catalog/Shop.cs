@@ -1,4 +1,4 @@
-﻿using Eseller.Domain.Common;
+using Eseller.Domain.Common;
 
 namespace Eseller.Domain.Entities.Catalog;
 
@@ -16,6 +16,8 @@ public class Shop : AuditableEntity, ISoftDelete
     public string? Country { get; set; }
     public decimal Rating { get; set; }
     public int TotalProducts { get; set; }
+    public Guid? ShopCategoryId { get; set; }
+    public string? CustomBadgeText { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime? DeletedAt { get; set; }
 }

@@ -18,6 +18,16 @@ public class GlobalExceptionHandler : IExceptionHandler
         Exception exception,
         CancellationToken cancellationToken)
     {
+        // Client navigated away / request aborted — not a server fault.
+        if (exception is OperationCanceledException or TaskCanceledException)
+        {
+            if (!httpContext.Response.HasStarted)
+            {
+                httpContext.Response.StatusCode = 499; // Client Closed Request
+            }
+            return true;
+        }
+
         _logger.LogError(exception, "Unhandled exception: {Message}", exception.Message);
 
         httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;

@@ -7,6 +7,8 @@ public class MockSmsService : ISmsService
 {
     private readonly ILogger<MockSmsService> _logger;
 
+    public bool IsMock => true;
+
     public MockSmsService(ILogger<MockSmsService> logger)
     {
         _logger = logger;

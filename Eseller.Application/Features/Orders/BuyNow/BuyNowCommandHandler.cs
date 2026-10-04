@@ -1,9 +1,11 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Entities.Orders;
+using Eseller.Domain.Entities.Payment;
+using Eseller.Domain.Entities.Wallet;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -18,15 +20,18 @@ public class BuyNowCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
+    private readonly ISignalRNotificationService _notificationService;
 
     public BuyNowCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        ISignalRNotificationService notificationService)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
+        _notificationService = notificationService;
     }
 
     public async Task<Result<Guid>> Handle(
@@ -52,6 +57,13 @@ public class BuyNowCommandHandler
 
         if (user is null)
             return Result.Failure<Guid>("User not found.", "USER_NOT_FOUND");
+
+        if (user.Status != UserApprovalStatus.Approved)
+            return Result.Failure<Guid>(
+                user.Status == UserApprovalStatus.Rejected
+                    ? "Your account was rejected. Contact support."
+                    : "Your account is pending Super Admin approval. You cannot place orders yet.",
+                "ACCOUNT_PENDING_APPROVAL");
 
         // 3. Load variant
         var variant = await _context.ProductVariants
@@ -185,6 +197,31 @@ public class BuyNowCommandHandler
             CreatedAt = now
         });
 
+        // 12.5. Calculate 20% Net Commission Seller Earning
+        var grossTotal = variant.Price * request.Quantity;
+        var commissionAmount = Math.Round(grossTotal * 0.20m, 2);
+
+        _context.SellerEarnings.Add(new SellerEarning
+        {
+            SellerOrderId = sellerOrder.Id,
+            GrossAmount = grossTotal,
+            CommissionAmount = commissionAmount,
+            NetAmount = commissionAmount,
+            Status = SellerEarningStatus.Pending
+        });
+
+        var payment = new Eseller.Domain.Entities.Payment.Payment
+        {
+            OrderRequestId = orderRequest.Id,
+            Method = PaymentMethod.CashOnDelivery,
+            Currency = "USD",
+            Amount = grossTotal,
+            Status = PaymentStatus.Pending
+        };
+        payment.SetCreatedAt(now);
+        payment.SetUpdatedAt(now);
+        _context.Payments.Add(payment);
+
         // 13. Save all
         await _context.SaveChangesAsync(cancellationToken);
 
@@ -210,9 +247,78 @@ public class BuyNowCommandHandler
             IsRead = false
         });
 
+        // 16. Notify the shopkeeper + admins
+        var shopkeeperAccountId = await (
+            from s in _context.Shops.IgnoreQueryFilters().AsNoTracking()
+            join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
+            where s.Id == shop.Id && s.DeletedAt == null
+            select (Guid?)sk.AccountId
+        ).FirstOrDefaultAsync(cancellationToken);
+
+        var shortRef = orderRequest.Id.ToString()[..8].ToUpperInvariant();
+        var customerLabel = orderRequest.CustomerName ?? user.Name ?? "Customer";
+        var notifTitle = $"New order #{shortRef}";
+        var notifBody = $"{customerLabel} placed an order ({request.Quantity} items, Rs. {grossTotal:N0}).";
+        var notifNow = _dateTime.UtcNow;
+        var createdNotifs = new List<(Guid AccountId, Notification Notif)>();
+
+        if (shopkeeperAccountId.HasValue)
+        {
+            var notif = new Notification
+            {
+                AccountId = shopkeeperAccountId.Value,
+                Type = NotificationType.OrderPlaced,
+                Title = notifTitle,
+                Message = notifBody,
+                IsRead = false
+            };
+            notif.SetCreatedAt(notifNow);
+            notif.SetUpdatedAt(notifNow);
+            _context.Notifications.Add(notif);
+            createdNotifs.Add((shopkeeperAccountId.Value, notif));
+        }
+
+        var adminAccounts = await _context.Accounts
+            .AsNoTracking()
+            .Where(a => a.RoleType == RoleType.SuperAdmin || a.RoleType == RoleType.Partner)
+            .Select(a => a.Id)
+            .ToListAsync(cancellationToken);
+
+        foreach (var adminId in adminAccounts)
+        {
+            var notif = new Notification
+            {
+                AccountId = adminId,
+                Type = NotificationType.NewOrderForSuperAdmin,
+                Title = notifTitle,
+                Message = notifBody,
+                IsRead = false
+            };
+            notif.SetCreatedAt(notifNow);
+            notif.SetUpdatedAt(notifNow);
+            _context.Notifications.Add(notif);
+            createdNotifs.Add((adminId, notif));
+        }
+
         await _context.SaveChangesAsync(cancellationToken);
 
-        // 16. Return
+        foreach (var (accountId, notif) in createdNotifs)
+        {
+            try
+            {
+                await _notificationService.SendNotificationToAccountAsync(
+                    accountId, notif.Id, notif.Type, notif.Title, notif.Message, cancellationToken);
+            }
+            catch { /* best-effort */ }
+        }
+
+        try
+        {
+            await _notificationService.BroadcastNewOrderAsync(
+                orderRequest.Id, customerLabel, request.Quantity, grossTotal, cancellationToken);
+        }
+        catch { /* best-effort */ }
+
         return Result.Success(orderRequest.Id);
     }
 

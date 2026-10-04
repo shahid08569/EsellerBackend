@@ -20,6 +20,14 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
             .HasMaxLength(30)
             .IsRequired(false);
 
+        builder.Property(u => u.Status)
+            .IsRequired()
+            .HasConversion<int>()
+            .HasDefaultValue(Eseller.Domain.Enums.UserApprovalStatus.Approved);
+
+        builder.Property(u => u.RejectionReason)
+            .HasMaxLength(500);
+
         builder.Property(u => u.CreatedAt)
             .IsRequired();
 
@@ -34,5 +42,7 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
 
         builder.HasIndex(u => u.AccountId)
             .IsUnique();
+
+        builder.HasIndex(u => u.Status);
     }
 }

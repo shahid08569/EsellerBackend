@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -69,7 +69,9 @@ public class GetBlogPostsQueryHandler
                 p.CoverImageUrl,
                 p.IsPublished,
                 p.PublishedAt,
-                p.CreatedAt);
+                p.CreatedAt,
+                p.Content,
+                p.SeoDescription);
         }).ToList();
 
         var pagedList = new PagedList<BlogPostListDto>(

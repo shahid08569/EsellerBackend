@@ -1,4 +1,4 @@
-﻿using Eseller.Domain.Entities.Identity;
+using Eseller.Domain.Entities.Identity;
 using Eseller.Domain.Entities.Orders;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -19,6 +19,14 @@ public class OrderRequestConfiguration : IEntityTypeConfiguration<OrderRequest>
         // Affiliate snapshot
         builder.Property(o => o.ReferralCodeSnapshot)
             .HasMaxLength(50);
+
+        builder.Property(o => o.CustomerName).HasMaxLength(150);
+        builder.Property(o => o.CustomerPhone).HasMaxLength(50);
+        builder.Property(o => o.ShippingAddress).HasMaxLength(500);
+        builder.Property(o => o.City).HasMaxLength(100);
+        builder.Property(o => o.State).HasMaxLength(100);
+        builder.Property(o => o.Country).HasMaxLength(100);
+        builder.Property(o => o.OrderNotes).HasMaxLength(1000);
 
         builder.Property(o => o.CreatedAt).IsRequired();
         builder.Property(o => o.UpdatedAt).IsRequired();

@@ -11,7 +11,8 @@ public interface ISignalRNotificationService
         string senderRole,
         string message,
         DateTime sentAt,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<Guid>? notifyAccountIds = null);
 
     Task SendNotificationToAccountAsync(
         Guid accountId,

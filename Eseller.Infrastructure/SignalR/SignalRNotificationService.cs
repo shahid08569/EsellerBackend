@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Abstractions.SignalR;
 using Eseller.Domain.Enums;
 using Eseller.Infrastructure.SignalR.Hubs;
@@ -26,11 +26,43 @@ public class SignalRNotificationService : ISignalRNotificationService
         string senderRole,
         string message,
         DateTime sentAt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<Guid>? notifyAccountIds = null)
     {
-        await _chatHubContext.Clients
-            .Group($"order-{orderRequestId}")
-            .ReceiveMessage(messageId, orderRequestId, senderAccountId, senderRole, message, sentAt);
+        // Always deliver into the open thread room.
+        var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            $"order-{orderRequestId}"
+        };
+
+        var isAdminSender =
+            senderRole.Equals(nameof(RoleType.SuperAdmin), StringComparison.OrdinalIgnoreCase) ||
+            senderRole.Equals(nameof(RoleType.Partner), StringComparison.OrdinalIgnoreCase);
+
+        // Sellers/customers messaging → ping all online admins (even if not in the room).
+        // Admins already in the order room also receive this; clients dedupe by messageId.
+        if (!isAdminSender)
+        {
+            groups.Add(nameof(RoleType.SuperAdmin));
+            groups.Add(nameof(RoleType.Partner));
+        }
+
+        // Admin → specific seller/customer account inbox (account-{guid} joined on ChatHub connect).
+        if (notifyAccountIds is { Count: > 0 })
+        {
+            foreach (var accountId in notifyAccountIds.Distinct())
+            {
+                if (accountId != Guid.Empty && accountId != senderAccountId)
+                    groups.Add($"account-{accountId}");
+            }
+        }
+
+        foreach (var group in groups)
+        {
+            await _chatHubContext.Clients
+                .Group(group)
+                .ReceiveMessage(messageId, orderRequestId, senderAccountId, senderRole, message, sentAt);
+        }
     }
 
     public async Task SendNotificationToAccountAsync(

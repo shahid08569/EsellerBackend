@@ -1,4 +1,5 @@
-﻿using Eseller.Application.Features.Blog.CreateBlogCategory;
+using Eseller.Application.Abstractions;
+using Eseller.Application.Features.Blog.CreateBlogCategory;
 using Eseller.Application.Features.Blog.CreateBlogPost;
 using Eseller.Application.Features.Blog.DeleteBlogPost;
 using Eseller.Application.Features.Blog.GetBlogPosts;
@@ -6,6 +7,7 @@ using Eseller.Application.Features.Blog.UpdateBlogPost;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Eseller.API.Controllers;
 
@@ -39,6 +41,43 @@ public class AdminBlogController : ControllerBase
             return HandleError(result);
 
         return Ok(result.Value);
+    }
+
+    [HttpGet("posts/{id:guid}")]
+    public async Task<IActionResult> GetPostById(
+        Guid id,
+        [FromServices] IApplicationDbContext context,
+        CancellationToken cancellationToken)
+    {
+        var post = await context.BlogPosts
+            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+        if (post == null)
+            return NotFound(new { error = "Post not found." });
+
+        string? categoryName = null;
+        if (post.BlogCategoryId.HasValue)
+        {
+            var category = await context.BlogCategories
+                .FirstOrDefaultAsync(c => c.Id == post.BlogCategoryId.Value, cancellationToken);
+            categoryName = category?.Name;
+        }
+
+        return Ok(new
+        {
+            id = post.Id,
+            blogCategoryId = post.BlogCategoryId,
+            categoryName = categoryName,
+            title = post.Title,
+            slug = post.Slug,
+            content = post.Content,
+            coverImageUrl = post.CoverImageUrl,
+            isPublished = post.IsPublished,
+            publishedAt = post.PublishedAt,
+            createdAt = post.CreatedAt,
+            seoTitle = post.SeoTitle,
+            seoDescription = post.SeoDescription
+        });
     }
 
     [HttpPost("posts")]

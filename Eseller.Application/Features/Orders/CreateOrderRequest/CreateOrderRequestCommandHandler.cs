@@ -1,9 +1,11 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Entities.Orders;
+using Eseller.Domain.Entities.Payment;
+using Eseller.Domain.Entities.Wallet;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -18,15 +20,18 @@ public class CreateOrderRequestCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
+    private readonly ISignalRNotificationService _notificationService;
 
     public CreateOrderRequestCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        ISignalRNotificationService notificationService)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
+        _notificationService = notificationService;
     }
 
     public async Task<Result<Guid>> Handle(
@@ -50,6 +55,13 @@ public class CreateOrderRequestCommandHandler
 
         if (user is null)
             return Result.Failure<Guid>("User not found.", "USER_NOT_FOUND");
+
+        if (user.Status != UserApprovalStatus.Approved)
+            return Result.Failure<Guid>(
+                user.Status == UserApprovalStatus.Rejected
+                    ? "Your account was rejected. Contact support."
+                    : "Your account is pending Super Admin approval. You cannot place orders yet.",
+                "ACCOUNT_PENDING_APPROVAL");
 
         var cart = await _context.Carts
             .FirstOrDefaultAsync(c => c.UserId == user.Id, cancellationToken);
@@ -142,7 +154,14 @@ public class CreateOrderRequestCommandHandler
             UserId = user.Id,
             Status = OrderStatus.Pending,
             AffiliateId = affiliateId,
-            ReferralCodeSnapshot = referralCodeSnapshot
+            ReferralCodeSnapshot = referralCodeSnapshot,
+            CustomerName = request.CustomerName,
+            CustomerPhone = request.CustomerPhone,
+            ShippingAddress = request.ShippingAddress,
+            City = request.City,
+            State = request.State,
+            Country = request.Country,
+            OrderNotes = request.OrderNotes
         };
 
         _context.OrderRequests.Add(orderRequest);
@@ -240,10 +259,40 @@ public class CreateOrderRequestCommandHandler
                     CreatedAt = now
                 });
             }
+
+            // Calculate 20% Net Commission Seller Earning
+            var grossTotal = shopGroup.Sum(ci => variants[ci.ProductVariantId].Price * ci.Quantity);
+            var commissionAmount = Math.Round(grossTotal * 0.20m, 2);
+
+            _context.SellerEarnings.Add(new SellerEarning
+            {
+                SellerOrderId = sellerOrder.Id,
+                GrossAmount = grossTotal,
+                CommissionAmount = commissionAmount,
+                NetAmount = commissionAmount,
+                Status = SellerEarningStatus.Pending
+            });
         }
 
         // Clear cart
         _context.CartItems.RemoveRange(cartItems);
+
+        // COD payment row — Super Admin marks Completed (Paid) later
+        var orderGross = createdOrderItems.Sum(x => x.UnitPrice * x.Quantity);
+        if (orderGross <= 0)
+            orderGross = cartItems.Sum(ci => variants[ci.ProductVariantId].Price * ci.Quantity);
+
+        var payment = new Eseller.Domain.Entities.Payment.Payment
+        {
+            OrderRequestId = orderRequest.Id,
+            Method = PaymentMethod.CashOnDelivery,
+            Currency = "USD",
+            Amount = orderGross,
+            Status = PaymentStatus.Pending
+        };
+        payment.SetCreatedAt(now);
+        payment.SetUpdatedAt(now);
+        _context.Payments.Add(payment);
 
         await _context.SaveChangesAsync(cancellationToken);
 
@@ -322,7 +371,84 @@ public class CreateOrderRequestCommandHandler
             IsRead = false
         });
 
+        // Notify each shopkeeper who received a SellerOrder split
+        var shopIdsForNotify = sellerOrders.Select(so => so.ShopId).Distinct().ToList();
+        var shopkeeperAccountIds = await (
+            from s in _context.Shops.IgnoreQueryFilters().AsNoTracking()
+            join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
+            where shopIdsForNotify.Contains(s.Id) && s.DeletedAt == null
+            select sk.AccountId
+        ).Distinct().ToListAsync(cancellationToken);
+
+        var orderTotal = orderItemsForMessage.Sum(i => i.TotalPriceSnapshot);
+        var itemCount = orderItemsForMessage.Sum(i => i.Quantity);
+        var shortRef = orderRequest.Id.ToString()[..8].ToUpperInvariant();
+        var notifTitle = $"New order #{shortRef}";
+        var notifBody = $"{orderRequest.CustomerName ?? "Customer"} placed an order ({itemCount} items, Rs. {orderTotal:N0}).";
+        var notifNow = _dateTime.UtcNow;
+        var createdNotifs = new List<(Guid AccountId, Notification Notif)>();
+
+        foreach (var accountId in shopkeeperAccountIds)
+        {
+            var notif = new Notification
+            {
+                AccountId = accountId,
+                Type = NotificationType.OrderPlaced,
+                Title = notifTitle,
+                Message = notifBody,
+                IsRead = false
+            };
+            notif.SetCreatedAt(notifNow);
+            notif.SetUpdatedAt(notifNow);
+            _context.Notifications.Add(notif);
+            createdNotifs.Add((accountId, notif));
+        }
+
+        // Also notify SuperAdmin group via dedicated event
+        var adminAccounts = await _context.Accounts
+            .AsNoTracking()
+            .Where(a => a.RoleType == RoleType.SuperAdmin || a.RoleType == RoleType.Partner)
+            .Select(a => a.Id)
+            .ToListAsync(cancellationToken);
+
+        foreach (var adminId in adminAccounts)
+        {
+            var notif = new Notification
+            {
+                AccountId = adminId,
+                Type = NotificationType.NewOrderForSuperAdmin,
+                Title = notifTitle,
+                Message = notifBody,
+                IsRead = false
+            };
+            notif.SetCreatedAt(notifNow);
+            notif.SetUpdatedAt(notifNow);
+            _context.Notifications.Add(notif);
+            createdNotifs.Add((adminId, notif));
+        }
+
         await _context.SaveChangesAsync(cancellationToken);
+
+        foreach (var (accountId, notif) in createdNotifs)
+        {
+            try
+            {
+                await _notificationService.SendNotificationToAccountAsync(
+                    accountId, notif.Id, notif.Type, notif.Title, notif.Message, cancellationToken);
+            }
+            catch { /* best-effort */ }
+        }
+
+        try
+        {
+            await _notificationService.BroadcastNewOrderAsync(
+                orderRequest.Id,
+                orderRequest.CustomerName ?? "Customer",
+                itemCount,
+                orderTotal,
+                cancellationToken);
+        }
+        catch { /* best-effort */ }
 
         return Result.Success(orderRequest.Id);
     }

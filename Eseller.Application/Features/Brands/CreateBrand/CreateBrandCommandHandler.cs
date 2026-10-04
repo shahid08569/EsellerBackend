@@ -41,7 +41,8 @@ public class CreateBrandCommandHandler
         {
             Name = request.Name,
             Slug = slug,
-            IsActive = true
+            LogoUrl = string.IsNullOrWhiteSpace(request.LogoUrl) ? null : request.LogoUrl.Trim(),
+            IsActive = request.IsActive
         };
 
         _context.Brands.Add(brand);

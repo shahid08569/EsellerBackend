@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -37,17 +37,20 @@ public class UpdateShopCommandHandler
         if (shop is null)
             return Result.Failure("Shop not found.", "SHOP_NOT_FOUND");
 
-        // 3. Data Isolation — verify ownership
-        var shopkeeper = await _context.Shopkeepers
-            .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
+        // 3. Data Isolation — verify ownership unless SuperAdmin or Partner
+        var isPrivileged = _currentUserService.RoleType == Eseller.Domain.Enums.RoleType.SuperAdmin ||
+                           _currentUserService.RoleType == Eseller.Domain.Enums.RoleType.Partner;
 
-        if (shopkeeper is null)
-            return Result.Failure("Shopkeeper not found.", "SHOPKEEPER_NOT_FOUND");
+        if (!isPrivileged)
+        {
+            var shopkeeper = await _context.Shopkeepers
+                .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
 
-        if (shopkeeper.AccountId != _currentUserService.AccountId.Value)
-            return Result.Failure(
-                "You do not have permission to update this shop.",
-                "FORBIDDEN");
+            if (shopkeeper is null || shopkeeper.AccountId != _currentUserService.AccountId.Value)
+                return Result.Failure(
+                    "You do not have permission to update this shop.",
+                    "FORBIDDEN");
+        }
 
         // 4. Update fields
         shop.Name = request.Name;

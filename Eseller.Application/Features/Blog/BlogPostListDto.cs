@@ -1,4 +1,4 @@
-﻿namespace Eseller.Application.Features.Blog;
+namespace Eseller.Application.Features.Blog;
 
 public record BlogPostListDto(
     Guid Id,
@@ -9,4 +9,6 @@ public record BlogPostListDto(
     string? CoverImageUrl,
     bool IsPublished,
     DateTime? PublishedAt,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? Content = null,
+    string? SeoDescription = null);

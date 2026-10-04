@@ -1,12 +1,15 @@
-﻿using Eseller.Application.Features.Products.CreateProduct;
+using Eseller.Application.Features.Products.AddCatalogProductToShop;
+using Eseller.Application.Features.Products.CreateProduct;
 using Eseller.Application.Features.Products.DeleteAllProductImages;
 using Eseller.Application.Features.Products.DeleteProduct;
 using Eseller.Application.Features.Products.DeleteProductImage;
+using Eseller.Application.Features.Products.GetCatalogProducts;
 using Eseller.Application.Features.Products.GetMyProducts;
 using Eseller.Application.Features.Products.GetProductById;
 using Eseller.Application.Features.Products.GetProductBySlug;
 using Eseller.Application.Features.Products.GetProductImages;
 using Eseller.Application.Features.Products.GetProducts;
+using Eseller.Application.Features.Products.SetProductImageCover;
 using Eseller.Application.Features.Products.UpdateProduct;
 using Eseller.Application.Features.Products.UpdateProductImageSort;
 using Eseller.Application.Features.Products.UploadMultipleProductImages;
@@ -107,6 +110,65 @@ public class ProductsController : ControllerBase
     // ─────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Super Admin master catalog for sellers to browse and Add to Store.
+    /// </summary>
+    [HttpGet("catalog")]
+    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
+    public async Task<IActionResult> GetCatalog(
+        [FromQuery] Guid? categoryId,
+        [FromQuery] Guid? brandId,
+        [FromQuery] string? search,
+        [FromQuery] string sortBy = "newest",
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetCatalogProductsQuery(categoryId, brandId, search, sortBy, pageNumber, pageSize);
+        var result = await _sender.Send(query, cancellationToken);
+
+        if (!result.IsSuccess)
+            return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
+
+        return Ok(result.Value);
+    }
+
+    /// <summary>
+    /// Seller requests to list a Super Admin catalog product on their shop (pending approval).
+    /// </summary>
+    [HttpPost("add-to-store")]
+    [Authorize(Roles = "Shopkeeper")]
+    public async Task<IActionResult> AddToStore(
+        [FromBody] AddToStoreRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sender.Send(
+            new AddCatalogProductToShopCommand(request.SourceProductId, request.ShopId),
+            cancellationToken);
+
+        if (!result.IsSuccess)
+        {
+            return result.ErrorCode switch
+            {
+                "SHOP_NOT_FOUND" or "CATALOG_PRODUCT_NOT_FOUND" =>
+                    NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
+                "PRODUCT_ALREADY_REQUESTED" =>
+                    Conflict(new { error = result.Error, errorCode = result.ErrorCode }),
+                "STORE_NOT_VERIFIED" or "PRODUCT_LIMIT_REACHED" or "FORBIDDEN" =>
+                    StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
+                _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
+            };
+        }
+
+        return Ok(new
+        {
+            productId = result.Value,
+            isPendingApproval = true,
+            status = "pending_approval",
+            message = "Listing request submitted. Status: Approval In Progress. The product will go live on your shop after Super Admin approval."
+        });
+    }
+
+    /// <summary>
     /// Get shopkeeper's own products (including pending + rejected).
     /// </summary>
     [HttpGet("my")]
@@ -134,10 +196,10 @@ public class ProductsController : ControllerBase
     }
 
     /// <summary>
-    /// Create a product (shopkeeper only).
+    /// Create a Super Admin master catalog product (not for sellers).
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "Shopkeeper")]
+    [Authorize(Roles = "SuperAdmin,Partner")]
     public async Task<IActionResult> Create(
         [FromBody] CreateProductRequest request,
         CancellationToken cancellationToken)
@@ -161,7 +223,12 @@ public class ProductsController : ControllerBase
             };
         }
 
-        return Ok(new { productId = result.Value, message = "Product created successfully." });
+        return Ok(new
+        {
+            productId = result.Value,
+            isPendingApproval = false,
+            message = "Catalog product created successfully."
+        });
     }
 
     /// <summary>
@@ -244,10 +311,35 @@ public class ProductsController : ControllerBase
     }
 
     /// <summary>
-    /// Upload a product image (shopkeeper own / admin any).
+    /// Set cover image for a catalog product (Super Admin).
+    /// </summary>
+    [HttpPut("{id:guid}/images/{imageId:guid}/cover")]
+    [Authorize(Roles = "SuperAdmin,Partner")]
+    public async Task<IActionResult> SetCoverImage(
+        Guid id,
+        Guid imageId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sender.Send(new SetProductImageCoverCommand(id, imageId), cancellationToken);
+        if (!result.IsSuccess)
+        {
+            return result.ErrorCode switch
+            {
+                "PRODUCT_NOT_FOUND" or "IMAGE_NOT_FOUND" =>
+                    NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
+                "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
+                _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
+            };
+        }
+
+        return Ok(new { message = "Cover image updated successfully." });
+    }
+
+    /// <summary>
+    /// Upload a product image (Super Admin catalog).
     /// </summary>
     [HttpPost("{id:guid}/images")]
-    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
+    [Authorize(Roles = "SuperAdmin,Partner")]
     [RequestSizeLimit(5 * 1024 * 1024)]
     public async Task<IActionResult> UploadImage(
         Guid id,
@@ -283,10 +375,10 @@ public class ProductsController : ControllerBase
     }
 
     /// <summary>
-    /// Upload multiple product images at once (bulk).
+    /// Upload multiple product images at once (bulk — Super Admin catalog).
     /// </summary>
     [HttpPost("{id:guid}/images/bulk")]
-    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
+    [Authorize(Roles = "SuperAdmin,Partner")]
     [RequestSizeLimit(50 * 1024 * 1024)]   // 50 MB total
     public async Task<IActionResult> UploadMultipleImages(
         Guid id,
@@ -435,7 +527,7 @@ public class ProductsController : ControllerBase
 // ─────────────────────────────────────────────────────────────
 
 public record CreateProductRequest(
-    Guid ShopId,
+    Guid? ShopId,
     Guid CategoryId,
     Guid? BrandId,
     string Name,
@@ -452,5 +544,7 @@ public record UpdateProductRequest(
     decimal BasePrice,
     string? SeoTitle,
     string? SeoDescription);
+
+public record AddToStoreRequest(Guid SourceProductId, Guid ShopId);
 
 public record UpdateImageSortRequest(int SortOrder);

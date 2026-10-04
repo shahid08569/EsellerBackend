@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -42,6 +42,15 @@ public class UpdateBannerCommandHandler
 
         banner.ImageUrl = request.ImageUrl.Trim();
         banner.LinkUrl = request.LinkUrl?.Trim();
+        banner.Title = request.Title?.Trim();
+        banner.Subtitle = request.Subtitle?.Trim();
+        banner.Description = request.Description?.Trim();
+        banner.Price = request.Price;
+        banner.OriginalPrice = request.OriginalPrice;
+        banner.ButtonText = request.ButtonText?.Trim();
+        banner.BackgroundColor = request.BackgroundColor?.Trim();
+        banner.TextColor = request.TextColor?.Trim();
+        banner.AvailableSizes = request.AvailableSizes?.Trim();
         banner.SortOrder = request.SortOrder;
         banner.IsActive = request.IsActive;
         banner.StartDate = request.StartDate;

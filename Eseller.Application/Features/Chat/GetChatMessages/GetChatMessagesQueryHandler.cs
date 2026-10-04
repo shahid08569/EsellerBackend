@@ -1,5 +1,6 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
+using Eseller.Domain.Entities.Orders;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -28,26 +29,58 @@ public class GetChatMessagesQueryHandler
             return Result.Failure<PagedList<ChatMessageDto>>(
                 "User is not authenticated.", "UNAUTHENTICATED");
 
-        // Find order
+        // Find order — or create shop↔admin support channel keyed by Shop.Id
         var order = await _context.OrderRequests
             .FirstOrDefaultAsync(o => o.Id == request.OrderRequestId, cancellationToken);
 
-        if (order is null)
-            return Result.Failure<PagedList<ChatMessageDto>>(
-                "Order not found.", "ORDER_NOT_FOUND");
+        if (order is null || order.UserId == Guid.Empty)
+        {
+            order = await ShopSupportChannel.EnsureAsync(
+                _context,
+                request.OrderRequestId,
+                DateTime.UtcNow,
+                cancellationToken);
+
+            if (order is null)
+                return Result.Failure<PagedList<ChatMessageDto>>(
+                    "Order or shop support channel not found.", "ORDER_NOT_FOUND");
+        }
 
         // Permission check
         var role = _currentUserService.RoleType;
         var isAdmin = role == RoleType.SuperAdmin || role == RoleType.Partner;
         var isCustomer = role == RoleType.User;
+        var isShopkeeper = role == RoleType.Shopkeeper;
 
-        if (!isAdmin)
+        if (isShopkeeper)
+        {
+            var shopkeeper = await _context.Shopkeepers
+                .FirstOrDefaultAsync(sk => sk.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+            if (shopkeeper is null)
+                return Result.Failure<PagedList<ChatMessageDto>>("You do not have permission.", "FORBIDDEN");
+
+            var shops = await _context.Shops
+                .IgnoreQueryFilters()
+                .Where(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null)
+                .Select(s => s.Id)
+                .ToListAsync(cancellationToken);
+
+            // Seller may only read Super Admin shop-support threads.
+            var ownsSupport = shops.Contains(order.Id)
+                || (!string.IsNullOrWhiteSpace(order.ShippingAddress)
+                    && shops.Any(id =>
+                        order.ShippingAddress!.Equals($"SHOP_SUPPORT_{id}", StringComparison.OrdinalIgnoreCase)));
+
+            if (!ownsSupport)
+                return Result.Failure<PagedList<ChatMessageDto>>(
+                    "You can only open Super Admin support chat.", "FORBIDDEN");
+        }
+        else if (!isAdmin)
         {
             if (!isCustomer)
                 return Result.Failure<PagedList<ChatMessageDto>>(
                     "You do not have permission.", "FORBIDDEN");
 
-            // Verify customer owns this order
             var user = await _context.Users
                 .FirstOrDefaultAsync(u => u.AccountId == _currentUserService.AccountId.Value,
                     cancellationToken);
@@ -55,6 +88,14 @@ public class GetChatMessagesQueryHandler
             if (user is null || order.UserId != user.Id)
                 return Result.Failure<PagedList<ChatMessageDto>>(
                     "You do not have permission.", "FORBIDDEN");
+
+            var supportMarker = $"CUSTOMER_SUPPORT_{user.Id}";
+            if (!string.Equals(order.ShippingAddress, supportMarker, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(order.ShippingAddress, "Live Support Inquiry", StringComparison.OrdinalIgnoreCase))
+            {
+                return Result.Failure<PagedList<ChatMessageDto>>(
+                    "You can only open Super Admin support chat.", "FORBIDDEN");
+            }
         }
 
         var query = _context.ChatMessages

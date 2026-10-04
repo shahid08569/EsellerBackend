@@ -29,7 +29,10 @@ public class AdminBrandsController : ControllerBase
         [FromBody] CreateBrandRequest request,
         CancellationToken cancellationToken)
     {
-        var command = new CreateBrandCommand(request.Name);
+        var command = new CreateBrandCommand(
+            request.Name,
+            request.LogoUrl,
+            request.IsActive ?? true);
         var result = await _sender.Send(command, cancellationToken);
 
         if (!result.IsSuccess)
@@ -47,7 +50,7 @@ public class AdminBrandsController : ControllerBase
         [FromBody] UpdateBrandRequest request,
         CancellationToken cancellationToken)
     {
-        var command = new UpdateBrandCommand(id, request.Name, request.IsActive);
+        var command = new UpdateBrandCommand(id, request.Name, request.IsActive, request.LogoUrl);
         var result = await _sender.Send(command, cancellationToken);
 
         if (!result.IsSuccess)
@@ -146,5 +149,12 @@ public class AdminBrandsController : ControllerBase
     }
 }
 
-public record CreateBrandRequest(string Name);
-public record UpdateBrandRequest(string Name, bool IsActive);
+public record CreateBrandRequest(
+    string Name,
+    string? LogoUrl = null,
+    bool? IsActive = true);
+
+public record UpdateBrandRequest(
+    string Name,
+    bool IsActive,
+    string? LogoUrl = null);

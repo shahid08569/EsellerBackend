@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -52,6 +52,15 @@ public class GetBannerByIdQueryHandler
             banner.Id,
             banner.ImageUrl,
             banner.LinkUrl,
+            banner.Title,
+            banner.Subtitle,
+            banner.Description,
+            banner.Price,
+            banner.OriginalPrice,
+            banner.ButtonText,
+            banner.BackgroundColor,
+            banner.TextColor,
+            banner.AvailableSizes,
             banner.SortOrder,
             banner.IsActive,
             isCurrentlyActive,

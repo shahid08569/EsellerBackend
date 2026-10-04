@@ -1,4 +1,4 @@
-﻿namespace Eseller.Application.Features.Shops;
+namespace Eseller.Application.Features.Shops;
 
 public record ShopListDto(
     Guid Id,
@@ -9,4 +9,16 @@ public record ShopListDto(
     string? Country,
     decimal Rating,
     int TotalProducts,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    Guid? ShopCategoryId = null,
+    string? ShopCategoryName = null,
+    string? BadgeText = null,
+    string? BadgeColor = null,
+    string? IconUrl = null,
+    bool IsApproved = false,
+    bool IsActive = false,
+    string? Status = "Pending",
+    string? BannerUrl = null,
+    int MaxProductLimit = 200,
+    string? TierName = null,
+    decimal TierPriceUsd = 0);

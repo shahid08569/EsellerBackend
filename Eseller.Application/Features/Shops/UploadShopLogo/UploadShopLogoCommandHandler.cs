@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -43,14 +43,20 @@ public class UploadShopLogoCommandHandler
         if (shop is null)
             return Result.Failure<string>("Shop not found.", "SHOP_NOT_FOUND");
 
-        // 3. Ownership check
-        var shopkeeper = await _context.Shopkeepers
-            .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
+        // 3. Ownership check unless SuperAdmin or Partner
+        var isPrivileged = _currentUserService.RoleType == Eseller.Domain.Enums.RoleType.SuperAdmin ||
+                           _currentUserService.RoleType == Eseller.Domain.Enums.RoleType.Partner;
 
-        if (shopkeeper is null || shopkeeper.AccountId != _currentUserService.AccountId.Value)
-            return Result.Failure<string>(
-                "You do not have permission to update this shop.",
-                "FORBIDDEN");
+        if (!isPrivileged)
+        {
+            var shopkeeper = await _context.Shopkeepers
+                .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
+
+            if (shopkeeper is null || shopkeeper.AccountId != _currentUserService.AccountId.Value)
+                return Result.Failure<string>(
+                    "You do not have permission to update this shop.",
+                    "FORBIDDEN");
+        }
 
         // 4. Validate file
         if (request.FileSize > MaxFileSize)

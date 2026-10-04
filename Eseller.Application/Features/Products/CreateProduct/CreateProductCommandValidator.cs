@@ -1,4 +1,4 @@
-﻿using FluentValidation;
+using FluentValidation;
 
 namespace Eseller.Application.Features.Products.CreateProduct;
 
@@ -6,9 +6,6 @@ public class CreateProductCommandValidator : AbstractValidator<CreateProductComm
 {
     public CreateProductCommandValidator()
     {
-        RuleFor(x => x.ShopId)
-            .NotEmpty().WithMessage("Shop ID is required.");
-
         RuleFor(x => x.CategoryId)
             .NotEmpty().WithMessage("Category is required.");
 

@@ -1,4 +1,4 @@
-﻿namespace Eseller.Domain.Enums;
+namespace Eseller.Domain.Enums;
 
 public enum NotificationType
 {
@@ -17,5 +17,8 @@ public enum NotificationType
     RefundProcessed = 13,
     NewChatMessage = 14,
     NewSellerRegistration = 15,
-    NewOrderForSuperAdmin = 16
+    NewOrderForSuperAdmin = 16,
+    TierUpgradeApproved = 17,
+    TierUpgradeRejected = 18,
+    SystemAlert = 19
 }

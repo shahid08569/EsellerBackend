@@ -32,7 +32,9 @@ public class UpdateCategoryCommandHandler
         category.Name = request.Name;
         category.SeoTitle = request.SeoTitle;
         category.SeoDescription = request.SeoDescription;
-        category.IsActive = request.IsActive;
+        // Only flip active when explicitly provided (prevents accidental homepage hide)
+        if (request.IsActive.HasValue)
+            category.IsActive = request.IsActive.Value;
         category.SetUpdatedAt(_dateTime.UtcNow);
 
         await _context.SaveChangesAsync(cancellationToken);

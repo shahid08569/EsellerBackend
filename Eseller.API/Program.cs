@@ -2,10 +2,12 @@ using Eseller.API.Middleware;
 using Eseller.Application;
 using Eseller.Application.Abstractions;
 using Eseller.Infrastructure;
+using Eseller.Infrastructure.BackgroundJobs;
 using Eseller.Infrastructure.Persistence;
 using Eseller.Infrastructure.SignalR;
 using Eseller.Infrastructure.SignalR.Hubs;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 using Serilog;
 using System.Threading.RateLimiting;
@@ -40,6 +42,7 @@ builder.Services.AddCors(options =>
                 "http://localhost:4201",
                 "http://localhost:4202",
                 "http://localhost:4203",
+                "http://localhost:54007",
                 "https://eseller.com",
                 "https://seller.eseller.com",
                 "https://admin.eseller.com",
@@ -102,6 +105,7 @@ builder.Services.AddSignalR(options =>
 });
 
 builder.Services.AddScoped<ISignalRNotificationService, SignalRNotificationService>();
+builder.Services.AddHostedService<FlashSaleExpiryJob>();
 
 // ─── Exception Handlers ─────────────────────────────────────
 builder.Services.AddExceptionHandler<ValidationExceptionHandler>();
@@ -111,14 +115,30 @@ builder.Services.AddProblemDetails();
 var app = builder.Build();
 
 // ─── Middleware Pipeline ────────────────────────────────────
-app.UseSerilogRequestLogging();
+// Quiet request logging in Development (errors still go through exception handler)
+if (!app.Environment.IsDevelopment())
+{
+    app.UseSerilogRequestLogging();
+}
 app.UseExceptionHandler();
 
-// Seed database
+// Ensure database schema + seed (dev/local resilience)
 using (var scope = app.Services.CreateScope())
 {
-    var seeder = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
-    await seeder.SeedAsync();
+    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+    try
+    {
+        var db = scope.ServiceProvider.GetRequiredService<Eseller.Infrastructure.Persistence.EsellerDbContext>();
+        await db.Database.MigrateAsync();
+
+        var seeder = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
+        await seeder.SeedAsync();
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Database migrate/seed failed. Check SQL Server (EsellerDb) is ONLINE and connection string is correct.");
+        throw;
+    }
 }
 
 // Scalar (Development only)
@@ -129,6 +149,18 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseStaticFiles();
+
+var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "uploads");
+if (!Directory.Exists(uploadsDir))
+{
+    Directory.CreateDirectory(uploadsDir);
+}
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(uploadsDir),
+    RequestPath = "/uploads"
+});
 
 app.UseCors("FrontendPolicy");
 app.UseRateLimiter();

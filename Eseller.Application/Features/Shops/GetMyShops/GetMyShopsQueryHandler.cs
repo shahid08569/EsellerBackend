@@ -1,5 +1,6 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
+using Eseller.Application.Features.Products;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 
@@ -23,13 +24,11 @@ public class GetMyShopsQueryHandler
         GetMyShopsQuery request,
         CancellationToken cancellationToken)
     {
-        // 1. Auth check
         if (_currentUserService.AccountId is null)
             return Result.Failure<IReadOnlyList<ShopListDto>>(
                 "User is not authenticated.",
                 "UNAUTHENTICATED");
 
-        // 2. Find shopkeeper
         var shopkeeper = await _context.Shopkeepers
             .FirstOrDefaultAsync(sk => sk.AccountId == _currentUserService.AccountId.Value,
                 cancellationToken);
@@ -37,12 +36,37 @@ public class GetMyShopsQueryHandler
         if (shopkeeper is null)
             return Result.Success<IReadOnlyList<ShopListDto>>(new List<ShopListDto>());
 
-        // 3. Get all shops of this shopkeeper (including inactive — with DeletedAt = null)
+        var isApproved = shopkeeper.Status == Domain.Enums.ShopkeeperApprovalStatus.Approved;
+        var statusStr = shopkeeper.Status.ToString();
+
         var shops = await _context.Shops
             .IgnoreQueryFilters()
             .Where(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null)
             .OrderByDescending(s => s.CreatedAt)
-            .Select(s => new ShopListDto(
+            .ToListAsync(cancellationToken);
+
+        var categoryIds = shops
+            .Where(s => s.ShopCategoryId.HasValue)
+            .Select(s => s.ShopCategoryId!.Value)
+            .Distinct()
+            .ToList();
+
+        var categories = await _context.ShopCategories
+            .AsNoTracking()
+            .Where(c => categoryIds.Contains(c.Id) && c.DeletedAt == null)
+            .ToDictionaryAsync(c => c.Id, cancellationToken);
+
+        var result = shops.Select(s =>
+        {
+            categories.TryGetValue(s.ShopCategoryId ?? Guid.Empty, out var tier);
+            var maxLimit = tier?.MaxProductListings > 0
+                ? tier.MaxProductListings
+                : MasterCatalog.DefaultFreeProductLimit;
+            var tierName = !string.IsNullOrWhiteSpace(s.CustomBadgeText)
+                ? s.CustomBadgeText
+                : tier?.BadgeText ?? tier?.Name ?? "Bronze (Free)";
+
+            return new ShopListDto(
                 s.Id,
                 s.Name,
                 s.Slug,
@@ -51,9 +75,21 @@ public class GetMyShopsQueryHandler
                 s.Country,
                 s.Rating,
                 s.TotalProducts,
-                s.CreatedAt))
-            .ToListAsync(cancellationToken);
+                s.CreatedAt,
+                s.ShopCategoryId,
+                tier?.Name,
+                tierName,
+                tier?.BadgeColor,
+                tier?.IconUrl,
+                isApproved,
+                s.IsActive,
+                statusStr,
+                s.BannerUrl,
+                maxLimit,
+                tierName,
+                tier?.PriceUsd ?? 0);
+        }).ToList();
 
-        return Result.Success<IReadOnlyList<ShopListDto>>(shops);
+        return Result.Success<IReadOnlyList<ShopListDto>>(result);
     }
 }

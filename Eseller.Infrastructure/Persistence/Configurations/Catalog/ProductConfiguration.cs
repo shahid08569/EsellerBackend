@@ -16,6 +16,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
         builder.Property(p => p.Description).HasMaxLength(4000);
         builder.Property(p => p.BasePrice).HasPrecision(18, 2).IsRequired();
         builder.Property(p => p.IsFeatured).IsRequired().HasDefaultValue(false);
+        builder.Property(p => p.IsHotSelling).IsRequired().HasDefaultValue(false);
         builder.Property(p => p.IsApproved).IsRequired().HasDefaultValue(false);
         builder.Property(p => p.ViewCount).IsRequired().HasDefaultValue(0);
         builder.Property(p => p.AvgRating).HasPrecision(3, 2);
@@ -41,6 +42,11 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
             .HasForeignKey(p => p.BrandId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        builder.HasOne<Product>()
+            .WithMany()
+            .HasForeignKey(p => p.SourceProductId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.Property(p => p.RejectionReason)
             .HasMaxLength(500);
 
@@ -48,8 +54,11 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
         builder.HasIndex(p => p.ShopId);
         builder.HasIndex(p => p.CategoryId);
         builder.HasIndex(p => p.BrandId);
+        builder.HasIndex(p => p.SourceProductId);
+        builder.HasIndex(p => new { p.ShopId, p.SourceProductId });
         builder.HasIndex(p => p.IsActive);
         builder.HasIndex(p => p.IsFeatured);
+        builder.HasIndex(p => p.IsHotSelling);
         builder.HasIndex(p => p.IsApproved);
 
         builder.HasQueryFilter(s => s.IsActive);

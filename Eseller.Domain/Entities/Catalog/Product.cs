@@ -5,6 +5,10 @@ namespace Eseller.Domain.Entities.Catalog;
 public class Product : AuditableEntity, ISoftDelete
 {
     public Guid ShopId { get; set; }
+    /// <summary>
+    /// When set, this product is a seller listing cloned from a Super Admin catalog product.
+    /// </summary>
+    public Guid? SourceProductId { get; set; }
     public Guid CategoryId { get; set; }
     public Guid? BrandId { get; set; }
     public string Name { get; set; } = string.Empty;
@@ -12,6 +16,8 @@ public class Product : AuditableEntity, ISoftDelete
     public string? Description { get; set; }
     public decimal BasePrice { get; set; }
     public bool IsFeatured { get; set; }
+    /// <summary>Curated homepage Hot Selling pin (Super Admin).</summary>
+    public bool IsHotSelling { get; set; }
     public bool IsApproved { get; set; }
     public int ViewCount { get; set; }
     public decimal? AvgRating { get; set; }

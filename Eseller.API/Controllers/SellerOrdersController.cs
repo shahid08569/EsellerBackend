@@ -1,4 +1,5 @@
 ﻿using Eseller.Application.Features.Orders.GetSellerOrderById;
+using Eseller.Application.Features.Orders.GetSellerOrders;
 using Eseller.Application.Features.Orders.UpdateSellerOrderStatus;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
@@ -16,6 +17,33 @@ public class SellerOrdersController : ControllerBase
     public SellerOrdersController(ISender sender)
     {
         _sender = sender;
+    }
+
+    /// <summary>
+    /// Shopkeeper: paginated list of their SellerOrders (real commerce orders only).
+    /// </summary>
+    [HttpGet]
+    [Authorize(Roles = "Shopkeeper")]
+    public async Task<IActionResult> GetMySellerOrders(
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? status = null,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetSellerOrdersQuery(pageNumber, pageSize, status);
+        var result = await _sender.Send(query, cancellationToken);
+
+        if (!result.IsSuccess)
+        {
+            return result.ErrorCode switch
+            {
+                "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
+                "SHOPKEEPER_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
+                _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
+            };
+        }
+
+        return Ok(result.Value);
     }
 
     /// <summary>
@@ -43,9 +71,10 @@ public class SellerOrdersController : ControllerBase
     }
 
     /// <summary>
-    /// Update seller order status (shopkeeper own / admin any).
+    /// Update seller order status — SuperAdmin/Partner only (sellers are read-only).
     /// </summary>
     [HttpPut("{id:guid}/status")]
+    [Authorize(Roles = "SuperAdmin,Partner")]
     public async Task<IActionResult> UpdateStatus(
         Guid id,
         [FromBody] UpdateSellerOrderStatusRequest request,

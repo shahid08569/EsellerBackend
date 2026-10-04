@@ -11,16 +11,16 @@ public class DeleteBannerCommandHandler
 {
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
-    private readonly IDateTime _dateTime;
+    private readonly IFileStorageService _fileStorage;
 
     public DeleteBannerCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
-        IDateTime dateTime)
+        IFileStorageService fileStorage)
     {
         _context = context;
         _currentUserService = currentUserService;
-        _dateTime = dateTime;
+        _fileStorage = fileStorage;
     }
 
     public async Task<Result> Handle(
@@ -40,10 +40,24 @@ public class DeleteBannerCommandHandler
         if (banner is null)
             return Result.Failure("Banner not found.", "BANNER_NOT_FOUND");
 
-        banner.IsActive = false;
-        banner.SetUpdatedAt(_dateTime.UtcNow);
+        var imageUrl = banner.ImageUrl;
 
+        _context.HomepageBanners.Remove(banner);
         await _context.SaveChangesAsync(cancellationToken);
+
+        // Best-effort: remove uploaded image from disk after DB row is gone
+        if (!string.IsNullOrWhiteSpace(imageUrl) &&
+            imageUrl.StartsWith("/uploads/", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                await _fileStorage.DeleteAsync(imageUrl, cancellationToken);
+            }
+            catch
+            {
+                // DB delete already succeeded — ignore storage cleanup failures
+            }
+        }
 
         return Result.Success();
     }

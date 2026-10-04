@@ -19,9 +19,15 @@ public class GetPendingProductsQueryHandler
         GetPendingProductsQuery request,
         CancellationToken cancellationToken)
     {
-        // Pending = not approved + active (not rejected)
+        // Pending seller listing requests (cloned from Super Admin catalog)
         var query = _context.Products
-            .Where(p => !p.IsApproved && p.IsActive && p.RejectionReason == null)
+            .IgnoreQueryFilters()
+            .Where(p =>
+                !p.IsApproved
+                && p.IsActive
+                && p.DeletedAt == null
+                && p.RejectionReason == null
+                && p.SourceProductId != null)
             .OrderByDescending(p => p.CreatedAt);
 
         var totalCount = await query.CountAsync(cancellationToken);
@@ -50,7 +56,12 @@ public class GetPendingProductsQueryHandler
                 p.IsApproved,
                 "Pending",
                 p.RejectionReason,
-                p.CreatedAt))
+                p.CreatedAt,
+                null,
+                p.CategoryId,
+                p.BrandId,
+                p.SourceProductId,
+                p.ShopId))
             .ToListAsync(cancellationToken);
 
         var pagedList = new PagedList<ProductListDto>(

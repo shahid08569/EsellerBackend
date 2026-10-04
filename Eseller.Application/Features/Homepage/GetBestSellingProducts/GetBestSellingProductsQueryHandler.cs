@@ -1,0 +1,129 @@
+﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Common;
+using Eseller.Application.Features.Products;
+using Eseller.Domain.Enums;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+
+namespace Eseller.Application.Features.Homepage.GetBestSellingProducts;
+
+public class GetBestSellingProductsQueryHandler
+    : IRequestHandler<GetBestSellingProductsQuery, Result<List<ProductListDto>>>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly IProductBadgeService _badgeService;
+
+    public GetBestSellingProductsQueryHandler(
+        IApplicationDbContext context,
+        IProductBadgeService badgeService)
+    {
+        _context = context;
+        _badgeService = badgeService;
+    }
+
+    public async Task<Result<List<ProductListDto>>> Handle(
+        GetBestSellingProductsQuery request,
+        CancellationToken cancellationToken)
+    {
+        var limit = request.Limit > 50 ? 50 : (request.Limit < 1 ? 20 : request.Limit);
+        var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
+
+        // ✅ Top delivered products (seller storefront only — never master warehouse)
+        var productIds = await _context.OrderRequestItems
+            .Join(_context.OrderRequests,
+                oi => oi.OrderRequestId,
+                o => o.Id,
+                (oi, o) => new { oi, o })
+            .Join(_context.ProductVariants,
+                x => x.oi.ProductVariantId,
+                pv => pv.Id,
+                (x, pv) => new { x.oi, x.o, pv })
+            .Where(x => x.o.Status == OrderStatus.Delivered)
+            .GroupBy(x => x.pv.ProductId)
+            .Select(g => new { ProductId = g.Key, TotalSold = g.Sum(x => x.oi.Quantity) })
+            .OrderByDescending(x => x.TotalSold)
+            .Select(x => x.ProductId)
+            .ToListAsync(cancellationToken);
+
+        // Keep order, drop master/unlisted, then take limit
+        var storefrontIds = await MasterCatalog.StorefrontListings(_context, masterShopId)
+            .Where(p => productIds.Contains(p.Id))
+            .Select(p => p.Id)
+            .ToListAsync(cancellationToken);
+        var storefrontSet = storefrontIds.ToHashSet();
+        productIds = productIds.Where(storefrontSet.Contains).Take(limit).ToList();
+
+        var products = await LoadProducts(productIds, cancellationToken);
+
+        return Result.Success(products);
+    }
+
+    private async Task<List<ProductListDto>> LoadProducts(
+        List<Guid> productIds,
+        CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0)
+            return new List<ProductListDto>();
+
+        var products = await _context.Products
+            .Where(p => productIds.Contains(p.Id) && p.IsActive && p.IsApproved)
+            .Select(p => new
+            {
+                p.Id,
+                p.Name,
+                p.Slug,
+                p.BasePrice,
+                p.SourceProductId,
+                PrimaryImageUrl = _context.ProductImages
+                    .Where(pi => pi.ProductId == p.Id)
+                    .OrderByDescending(pi => pi.IsCover)
+                    .ThenBy(pi => pi.SortOrder)
+                    .Select(pi => pi.ImageUrl)
+                    .FirstOrDefault()
+                    ?? (p.SourceProductId == null
+                        ? null
+                        : _context.ProductImages
+                            .Where(pi => pi.ProductId == p.SourceProductId)
+                            .OrderByDescending(pi => pi.IsCover)
+                            .ThenBy(pi => pi.SortOrder)
+                            .Select(pi => pi.ImageUrl)
+                            .FirstOrDefault()),
+                ShopName = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Name).FirstOrDefault() ?? string.Empty,
+                ShopSlug = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Slug).FirstOrDefault() ?? string.Empty,
+                CategoryName = _context.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault() ?? string.Empty,
+                BrandName = p.BrandId == null
+                    ? null
+                    : _context.Brands.Where(b => b.Id == p.BrandId).Select(b => b.Name).FirstOrDefault(),
+                p.AvgRating,
+                p.IsFeatured,
+                p.IsApproved,
+                p.RejectionReason,
+                p.CreatedAt
+            })
+            .ToListAsync(cancellationToken);
+
+        var badges = await _badgeService.CalculateBadgesAsync(productIds, cancellationToken);
+
+        return productIds
+            .Select(id => products.FirstOrDefault(p => p.Id == id))
+            .Where(p => p is not null)
+            .Select(p => new ProductListDto(
+                p!.Id,
+                p.Name,
+                p.Slug,
+                p.BasePrice,
+                p.PrimaryImageUrl,
+                p.ShopName,
+                p.ShopSlug,
+                p.CategoryName,
+                p.BrandName,
+                p.AvgRating,
+                p.IsFeatured,
+                p.IsApproved,
+                p.IsApproved ? "Approved" : (p.RejectionReason == null ? "Pending" : "Rejected"),
+                p.RejectionReason,
+                p.CreatedAt,
+                badges.GetValueOrDefault(p.Id)))
+            .ToList();
+    }
+}

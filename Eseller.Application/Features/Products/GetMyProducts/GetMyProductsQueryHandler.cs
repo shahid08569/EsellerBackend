@@ -27,9 +27,10 @@ public class GetMyProductsQueryHandler
             return Result.Failure<PagedList<ProductListDto>>(
                 "User is not authenticated.", "UNAUTHENTICATED");
 
-        // Verify shop ownership
+        // Verify shop ownership (include inactive pending shops)
         var shop = await _context.Shops
-            .FirstOrDefaultAsync(s => s.Id == request.ShopId, cancellationToken);
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(s => s.Id == request.ShopId && s.DeletedAt == null, cancellationToken);
 
         if (shop is null)
             return Result.Failure<PagedList<ProductListDto>>(
@@ -60,7 +61,8 @@ public class GetMyProductsQueryHandler
                 p.BasePrice,
                 _context.ProductImages
                     .Where(pi => pi.ProductId == p.Id)
-                    .OrderBy(pi => pi.SortOrder)
+                    .OrderByDescending(pi => pi.IsCover)
+                    .ThenBy(pi => pi.SortOrder)
                     .Select(pi => pi.ImageUrl)
                     .FirstOrDefault(),
                 shop.Name,
@@ -76,7 +78,12 @@ public class GetMyProductsQueryHandler
                     ? "Approved"
                     : (p.RejectionReason == null ? "Pending" : "Rejected"),
                 p.RejectionReason,
-                p.CreatedAt))
+                p.CreatedAt,
+                null,
+                p.CategoryId,
+                p.BrandId,
+                p.SourceProductId,
+                p.ShopId))
             .ToListAsync(cancellationToken);
 
         var pagedList = new PagedList<ProductListDto>(

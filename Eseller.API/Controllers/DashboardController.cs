@@ -16,7 +16,7 @@ namespace Eseller.API.Controllers;
 
 [ApiController]
 [Route("api/v1/[controller]")]
-[Authorize(Roles = "User")]
+[Authorize]
 public class DashboardController : ControllerBase
 {
     private readonly ISender _sender;
@@ -34,6 +34,7 @@ public class DashboardController : ControllerBase
     /// Get dashboard summary stats.
     /// </summary>
     [HttpGet("summary")]
+    [Authorize(Roles = "User")]
     public async Task<IActionResult> GetSummary(CancellationToken cancellationToken)
     {
         var query = new GetDashboardSummaryQuery();
@@ -46,13 +47,14 @@ public class DashboardController : ControllerBase
     }
 
     // ═══════════════════════════════════════════════════════════
-    // PROFILE
+    // PROFILE (Customer + Seller)
     // ═══════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Get current user profile.
+    /// Get current user / seller profile.
     /// </summary>
     [HttpGet("profile")]
+    [Authorize(Roles = "User,Shopkeeper")]
     public async Task<IActionResult> GetProfile(CancellationToken cancellationToken)
     {
         var query = new GetProfileQuery();
@@ -65,9 +67,10 @@ public class DashboardController : ControllerBase
     }
 
     /// <summary>
-    /// Update current user profile.
+    /// Update current user / seller profile.
     /// </summary>
     [HttpPut("profile")]
+    [Authorize(Roles = "User,Shopkeeper")]
     public async Task<IActionResult> UpdateProfile(
         [FromBody] UpdateProfileRequest request,
         CancellationToken cancellationToken)
@@ -89,6 +92,7 @@ public class DashboardController : ControllerBase
     /// Get all addresses.
     /// </summary>
     [HttpGet("addresses")]
+    [Authorize(Roles = "User")]
     public async Task<IActionResult> GetAddresses(CancellationToken cancellationToken)
     {
         var query = new GetAddressesQuery();
@@ -104,6 +108,7 @@ public class DashboardController : ControllerBase
     /// Create a new address.
     /// </summary>
     [HttpPost("addresses")]
+    [Authorize(Roles = "User")]
     public async Task<IActionResult> CreateAddress(
         [FromBody] CreateAddressRequest request,
         CancellationToken cancellationToken)
@@ -126,6 +131,7 @@ public class DashboardController : ControllerBase
     /// Update an address.
     /// </summary>
     [HttpPut("addresses/{id:guid}")]
+    [Authorize(Roles = "User")]
     public async Task<IActionResult> UpdateAddress(
         Guid id,
         [FromBody] UpdateAddressRequest request,
@@ -155,6 +161,7 @@ public class DashboardController : ControllerBase
     /// Delete an address (soft delete).
     /// </summary>
     [HttpDelete("addresses/{id:guid}")]
+    [Authorize(Roles = "User")]
     public async Task<IActionResult> DeleteAddress(
         Guid id,
         CancellationToken cancellationToken)
@@ -182,6 +189,7 @@ public class DashboardController : ControllerBase
     /// Get notifications (paginated).
     /// </summary>
     [HttpGet("notifications")]
+    [Authorize(Roles = "User,Shopkeeper,SuperAdmin,Partner")]
     public async Task<IActionResult> GetNotifications(
         [FromQuery] bool? unreadOnly,
         [FromQuery] int pageNumber = 1,
@@ -201,6 +209,7 @@ public class DashboardController : ControllerBase
     /// Mark notification as read.
     /// </summary>
     [HttpPut("notifications/{id:guid}/read")]
+    [Authorize(Roles = "User,Shopkeeper,SuperAdmin,Partner")]
     public async Task<IActionResult> MarkNotificationRead(
         Guid id,
         CancellationToken cancellationToken)
@@ -224,6 +233,7 @@ public class DashboardController : ControllerBase
     /// Mark all notifications as read.
     /// </summary>
     [HttpPut("notifications/read-all")]
+    [Authorize(Roles = "User,Shopkeeper,SuperAdmin,Partner")]
     public async Task<IActionResult> MarkAllNotificationsRead(CancellationToken cancellationToken)
     {
         var command = new MarkAllNotificationsReadCommand();

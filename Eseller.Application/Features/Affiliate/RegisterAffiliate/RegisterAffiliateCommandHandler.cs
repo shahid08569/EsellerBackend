@@ -13,15 +13,18 @@ public class RegisterAffiliateCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly IPasswordHasher _passwordHasher;
     private readonly IDateTime _dateTime;
+    private readonly ILocationService _locationService;
 
     public RegisterAffiliateCommandHandler(
         IApplicationDbContext context,
         IPasswordHasher passwordHasher,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        ILocationService locationService)
     {
         _context = context;
         _passwordHasher = passwordHasher;
         _dateTime = dateTime;
+        _locationService = locationService;
     }
 
     public async Task<Result<Guid>> Handle(
@@ -36,6 +39,17 @@ public class RegisterAffiliateCommandHandler
 
         if (emailExists)
             return Result.Failure<Guid>("Email is already registered.", "EMAIL_EXISTS");
+
+        // ✅ Location validation
+        var isValidLocation = await _locationService.IsValidLocationAsync(
+            request.Latitude,
+            request.Longitude,
+            cancellationToken);
+
+        if (!isValidLocation)
+            return Result.Failure<Guid>(
+                "Invalid location coordinates.",
+                "INVALID_LOCATION");
 
         var now = _dateTime.UtcNow;
 
@@ -74,6 +88,17 @@ public class RegisterAffiliateCommandHandler
         _context.Affiliates.Add(affiliate);
 
         await _context.SaveChangesAsync(cancellationToken);
+
+        // ✅ Log location (Register action)
+        await _locationService.LogLocationAsync(
+            accountId: account.Id,
+            latitude: request.Latitude,
+            longitude: request.Longitude,
+            deviceType: request.DeviceType,
+            action: "Register",
+            ipAddress: request.IpAddress,
+            userAgent: request.UserAgent,
+            cancellationToken: cancellationToken);
 
         return Result.Success(affiliate.Id);
     }

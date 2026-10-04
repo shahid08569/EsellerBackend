@@ -17,8 +17,14 @@ public class ShopkeeperConfiguration : IEntityTypeConfiguration<Shopkeeper>
             .HasMaxLength(150);
 
         builder.Property(s => s.Phone)
-    .IsRequired()
-    .HasMaxLength(30);
+            .IsRequired()
+            .HasMaxLength(30);
+
+        builder.Property(s => s.DocumentType).IsRequired(false);
+        builder.Property(s => s.DocumentNumber).IsRequired(false);
+        builder.Property(s => s.CnicFrontUrl).IsRequired(false);
+        builder.Property(s => s.CnicBackUrl).IsRequired(false);
+        builder.Property(s => s.DocumentUrl).IsRequired(false);
 
         builder.Property(s => s.Status)
             .HasConversion<int>()

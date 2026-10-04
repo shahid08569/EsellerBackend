@@ -27,8 +27,9 @@ public class GetProfileQueryHandler
         if (_currentUserService.AccountId is null)
             return Result.Failure<UserProfileDto>("User is not authenticated.", "UNAUTHENTICATED");
 
-        if (_currentUserService.RoleType != RoleType.User)
-            return Result.Failure<UserProfileDto>("Only customers can access profile.", "FORBIDDEN");
+        var role = _currentUserService.RoleType;
+        if (role != RoleType.User && role != RoleType.Shopkeeper)
+            return Result.Failure<UserProfileDto>("Profile not available for this role.", "FORBIDDEN");
 
         var account = await _context.Accounts
             .FirstOrDefaultAsync(a => a.Id == _currentUserService.AccountId.Value,
@@ -37,23 +38,43 @@ public class GetProfileQueryHandler
         if (account is null)
             return Result.Failure<UserProfileDto>("Account not found.", "ACCOUNT_NOT_FOUND");
 
-        var user = await _context.Users
-            .FirstOrDefaultAsync(u => u.AccountId == account.Id, cancellationToken);
+        if (role == RoleType.User)
+        {
+            var user = await _context.Users
+                .FirstOrDefaultAsync(u => u.AccountId == account.Id, cancellationToken);
 
-        if (user is null)
-            return Result.Failure<UserProfileDto>("User not found.", "USER_NOT_FOUND");
+            if (user is null)
+                return Result.Failure<UserProfileDto>("User not found.", "USER_NOT_FOUND");
 
-        var dto = new UserProfileDto(
+            return Result.Success(new UserProfileDto(
+                account.Id,
+                user.Id,
+                user.Name,
+                account.Email,
+                user.Phone,
+                account.IsEmailVerified,
+                account.IsPhoneVerified,
+                account.LastLoginAt,
+                user.CreatedAt,
+                user.Status.ToString()));
+        }
+
+        var keeper = await _context.Shopkeepers
+            .FirstOrDefaultAsync(sk => sk.AccountId == account.Id, cancellationToken);
+
+        if (keeper is null)
+            return Result.Failure<UserProfileDto>("Seller profile not found.", "SHOPKEEPER_NOT_FOUND");
+
+        return Result.Success(new UserProfileDto(
             account.Id,
-            user.Id,
-            user.Name,
+            keeper.Id,
+            keeper.Name,
             account.Email,
-            user.Phone,
+            keeper.Phone,
             account.IsEmailVerified,
             account.IsPhoneVerified,
             account.LastLoginAt,
-            user.CreatedAt);
-
-        return Result.Success(dto);
+            keeper.CreatedAt,
+            keeper.Status.ToString()));
     }
 }
