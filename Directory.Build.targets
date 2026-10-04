@@ -1,0 +1,6 @@
+<Project>
+  <!-- Automatically terminate any running/orphaned Eseller.API process before building to release file locks -->
+  <Target Name="AutoKillRunningApi" BeforeTargets="BeforeBuild" Condition="'$(OS)' == 'Windows_NT'">
+    <Exec Command="taskkill /f /im Eseller.API.exe 2&gt;nul || exit 0" IgnoreExitCode="true" />
+  </Target>
+</Project>

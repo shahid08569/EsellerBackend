@@ -1,9 +1,14 @@
-﻿using Eseller.Application.Features.Products.ApproveProduct;
+﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Features.Products;
+using Eseller.Application.Features.Products.ApproveProduct;
+using Eseller.Application.Features.Products.GetApprovedSellerProducts;
 using Eseller.Application.Features.Products.GetPendingProducts;
+using Eseller.Application.Features.Products.GetRejectedProducts;
 using Eseller.Application.Features.Products.RejectProduct;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Eseller.API.Controllers;
 
@@ -13,10 +18,12 @@ namespace Eseller.API.Controllers;
 public class AdminProductsController : ControllerBase
 {
     private readonly ISender _sender;
+    private readonly IApplicationDbContext _context;
 
-    public AdminProductsController(ISender sender)
+    public AdminProductsController(ISender sender, IApplicationDbContext context)
     {
         _sender = sender;
+        _context = context;
     }
 
     /// <summary>
@@ -29,6 +36,42 @@ public class AdminProductsController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         var query = new GetPendingProductsQuery(pageNumber, pageSize);
+        var result = await _sender.Send(query, cancellationToken);
+
+        if (!result.IsSuccess)
+            return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
+
+        return Ok(result.Value);
+    }
+
+    /// <summary>
+    /// Get rejected seller listing requests.
+    /// </summary>
+    [HttpGet("rejected")]
+    public async Task<IActionResult> GetRejected(
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetRejectedProductsQuery(pageNumber, pageSize);
+        var result = await _sender.Send(query, cancellationToken);
+
+        if (!result.IsSuccess)
+            return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
+
+        return Ok(result.Value);
+    }
+
+    /// <summary>
+    /// Get approved seller store listings (live on merchant shops).
+    /// </summary>
+    [HttpGet("approved")]
+    public async Task<IActionResult> GetApproved(
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetApprovedSellerProductsQuery(pageNumber, pageSize);
         var result = await _sender.Send(query, cancellationToken);
 
         if (!result.IsSuccess)
@@ -61,6 +104,107 @@ public class AdminProductsController : ControllerBase
     }
 
     /// <summary>
+    /// Approve multiple pending products at once.
+    /// </summary>
+    [HttpPost("approve-bulk")]
+    public async Task<IActionResult> ApproveBulk(
+        [FromBody] BulkProductIdsRequest request,
+        CancellationToken cancellationToken)
+    {
+        var ids = (request.ProductIds ?? Array.Empty<Guid>())
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        if (ids.Count == 0)
+            return BadRequest(new { error = "No product IDs provided.", errorCode = "VALIDATION_ERROR" });
+
+        var approved = 0;
+        var failed = new List<object>();
+
+        foreach (var id in ids)
+        {
+            var result = await _sender.Send(new ApproveProductCommand(id), cancellationToken);
+            if (result.IsSuccess) approved++;
+            else failed.Add(new { productId = id, error = result.Error, errorCode = result.ErrorCode });
+        }
+
+        return Ok(new
+        {
+            message = $"{approved} product(s) approved successfully.",
+            approved,
+            failedCount = failed.Count,
+            failed
+        });
+    }
+
+    /// <summary>
+    /// Bulk set Featured on master catalog products.
+    /// </summary>
+    [HttpPut("featured-bulk")]
+    public async Task<IActionResult> SetFeaturedBulk(
+        [FromBody] BulkFeaturedRequest request,
+        CancellationToken cancellationToken)
+    {
+        var ids = (request.ProductIds ?? Array.Empty<Guid>()).Where(id => id != Guid.Empty).Distinct().ToList();
+        if (ids.Count == 0)
+            return BadRequest(new { error = "No product IDs provided.", errorCode = "VALIDATION_ERROR" });
+
+        var updated = 0;
+        foreach (var id in ids)
+        {
+            var product = await FindCatalogProductAsync(id, cancellationToken);
+            if (product is null) continue;
+            product.IsFeatured = request.IsFeatured;
+            product.SetUpdatedAt(DateTime.UtcNow);
+            await PropagateFeaturedFlagAsync(product.Id, request.IsFeatured, cancellationToken);
+            updated++;
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+        return Ok(new
+        {
+            message = request.IsFeatured
+                ? $"{updated} product(s) added to Featured."
+                : $"{updated} product(s) removed from Featured.",
+            updated
+        });
+    }
+
+    /// <summary>
+    /// Bulk set Hot Selling on master catalog products.
+    /// </summary>
+    [HttpPut("hot-selling-bulk")]
+    public async Task<IActionResult> SetHotSellingBulk(
+        [FromBody] BulkHotSellingRequest request,
+        CancellationToken cancellationToken)
+    {
+        var ids = (request.ProductIds ?? Array.Empty<Guid>()).Where(id => id != Guid.Empty).Distinct().ToList();
+        if (ids.Count == 0)
+            return BadRequest(new { error = "No product IDs provided.", errorCode = "VALIDATION_ERROR" });
+
+        var updated = 0;
+        foreach (var id in ids)
+        {
+            var product = await FindCatalogProductAsync(id, cancellationToken);
+            if (product is null) continue;
+            product.IsHotSelling = request.IsHotSelling;
+            product.SetUpdatedAt(DateTime.UtcNow);
+            await PropagateHotSellingFlagAsync(product.Id, request.IsHotSelling, cancellationToken);
+            updated++;
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+        return Ok(new
+        {
+            message = request.IsHotSelling
+                ? $"{updated} product(s) added to Hot Selling."
+                : $"{updated} product(s) removed from Hot Selling.",
+            updated
+        });
+    }
+
+    /// <summary>
     /// Reject a product with a reason.
     /// </summary>
     [HttpPost("{id:guid}/reject")]
@@ -83,6 +227,209 @@ public class AdminProductsController : ControllerBase
 
         return Ok(new { message = "Product rejected successfully." });
     }
+
+    /// <summary>
+    /// Catalog products for homepage merchandising (featured / hot selling / pick list).
+    /// </summary>
+    [HttpGet("homepage")]
+    public async Task<IActionResult> GetHomepageCatalog(
+        [FromQuery] string? tab = "featured",
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 40,
+        CancellationToken cancellationToken = default)
+    {
+        if (pageSize > 100) pageSize = 100;
+        if (pageNumber < 1) pageNumber = 1;
+
+        var masterShop = await MasterCatalog.GetOrCreateMasterShopAsync(_context, cancellationToken);
+        var mode = (string.IsNullOrWhiteSpace(tab) ? "featured" : tab).Trim().ToLowerInvariant();
+
+        // Only catalog SKUs that are already listed on at least one seller shop
+        IQueryable<Domain.Entities.Catalog.Product> baseQuery = _context.Products
+            .IgnoreQueryFilters()
+            .Where(p =>
+                p.ShopId == masterShop.Id
+                && p.SourceProductId == null
+                && p.DeletedAt == null
+                && p.IsActive
+                && p.IsApproved
+                && _context.Products.IgnoreQueryFilters().Any(l =>
+                    l.SourceProductId == p.Id
+                    && l.DeletedAt == null
+                    && l.IsActive
+                    && l.IsApproved));
+
+        IQueryable<Domain.Entities.Catalog.Product> query;
+        if (mode == "featured")
+        {
+            query = baseQuery.Where(p => p.IsFeatured).OrderByDescending(p => p.UpdatedAt);
+        }
+        else if (mode is "hot" or "hotselling" or "hot-selling")
+        {
+            query = baseQuery.Where(p => p.IsHotSelling).OrderByDescending(p => p.UpdatedAt);
+        }
+        else
+        {
+            query = baseQuery
+                .OrderByDescending(p => p.IsFeatured)
+                .ThenByDescending(p => p.IsHotSelling)
+                .ThenByDescending(p => p.ViewCount)
+                .ThenByDescending(p => p.CreatedAt);
+        }
+
+        var totalCount = await query.CountAsync(cancellationToken);
+        var page = await query
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .Select(p => new
+            {
+                p.Id,
+                p.Name,
+                p.Slug,
+                p.BasePrice,
+                p.IsFeatured,
+                p.IsHotSelling,
+                p.ViewCount,
+                p.AvgRating,
+                p.IsActive,
+                p.CreatedAt,
+                CoverImageUrl = _context.ProductImages
+                    .Where(i => i.ProductId == p.Id)
+                    .OrderByDescending(i => i.IsCover)
+                    .ThenBy(i => i.SortOrder)
+                    .Select(i => i.ImageUrl)
+                    .FirstOrDefault()
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(new { items = page, totalCount, pageNumber, pageSize, tab = mode });
+    }
+
+    /// <summary>
+    /// Toggle master catalog product as homepage Featured.
+    /// </summary>
+    [HttpPut("{id:guid}/featured")]
+    public async Task<IActionResult> SetFeatured(
+        Guid id,
+        [FromBody] SetFeaturedRequest request,
+        CancellationToken cancellationToken)
+    {
+        var product = await FindCatalogProductAsync(id, cancellationToken);
+        if (product is null)
+            return NotFound(new { error = "Catalog product not found.", errorCode = "PRODUCT_NOT_FOUND" });
+
+        if (request.IsFeatured && !await HasSellerListingAsync(product.Id, cancellationToken))
+            return BadRequest(new { error = "Product must be listed on a shop before Featured.", errorCode = "NOT_LISTED" });
+
+        product.IsFeatured = request.IsFeatured;
+        product.SetUpdatedAt(DateTime.UtcNow);
+        await PropagateFeaturedFlagAsync(product.Id, request.IsFeatured, cancellationToken);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            message = request.IsFeatured
+                ? "Product marked as Featured for homepage."
+                : "Product removed from Featured.",
+            productId = product.Id,
+            isFeatured = product.IsFeatured
+        });
+    }
+
+    /// <summary>
+    /// Toggle master catalog product as homepage Hot Selling.
+    /// </summary>
+    [HttpPut("{id:guid}/hot-selling")]
+    public async Task<IActionResult> SetHotSelling(
+        Guid id,
+        [FromBody] SetHotSellingRequest request,
+        CancellationToken cancellationToken)
+    {
+        var product = await FindCatalogProductAsync(id, cancellationToken);
+        if (product is null)
+            return NotFound(new { error = "Catalog product not found.", errorCode = "PRODUCT_NOT_FOUND" });
+
+        if (request.IsHotSelling && !await HasSellerListingAsync(product.Id, cancellationToken))
+            return BadRequest(new { error = "Product must be listed on a shop before Hot Selling.", errorCode = "NOT_LISTED" });
+
+        product.IsHotSelling = request.IsHotSelling;
+        product.SetUpdatedAt(DateTime.UtcNow);
+        await PropagateHotSellingFlagAsync(product.Id, request.IsHotSelling, cancellationToken);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            message = request.IsHotSelling
+                ? "Product added to Hot Selling."
+                : "Product removed from Hot Selling.",
+            productId = product.Id,
+            isHotSelling = product.IsHotSelling
+        });
+    }
+
+    private async Task<bool> HasSellerListingAsync(Guid catalogProductId, CancellationToken cancellationToken)
+    {
+        return await _context.Products
+            .IgnoreQueryFilters()
+            .AnyAsync(l =>
+                l.SourceProductId == catalogProductId
+                && l.DeletedAt == null
+                && l.IsActive
+                && l.IsApproved, cancellationToken);
+    }
+
+    private async Task PropagateFeaturedFlagAsync(
+        Guid catalogProductId,
+        bool isFeatured,
+        CancellationToken cancellationToken)
+    {
+        var listings = await _context.Products
+            .IgnoreQueryFilters()
+            .Where(p => p.SourceProductId == catalogProductId && p.DeletedAt == null)
+            .ToListAsync(cancellationToken);
+
+        foreach (var listing in listings)
+        {
+            listing.IsFeatured = isFeatured;
+            listing.SetUpdatedAt(DateTime.UtcNow);
+        }
+    }
+
+    private async Task PropagateHotSellingFlagAsync(
+        Guid catalogProductId,
+        bool isHotSelling,
+        CancellationToken cancellationToken)
+    {
+        var listings = await _context.Products
+            .IgnoreQueryFilters()
+            .Where(p => p.SourceProductId == catalogProductId && p.DeletedAt == null)
+            .ToListAsync(cancellationToken);
+
+        foreach (var listing in listings)
+        {
+            listing.IsHotSelling = isHotSelling;
+            listing.SetUpdatedAt(DateTime.UtcNow);
+        }
+    }
+
+    private async Task<Domain.Entities.Catalog.Product?> FindCatalogProductAsync(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var masterShop = await MasterCatalog.GetOrCreateMasterShopAsync(_context, cancellationToken);
+        return await _context.Products
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p =>
+                p.Id == id
+                && p.ShopId == masterShop.Id
+                && p.SourceProductId == null
+                && p.DeletedAt == null, cancellationToken);
+    }
 }
 
 public record RejectProductRequest(string Reason);
+public record SetFeaturedRequest(bool IsFeatured);
+public record SetHotSellingRequest(bool IsHotSelling);
+public record BulkProductIdsRequest(Guid[]? ProductIds);
+public record BulkFeaturedRequest(Guid[]? ProductIds, bool IsFeatured);
+public record BulkHotSellingRequest(Guid[]? ProductIds, bool IsHotSelling);

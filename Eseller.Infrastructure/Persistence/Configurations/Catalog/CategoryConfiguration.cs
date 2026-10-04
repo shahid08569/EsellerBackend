@@ -19,7 +19,13 @@ public class CategoryConfiguration : IEntityTypeConfiguration<Category>
         builder.Property(c => c.IsActive).IsRequired().HasDefaultValue(true);
         builder.Property(c => c.CreatedAt).IsRequired();
         builder.Property(c => c.UpdatedAt).IsRequired();
+        builder.Property(c => c.IsFeaturedOnHomepage)
+            .IsRequired()
+            .HasDefaultValue(false);
 
+        builder.Property(c => c.HomepageDisplayOrder)
+            .IsRequired()
+            .HasDefaultValue(0);
         builder.HasOne<Category>()
             .WithMany()
             .HasForeignKey(c => c.ParentCategoryId)
@@ -28,6 +34,8 @@ public class CategoryConfiguration : IEntityTypeConfiguration<Category>
         builder.HasIndex(c => c.Slug).IsUnique();
         builder.HasIndex(c => c.ParentCategoryId);
         builder.HasIndex(c => c.IsActive);
+
+        builder.HasIndex(c => new { c.IsFeaturedOnHomepage, c.HomepageDisplayOrder });
 
         // ✅ Soft delete query filter
         builder.HasQueryFilter(c => c.IsActive);

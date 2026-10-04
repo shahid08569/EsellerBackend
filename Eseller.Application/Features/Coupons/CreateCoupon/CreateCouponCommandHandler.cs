@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Promotions;
 using Eseller.Domain.Enums;
@@ -75,7 +75,7 @@ public class CreateCouponCommandHandler
                     return Result.Failure<Guid>("Shopkeeper not found.", "SHOPKEEPER_NOT_FOUND");
 
                 var ownedProductCount = await _context.Products
-                    .Where(p => request.ProductIds.Contains(p.Id) && p.ShopId != null)
+                    .Where(p => request.ProductIds.Contains(p.Id) && p.ShopId != Guid.Empty)
                     .Join(_context.Shops.Where(s => s.ShopkeeperId == shopkeeper.Id),
                           p => p.ShopId, s => s.Id, (p, s) => p)
                     .CountAsync(cancellationToken);

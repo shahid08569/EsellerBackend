@@ -12,4 +12,7 @@ public class Category : AuditableEntity, ISoftDelete
     public string? SeoDescription { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime? DeletedAt { get; set; }
+
+    public bool IsFeaturedOnHomepage { get; set; } = false;
+    public int HomepageDisplayOrder { get; set; } = 0;
 }

@@ -1,5 +1,7 @@
 ﻿using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
+using Eseller.Domain.Entities.Wallet;
+using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 
@@ -24,14 +26,34 @@ public class RejectProductCommandHandler
         CancellationToken cancellationToken)
     {
         var product = await _context.Products
-    .IgnoreQueryFilters()
-    .FirstOrDefaultAsync(p => p.Id == request.ProductId && p.DeletedAt == null, cancellationToken);
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p => p.Id == request.ProductId && p.DeletedAt == null, cancellationToken);
 
         if (product is null)
             return Result.Failure("Product not found.", "PRODUCT_NOT_FOUND");
 
         product.Reject(request.Reason);
         product.SetUpdatedAt(_dateTime.UtcNow);
+
+        var shopkeeperAccountId = await _context.Shops
+            .Where(s => s.Id == product.ShopId)
+            .Join(_context.Shopkeepers, s => s.ShopkeeperId, sk => sk.Id, (s, sk) => sk.AccountId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (shopkeeperAccountId != Guid.Empty)
+        {
+            var reason = string.IsNullOrWhiteSpace(request.Reason) ? "No reason provided." : request.Reason.Trim();
+            var notif = new Notification
+            {
+                AccountId = shopkeeperAccountId,
+                Type = NotificationType.ProductRejected,
+                Title = "Product rejected",
+                Message = $"Your product \"{product.Name}\" was rejected. Reason: {reason}",
+                IsRead = false
+            };
+            notif.SetCreatedAt(_dateTime.UtcNow);
+            _context.Notifications.Add(notif);
+        }
 
         await _context.SaveChangesAsync(cancellationToken);
 

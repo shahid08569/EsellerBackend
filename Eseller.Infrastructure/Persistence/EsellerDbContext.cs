@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Domain.Common;
 using Eseller.Domain.Entities.Affiliate;
 using Eseller.Domain.Entities.Catalog;
@@ -40,6 +40,8 @@ public class EsellerDbContext : DbContext,IApplicationDbContext
     // Catalog
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Brand> Brands => Set<Brand>();
+    public DbSet<ShopCategory> ShopCategories => Set<ShopCategory>();
+    public DbSet<TierUpgradeRequest> TierUpgradeRequests => Set<TierUpgradeRequest>();
     public DbSet<Shop> Shops => Set<Shop>();
     public DbSet<ShopImage> ShopImages => Set<ShopImage>();
     public DbSet<Product> Products => Set<Product>();
@@ -110,6 +112,16 @@ public class EsellerDbContext : DbContext,IApplicationDbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<ShopCategory>(e =>
+        {
+            e.ToTable("ShopCategories");
+            e.Property(x => x.PriceUsd).HasPrecision(18, 2);
+        });
+        modelBuilder.Entity<TierUpgradeRequest>(e =>
+        {
+            e.ToTable("TierUpgradeRequests");
+            e.Property(x => x.Price).HasPrecision(18, 2);
+        });
         // Apply all IEntityTypeConfiguration<T> from this assembly
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(EsellerDbContext).Assembly);
     }

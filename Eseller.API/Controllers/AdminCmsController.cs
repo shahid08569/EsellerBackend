@@ -1,9 +1,12 @@
-﻿using Eseller.Application.Features.Cms.CreateCmsPage;
+using Eseller.Application.Features.Cms.CreateCmsPage;
 using Eseller.Application.Features.Cms.GetCmsPageBySlug;
 using Eseller.Application.Features.Cms.UpdateCmsPage;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+
+using Eseller.Application.Abstractions;
+using Microsoft.EntityFrameworkCore;
 
 namespace Eseller.API.Controllers;
 
@@ -13,10 +16,30 @@ namespace Eseller.API.Controllers;
 public class AdminCmsController : ControllerBase
 {
     private readonly ISender _sender;
+    private readonly IApplicationDbContext _context;
 
-    public AdminCmsController(ISender sender)
+    public AdminCmsController(ISender sender, IApplicationDbContext context)
     {
         _sender = sender;
+        _context = context;
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
+    {
+        var pages = await _context.CmsPages
+            .Select(p => new
+            {
+                id = p.Id,
+                slug = p.Slug,
+                title = p.Title,
+                content = p.Content,
+                createdAt = p.CreatedAt,
+                updatedAt = p.UpdatedAt
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(pages);
     }
 
     [HttpGet("{slug}")]

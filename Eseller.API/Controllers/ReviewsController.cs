@@ -72,7 +72,7 @@ public class ReviewsController : ControllerBase
             };
         }
 
-        return Ok(new { reviewId = result.Value, message = "Review submitted for approval." });
+        return Ok(new { reviewId = result.Value, message = "Review published successfully." });
     }
 
     /// <summary>

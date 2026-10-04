@@ -13,28 +13,24 @@ public class RegisterCustomerCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly IPasswordHasher _passwordHasher;
     private readonly ILocationService _locationService;
-    private readonly IVerificationTokenService _verificationTokenService;
-    private readonly IEmailService _emailService;
+    private readonly IDateTime _dateTime;
 
     public RegisterCustomerCommandHandler(
         IApplicationDbContext context,
         IPasswordHasher passwordHasher,
         ILocationService locationService,
-        IVerificationTokenService verificationTokenService,
-        IEmailService emailService)
+        IDateTime dateTime)
     {
         _context = context;
         _passwordHasher = passwordHasher;
         _locationService = locationService;
-        _verificationTokenService = verificationTokenService;
-        _emailService = emailService;
+        _dateTime = dateTime;
     }
 
     public async Task<Result<RegisterCustomerResponse>> Handle(
         RegisterCustomerCommand request,
         CancellationToken cancellationToken)
     {
-        // 1. Validate location
         if (!await _locationService.IsValidLocationAsync(
                 request.Latitude, request.Longitude, cancellationToken))
         {
@@ -43,66 +39,63 @@ public class RegisterCustomerCommandHandler
                 "LOCATION_REQUIRED");
         }
 
-        // 2. Check email uniqueness
+        var email = request.Email.Trim().ToLowerInvariant();
+        var name = request.Name.Trim();
+        var phone = request.Phone.Trim();
+
         var emailExists = await _context.Accounts
-            .AnyAsync(a => a.Email == request.Email, cancellationToken);
+            .AnyAsync(a => a.Email.ToLower() == email || a.Username.ToLower() == email, cancellationToken);
 
         if (emailExists)
             return Result.Failure<RegisterCustomerResponse>(
                 "Email is already registered.",
                 "EMAIL_TAKEN");
 
-        // 3. Create Account
         var account = new Account
         {
-            Username = request.Email,
-            Email = request.Email,
+            Username = email,
+            Email = email,
             PasswordHash = _passwordHasher.Hash(request.Password),
             RoleType = RoleType.User,
             IsActive = true,
-            IsEmailVerified = false,
+            IsEmailVerified = true,
             IsPhoneVerified = false
         };
 
         _context.Accounts.Add(account);
 
-        // 4. Create User
+        // Customers auto-approve on register — no email OTP, no SuperAdmin queue.
         _context.Users.Add(new User
         {
             AccountId = account.Id,
-            Name = request.Name,
-            Phone = request.Phone
+            Name = name,
+            Phone = phone,
+            Status = UserApprovalStatus.Approved,
+            ApprovedAt = _dateTime.UtcNow
         });
 
-        // 5. Save
         await _context.SaveChangesAsync(cancellationToken);
 
-        // 6. Generate verification token
-        var code = await _verificationTokenService.CreateTokenAsync(
-            account.Id,
-            TokenPurpose.EmailVerification,
-            VerificationChannel.Email,
-            expiryMinutes: 60 * 24,
-            cancellationToken);
+        try
+        {
+            await _locationService.LogLocationAsync(
+                account.Id,
+                request.Latitude,
+                request.Longitude,
+                string.IsNullOrWhiteSpace(request.DeviceType) ? "Desktop" : request.DeviceType,
+                "RegisterCustomer",
+                null,
+                null,
+                cancellationToken);
+        }
+        catch
+        {
+            // Ignore location logging failures
+        }
 
-        // 7. Send verification email
-        await _emailService.SendVerificationEmailAsync(account.Email, code, cancellationToken);
-
-        // 8. Log location
-        await _locationService.LogLocationAsync(
-            account.Id,
-            request.Latitude,
-            request.Longitude,
-            request.DeviceType,
-            "RegisterCustomer",
-            null,
-            null,
-            cancellationToken);
-
-        // 9. Return
         return Result.Success(new RegisterCustomerResponse(
             account.Id,
-            request.Name,
+            name,
             account.Email,
             account.RoleType.ToString()));
     }

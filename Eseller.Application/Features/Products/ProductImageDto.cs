@@ -4,4 +4,5 @@ public record ProductImageDto(
     Guid Id,
     Guid ProductId,
     string ImageUrl,
-    int SortOrder);
+    int SortOrder,
+    bool IsCover = false);

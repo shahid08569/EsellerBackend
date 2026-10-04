@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -144,6 +144,94 @@ public class GetPlatformDashboardQueryHandler
             .FirstOrDefaultAsync(cancellationToken);
 
         // ═══════════════════════════════════════════════════════════
+        // DYNAMIC LOW STOCK ALERTS (Stock <= 5)
+        // ═══════════════════════════════════════════════════════════
+        var lowStockVariants = await _context.ProductVariants
+            .Where(v => v.DeletedAt == null && v.StockQty <= 5)
+            .OrderBy(v => v.StockQty)
+            .Take(6)
+            .ToListAsync(cancellationToken);
+
+        var variantProdIds = lowStockVariants.Select(v => v.ProductId).Distinct().ToList();
+        var prods = await _context.Products
+            .Where(p => variantProdIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, cancellationToken);
+
+        var catIds = prods.Values.Select(p => p.CategoryId).Distinct().ToList();
+        var cats = await _context.Categories
+            .Where(c => catIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name, cancellationToken);
+
+        var lowStockAlerts = lowStockVariants.Select(v =>
+        {
+            prods.TryGetValue(v.ProductId, out var prod);
+            var catName = prod != null && cats.TryGetValue(prod.CategoryId, out var cName) ? cName : "General";
+            return new LowStockItemDto(
+                v.ProductId,
+                prod?.Name ?? "Product Item",
+                string.IsNullOrEmpty(v.Sku) ? ("SKU-" + v.Id.ToString().Substring(0, 6).ToUpper()) : v.Sku,
+                catName,
+                v.StockQty,
+                v.ImageUrl
+            );
+        }).ToList();
+
+        // ═══════════════════════════════════════════════════════════
+        // DYNAMIC MONTHLY REVENUE (last 12 months, real data only)
+        // ═══════════════════════════════════════════════════════════
+        var nowUtc = DateTime.UtcNow;
+        var monthStart = new DateTime(nowUtc.Year, nowUtc.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(-11);
+        var ordersWindow = await _context.OrderRequests
+            .Where(o => o.CreatedAt >= monthStart && o.Status != OrderStatus.Cancelled)
+            .Select(o => new { o.Id, o.CreatedAt })
+            .ToListAsync(cancellationToken);
+
+        var orderIdsWindow = ordersWindow.Select(o => o.Id).ToList();
+        var itemsWindow = await _context.OrderRequestItems
+            .Where(i => orderIdsWindow.Contains(i.OrderRequestId))
+            .Select(i => new { i.OrderRequestId, i.TotalPriceSnapshot })
+            .ToListAsync(cancellationToken);
+
+        var monthlyRevenue = new List<MonthlyRevenuePointDto>();
+        decimal prevRev = 0;
+        for (int i = 0; i < 12; i++)
+        {
+            var cursor = monthStart.AddMonths(i);
+            var mOrderIds = ordersWindow
+                .Where(o => o.CreatedAt.Year == cursor.Year && o.CreatedAt.Month == cursor.Month)
+                .Select(o => o.Id)
+                .ToHashSet();
+            var rev = itemsWindow.Where(it => mOrderIds.Contains(it.OrderRequestId)).Sum(it => it.TotalPriceSnapshot);
+            decimal growth = prevRev > 0 ? Math.Round(((rev - prevRev) / prevRev) * 100m, 1) : 0m;
+            monthlyRevenue.Add(new MonthlyRevenuePointDto(cursor.ToString("MMM"), rev, growth));
+            prevRev = rev;
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // DYNAMIC WEEKLY ORDERS (last 7 days, real counts)
+        // ═══════════════════════════════════════════════════════════
+        var oneWeekAgo = DateTime.UtcNow.Date.AddDays(-6);
+        var ordersLastWeek = await _context.OrderRequests
+            .Where(o => o.CreatedAt >= oneWeekAgo)
+            .Select(o => new { o.CreatedAt.DayOfWeek })
+            .ToListAsync(cancellationToken);
+
+        var dayMappings = new[]
+        {
+            new { Day = "Sat", Dow = DayOfWeek.Saturday },
+            new { Day = "Sun", Dow = DayOfWeek.Sunday },
+            new { Day = "Mon", Dow = DayOfWeek.Monday },
+            new { Day = "Tue", Dow = DayOfWeek.Tuesday },
+            new { Day = "Wed", Dow = DayOfWeek.Wednesday },
+            new { Day = "Thu", Dow = DayOfWeek.Thursday },
+            new { Day = "Fri", Dow = DayOfWeek.Friday }
+        };
+
+        var weeklyOrders = dayMappings.Select(d =>
+            new DayOrderCountDto(d.Day, ordersLastWeek.Count(o => o.DayOfWeek == d.Dow))
+        ).ToList();
+
+        // ═══════════════════════════════════════════════════════════
         // BUILD DTO
         // ═══════════════════════════════════════════════════════════
         var dto = new PlatformDashboardDto(
@@ -177,7 +265,24 @@ public class GetPlatformDashboardQueryHandler
 
             lastOrderAt,
             lastShopRegisteredAt,
-            lastAffiliateRegisteredAt);
+            lastAffiliateRegisteredAt,
+
+            RevenueGrowthPercent: monthlyRevenue.Count >= 2
+                ? monthlyRevenue[^1].GrowthPercent
+                : 0m,
+            OrdersGrowthPercent: weeklyOrders.Sum(w => w.Orders) > 0
+                ? Math.Round(weeklyOrders.Average(w => (decimal)w.Orders), 1)
+                : 0m,
+            ShipmentsGrowthPercent: pendingOrders > 0
+                ? -Math.Round((decimal)pendingOrders / Math.Max(totalOrders, 1) * 100m, 1)
+                : 0m,
+            CustomersGrowthPercent: totalCustomers > 0
+                ? Math.Round((decimal)totalCustomers / Math.Max(totalCustomers + totalShopkeepers, 1) * 100m, 1)
+                : 0m,
+
+            MonthlyRevenue: monthlyRevenue,
+            WeeklyOrders: weeklyOrders,
+            LowStockAlerts: lowStockAlerts);
 
         return Result.Success(dto);
     }

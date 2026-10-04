@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Common;
+using Eseller.Application.Common;
 using MediatR;
 
 namespace Eseller.Application.Features.Auth.RegisterSeller;
@@ -13,10 +13,17 @@ public record RegisterSellerCommand(
     // Shop Details
     string StoreName,
     string StoreUrl,
-    string StoreDescription,
+    string? StoreDescription,
     string Address,
     string City,
     string Country,
+
+    // Verification Documents
+    string? DocumentType,
+    string? DocumentNumber,
+    string? CnicFrontUrl,
+    string? CnicBackUrl,
+    string? DocumentUrl,
 
     // Location
     decimal Latitude,

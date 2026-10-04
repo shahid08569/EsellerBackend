@@ -15,4 +15,9 @@ public record ProductListDto(
     bool IsApproved,
     string Status,
     string? RejectionReason,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    ProductBadgeDto? Badges,
+    Guid? CategoryId = null,
+    Guid? BrandId = null,
+    Guid? SourceProductId = null,
+    Guid? ShopId = null);

@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Content;
 using Eseller.Domain.Enums;
@@ -41,8 +41,17 @@ public class CreateBannerCommandHandler
         {
             ImageUrl = request.ImageUrl.Trim(),
             LinkUrl = request.LinkUrl?.Trim(),
+            Title = request.Title?.Trim(),
+            Subtitle = request.Subtitle?.Trim(),
+            Description = request.Description?.Trim(),
+            Price = request.Price,
+            OriginalPrice = request.OriginalPrice,
+            ButtonText = request.ButtonText?.Trim(),
+            BackgroundColor = request.BackgroundColor?.Trim(),
+            TextColor = request.TextColor?.Trim(),
+            AvailableSizes = request.AvailableSizes?.Trim(),
             SortOrder = request.SortOrder,
-            IsActive = true,
+            IsActive = request.IsActive,
             StartDate = request.StartDate,
             EndDate = request.EndDate
         };

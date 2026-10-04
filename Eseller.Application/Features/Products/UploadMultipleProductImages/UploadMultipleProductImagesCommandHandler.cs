@@ -93,6 +93,8 @@ public class UploadMultipleProductImagesCommandHandler
 
         var imageIds = new List<Guid>();
         var uploadedUrls = new List<string>();
+        var coverAssigned = existingCount > 0
+            && await _context.ProductImages.AnyAsync(pi => pi.ProductId == request.ProductId && pi.IsCover, cancellationToken);
 
         try
         {
@@ -110,13 +112,18 @@ public class UploadMultipleProductImagesCommandHandler
                 uploadedUrls.Add(imageUrl);
 
                 maxSortOrder++;
+                var makeCover = !coverAssigned;
 
                 var productImage = new ProductImage
                 {
                     ProductId = request.ProductId,
                     ImageUrl = imageUrl,
-                    SortOrder = maxSortOrder
+                    SortOrder = makeCover ? 0 : maxSortOrder,
+                    IsCover = makeCover
                 };
+
+                if (makeCover)
+                    coverAssigned = true;
 
                 _context.ProductImages.Add(productImage);
                 imageIds.Add(productImage.Id);

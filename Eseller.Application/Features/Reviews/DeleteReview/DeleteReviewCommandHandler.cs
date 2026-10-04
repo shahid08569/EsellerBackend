@@ -47,8 +47,22 @@ public class DeleteReviewCommandHandler
                 return Result.Failure("You do not have permission.", "FORBIDDEN");
         }
 
+        var productId = review.ProductId;
         _context.Reviews.Remove(review);
         await _context.SaveChangesAsync(cancellationToken);
+
+        var product = await _context.Products
+            .FirstOrDefaultAsync(p => p.Id == productId, cancellationToken);
+        if (product is not null)
+        {
+            var approved = await _context.Reviews
+                .Where(r => r.ProductId == productId && r.IsApproved)
+                .Select(r => r.Rating)
+                .ToListAsync(cancellationToken);
+            product.AvgRating = approved.Count == 0 ? null : (decimal)approved.Average();
+            product.SetUpdatedAt(DateTime.UtcNow);
+            await _context.SaveChangesAsync(cancellationToken);
+        }
 
         return Result.Success();
     }

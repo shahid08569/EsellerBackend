@@ -1,4 +1,5 @@
 ﻿using Eseller.Application.Common.Behaviors;
+using Eseller.Application.Features.Products;
 using FluentValidation;
 using Mapster;
 using MapsterMapper;
@@ -31,6 +32,7 @@ public static class DependencyInjection
         config.Scan(assembly);
         services.AddSingleton(config);
         services.AddScoped<IMapper, ServiceMapper>();
+        services.AddScoped<IProductBadgeService, ProductBadgeService>();
 
         return services;
     }

@@ -1,5 +1,6 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
+using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 
@@ -32,6 +33,7 @@ public class DeleteShopCommandHandler
 
         // 2. Find shop
         var shop = await _context.Shops
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(s => s.Id == request.ShopId, cancellationToken);
 
         if (shop is null)
@@ -41,20 +43,47 @@ public class DeleteShopCommandHandler
         var shopkeeper = await _context.Shopkeepers
             .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
 
-        if (shopkeeper is null)
-            return Result.Failure("Shopkeeper not found.", "SHOPKEEPER_NOT_FOUND");
-
-        if (shopkeeper.AccountId != _currentUserService.AccountId.Value)
+        var isSuperAdmin = _currentUserService.RoleType == RoleType.SuperAdmin || _currentUserService.RoleType == RoleType.Partner;
+        if (!isSuperAdmin && (shopkeeper == null || shopkeeper.AccountId != _currentUserService.AccountId.Value))
             return Result.Failure(
                 "You do not have permission to delete this shop.",
                 "FORBIDDEN");
 
-        // 4. Soft delete
+        // 4. Soft delete shop
         shop.IsActive = false;
         shop.DeletedAt = _dateTime.UtcNow;
         shop.SetUpdatedAt(_dateTime.UtcNow);
 
-        // 5. Save
+        // Also soft-delete any shop-specific products
+        var shopProducts = await _context.Products
+            .IgnoreQueryFilters()
+            .Where(p => p.ShopId == shop.Id && p.DeletedAt == null)
+            .ToListAsync(cancellationToken);
+
+        foreach (var p in shopProducts)
+        {
+            p.DeletedAt = _dateTime.UtcNow;
+        }
+
+        // 5. SuperAdmin/Partner delete: remove seller from applications list too
+        if (isSuperAdmin && shopkeeper is not null)
+        {
+            shopkeeper.Status = ShopkeeperApprovalStatus.Rejected;
+            shopkeeper.RejectionReason = string.IsNullOrWhiteSpace(shopkeeper.RejectionReason)
+                ? "Store deleted by Super Admin."
+                : shopkeeper.RejectionReason;
+            shopkeeper.SetUpdatedAt(_dateTime.UtcNow);
+
+            var account = await _context.Accounts
+                .FirstOrDefaultAsync(a => a.Id == shopkeeper.AccountId, cancellationToken);
+            if (account is not null)
+            {
+                account.IsActive = false;
+                account.SetUpdatedAt(_dateTime.UtcNow);
+            }
+        }
+
+        // 6. Save
         await _context.SaveChangesAsync(cancellationToken);
 
         return Result.Success();

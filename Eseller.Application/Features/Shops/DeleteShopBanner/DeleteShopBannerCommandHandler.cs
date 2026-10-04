@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -38,13 +38,19 @@ public class DeleteShopBannerCommandHandler
         if (shop is null)
             return Result.Failure("Shop not found.", "SHOP_NOT_FOUND");
 
-        var shopkeeper = await _context.Shopkeepers
-            .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
+        var isPrivileged = _currentUserService.RoleType == Eseller.Domain.Enums.RoleType.SuperAdmin ||
+                           _currentUserService.RoleType == Eseller.Domain.Enums.RoleType.Partner;
 
-        if (shopkeeper is null || shopkeeper.AccountId != _currentUserService.AccountId.Value)
-            return Result.Failure(
-                "You do not have permission to update this shop.",
-                "FORBIDDEN");
+        if (!isPrivileged)
+        {
+            var shopkeeper = await _context.Shopkeepers
+                .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
+
+            if (shopkeeper is null || shopkeeper.AccountId != _currentUserService.AccountId.Value)
+                return Result.Failure(
+                    "You do not have permission to update this shop.",
+                    "FORBIDDEN");
+        }
 
         if (!string.IsNullOrEmpty(shop.BannerUrl))
         {

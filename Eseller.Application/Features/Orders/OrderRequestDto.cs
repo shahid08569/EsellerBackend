@@ -1,4 +1,4 @@
-﻿namespace Eseller.Application.Features.Orders;
+namespace Eseller.Application.Features.Orders;
 
 public record OrderRequestDto(
     Guid Id,
@@ -9,4 +9,11 @@ public record OrderRequestDto(
     string? ReferralCodeSnapshot,
     List<OrderRequestItemDto> Items,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    string? CustomerName = null,
+    string? CustomerPhone = null,
+    string? ShippingAddress = null,
+    string? City = null,
+    string? State = null,
+    string? Country = null,
+    string? OrderNotes = null);

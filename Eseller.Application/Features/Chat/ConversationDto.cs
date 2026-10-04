@@ -12,4 +12,8 @@ public record ConversationDto(
     Guid? LastSenderAccountId,
     DateTime? LastMessageAt,
     int UnreadCount,
-    DateTime OrderCreatedAt);
+    DateTime OrderCreatedAt,
+    string? ContextProductId = null,
+    string? ContextProductName = null,
+    string? ContextProductImageUrl = null,
+    decimal? ContextProductPrice = null);

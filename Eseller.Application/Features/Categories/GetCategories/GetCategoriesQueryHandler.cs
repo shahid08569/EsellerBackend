@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -35,12 +35,16 @@ public class GetCategoriesQueryHandler
     {
         return categories
             .Where(c => c.ParentCategoryId == parentId)
+            .OrderBy(c => c.HomepageDisplayOrder)
+            .ThenBy(c => c.Name)
             .Select(c => new CategoryTreeDto(
                 c.Id,
                 c.Name,
                 c.Slug,
                 c.ImageUrl,
-                BuildTree(categories, c.Id)))
+                BuildTree(categories, c.Id),
+                c.IsFeaturedOnHomepage,
+                c.HomepageDisplayOrder))
             .ToList();
     }
 }

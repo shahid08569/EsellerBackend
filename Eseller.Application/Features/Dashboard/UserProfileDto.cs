@@ -9,4 +9,6 @@ public record UserProfileDto(
     bool IsEmailVerified,
     bool IsPhoneVerified,
     DateTime? LastLoginAt,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    /// <summary>Pending | Approved | Rejected — SuperAdmin approval gate.</summary>
+    string ApprovalStatus = "Approved");

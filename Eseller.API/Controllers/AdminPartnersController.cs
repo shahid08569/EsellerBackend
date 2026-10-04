@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Features.AdminPartners.AddPartner;
+using Eseller.Application.Features.AdminPartners.AddPartner;
 using Eseller.Application.Features.AdminPartners.DeactivatePartner;
 using Eseller.Application.Features.AdminPartners.GetPartners;
 using Eseller.Application.Features.AdminPartners.UpdatePartner;
@@ -45,8 +45,18 @@ public class AdminPartnersController : ControllerBase
         [FromBody] AddPartnerRequest request,
         CancellationToken cancellationToken)
     {
+        var permStr = request.Permissions switch
+        {
+            null => null,
+            System.Text.Json.JsonElement je when je.ValueKind == System.Text.Json.JsonValueKind.Array => string.Join(",", je.EnumerateArray().Select(x => x.GetString())),
+            System.Text.Json.JsonElement je => je.ToString(),
+            string s => s,
+            System.Collections.IEnumerable list => string.Join(",", list.Cast<object>()),
+            _ => request.Permissions.ToString()
+        };
+
         var command = new AddPartnerCommand(
-            request.Email, request.Password, request.Permissions);
+            request.Email, request.Password, permStr);
 
         var result = await _sender.Send(command, cancellationToken);
 
@@ -67,7 +77,17 @@ public class AdminPartnersController : ControllerBase
         [FromBody] UpdatePartnerRequest request,
         CancellationToken cancellationToken)
     {
-        var command = new UpdatePartnerCommand(id, request.Permissions);
+        var permStr = request.Permissions switch
+        {
+            null => null,
+            System.Text.Json.JsonElement je when je.ValueKind == System.Text.Json.JsonValueKind.Array => string.Join(",", je.EnumerateArray().Select(x => x.GetString())),
+            System.Text.Json.JsonElement je => je.ToString(),
+            string s => s,
+            System.Collections.IEnumerable list => string.Join(",", list.Cast<object>()),
+            _ => request.Permissions.ToString()
+        };
+
+        var command = new UpdatePartnerCommand(id, permStr);
         var result = await _sender.Send(command, cancellationToken);
 
         if (!result.IsSuccess)
@@ -101,6 +121,7 @@ public class AdminPartnersController : ControllerBase
             "PARTNER_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
             "ACCOUNT_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
             "ALREADY_INACTIVE" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
+            "MAX_PARTNERS_LIMIT_REACHED" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
             _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
         };
     }
@@ -127,7 +148,7 @@ public class AdminPartnersController : ControllerBase
 public record AddPartnerRequest(
     string Email,
     string Password,
-    string? Permissions);
+    object? Permissions);
 
 public record UpdatePartnerRequest(
-    string? Permissions);
+    object? Permissions);

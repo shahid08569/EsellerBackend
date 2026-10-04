@@ -19,8 +19,11 @@ public class GetProductBySlugQueryHandler
         GetProductBySlugQuery request,
         CancellationToken cancellationToken)
     {
+        var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
+
         var product = await _context.Products
             .Where(p => p.Slug == request.Slug && p.IsActive && p.IsApproved)
+            .Where(p => !masterShopId.HasValue || p.ShopId != masterShopId.Value)
             .Select(p => new ProductDto(
                 p.Id,
                 p.ShopId,

@@ -1,6 +1,7 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Orders;
+using Eseller.Domain.Entities.Wallet;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -71,8 +72,79 @@ public class UpdateSellerOrderStatusCommandHandler
                 $"Cannot change status from {oldStatus} to {newStatus}.",
                 "INVALID_STATUS_TRANSITION");
 
+        var now = _dateTime.UtcNow;
         sellerOrder.Status = newStatus;
-        sellerOrder.SetUpdatedAt(_dateTime.UtcNow);
+        sellerOrder.SetUpdatedAt(now);
+
+        if (newStatus == OrderStatus.Delivered)
+        {
+            var earning = await _context.SellerEarnings
+                .FirstOrDefaultAsync(se => se.SellerOrderId == sellerOrder.Id
+                                        && se.Status == SellerEarningStatus.Pending, cancellationToken);
+            if (earning != null)
+            {
+                earning.Status = SellerEarningStatus.Available;
+
+                var shop = await _context.Shops
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(s => s.Id == sellerOrder.ShopId, cancellationToken);
+                var keeper = shop is null
+                    ? null
+                    : await _context.Shopkeepers
+                        .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
+
+                if (keeper is not null)
+                {
+                    var wallet = await _context.Wallets
+                        .FirstOrDefaultAsync(w => w.AccountId == keeper.AccountId, cancellationToken);
+                    if (wallet is null)
+                    {
+                        wallet = new Eseller.Domain.Entities.Wallet.Wallet
+                        {
+                            AccountId = keeper.AccountId,
+                            Balance = 0
+                        };
+                        wallet.SetCreatedAt(now);
+                        wallet.SetUpdatedAt(now);
+                        _context.Wallets.Add(wallet);
+                        await _context.SaveChangesAsync(cancellationToken);
+                    }
+
+                    var credit = earning.NetAmount > 0 ? earning.NetAmount : earning.CommissionAmount;
+                    wallet.Balance += credit;
+                    wallet.SetUpdatedAt(now);
+
+                    _context.WalletTransactions.Add(new Eseller.Domain.Entities.Wallet.WalletTransaction
+                    {
+                        WalletId = wallet.Id,
+                        Direction = WalletDirection.Credit,
+                        TransactionType = WalletTransactionType.SellerEarning,
+                        Amount = credit,
+                        ReferenceType = "SellerOrder",
+                        ReferenceId = earning.SellerOrderId,
+                        Description = "Seller earning released for delivered order",
+                        CreatedAt = now
+                    });
+                }
+            }
+        }
+
+        // Keep parent OrderRequest in sync when this is the only shop,
+        // or when every sibling SellerOrder already matches the new status.
+        var otherSellerOrders = await _context.SellerOrders
+            .Where(so => so.OrderRequestId == sellerOrder.OrderRequestId && so.Id != sellerOrder.Id)
+            .ToListAsync(cancellationToken);
+
+        if (otherSellerOrders.Count == 0 || otherSellerOrders.All(so => so.Status == newStatus))
+        {
+            var mainOrder = await _context.OrderRequests
+                .FirstOrDefaultAsync(o => o.Id == sellerOrder.OrderRequestId, cancellationToken);
+            if (mainOrder != null && mainOrder.Status != newStatus)
+            {
+                mainOrder.Status = newStatus;
+                mainOrder.SetUpdatedAt(now);
+            }
+        }
 
         // Log status history (order-level)
         _context.OrderStatusHistories.Add(new OrderStatusHistory
@@ -84,7 +156,7 @@ public class UpdateSellerOrderStatusCommandHandler
             ChangedByType = isAdmin
                 ? (role == RoleType.SuperAdmin ? "SuperAdmin" : "Partner")
                 : "Shopkeeper",
-            ChangedAt = _dateTime.UtcNow
+            ChangedAt = now
         });
 
         await _context.SaveChangesAsync(cancellationToken);

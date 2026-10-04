@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Identity;
 using Eseller.Domain.Enums;
@@ -38,6 +38,18 @@ public class AddPartnerCommandHandler
         if (role != RoleType.SuperAdmin)
             return Result.Failure<Guid>(
                 "Only SuperAdmin can add partners.", "FORBIDDEN");
+
+        // Enforce maximum 3 partners rule
+        var activePartnersCount = await _context.Partners
+            .Join(_context.Accounts, p => p.AccountId, a => a.Id, (p, a) => new { p, a })
+            .CountAsync(x => x.a.IsActive, cancellationToken);
+
+        if (activePartnersCount >= 3)
+        {
+            return Result.Failure<Guid>(
+                "Maximum limit of 3 partners reached. You cannot add more than 3 active partners.",
+                "MAX_PARTNERS_LIMIT_REACHED");
+        }
 
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
 

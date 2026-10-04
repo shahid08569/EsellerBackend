@@ -8,4 +8,4 @@ public record UpdateCategoryCommand(
     string Name,
     string? SeoTitle,
     string? SeoDescription,
-    bool IsActive) : IRequest<Result>;
+    bool? IsActive = null) : IRequest<Result>;

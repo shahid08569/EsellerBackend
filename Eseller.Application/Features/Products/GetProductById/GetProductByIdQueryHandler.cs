@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -20,7 +20,7 @@ public class GetProductByIdQueryHandler
         CancellationToken cancellationToken)
     {
         var product = await _context.Products
-            .Where(p => p.Id == request.ProductId && p.IsActive && p.IsApproved)
+            .Where(p => p.Id == request.ProductId && p.IsActive)
             .Select(p => new ProductDto(
                 p.Id,
                 p.ShopId,

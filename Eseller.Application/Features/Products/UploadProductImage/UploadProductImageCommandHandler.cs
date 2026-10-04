@@ -85,17 +85,20 @@ public class UploadProductImageCommandHandler
             request.ContentType,
             cancellationToken);
 
-        // Get next sort order
+        // Get next sort order; first image becomes cover
         var maxSortOrder = await _context.ProductImages
             .Where(pi => pi.ProductId == request.ProductId)
             .MaxAsync(pi => (int?)pi.SortOrder, cancellationToken) ?? 0;
+
+        var isFirstImage = existingCount == 0;
 
         // Create ProductImage
         var productImage = new ProductImage
         {
             ProductId = request.ProductId,
             ImageUrl = imageUrl,
-            SortOrder = maxSortOrder + 1
+            SortOrder = isFirstImage ? 0 : maxSortOrder + 1,
+            IsCover = isFirstImage
         };
 
         _context.ProductImages.Add(productImage);

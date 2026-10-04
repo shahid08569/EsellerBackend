@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -62,6 +62,15 @@ public class GetHomepageBannersQueryHandler
                 b.Id,
                 b.ImageUrl,
                 b.LinkUrl,
+                b.Title,
+                b.Subtitle,
+                b.Description,
+                b.Price,
+                b.OriginalPrice,
+                b.ButtonText,
+                b.BackgroundColor,
+                b.TextColor,
+                b.AvailableSizes,
                 b.SortOrder,
                 b.IsActive,
                 isCurrentlyActive,

@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -37,6 +37,15 @@ public class GetActiveBannersQueryHandler
             b.Id,
             b.ImageUrl,
             b.LinkUrl,
+            b.Title,
+            b.Subtitle,
+            b.Description,
+            b.Price,
+            b.OriginalPrice,
+            b.ButtonText,
+            b.BackgroundColor,
+            b.TextColor,
+            b.AvailableSizes,
             b.SortOrder,
             b.IsActive,
             true,

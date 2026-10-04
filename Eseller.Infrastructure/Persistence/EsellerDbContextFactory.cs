@@ -17,7 +17,11 @@ public class EsellerDbContextFactory : IDesignTimeDbContextFactory<EsellerDbCont
         var connectionString = configuration.GetConnectionString("DefaultConnection");
 
         var optionsBuilder = new DbContextOptionsBuilder<EsellerDbContext>();
-        optionsBuilder.UseSqlServer(connectionString);
+        optionsBuilder.UseSqlServer(connectionString, b =>
+        {
+            b.MigrationsAssembly("Eseller.Infrastructure");
+            b.CommandTimeout(180);
+        });
 
         return new EsellerDbContext(optionsBuilder.Options);
     }

@@ -13,6 +13,7 @@ public class ProductImageConfiguration : IEntityTypeConfiguration<ProductImage>
 
         builder.Property(pi => pi.ImageUrl).IsRequired().HasMaxLength(500);
         builder.Property(pi => pi.SortOrder).IsRequired().HasDefaultValue(0);
+        builder.Property(pi => pi.IsCover).IsRequired().HasDefaultValue(false);
 
         builder.HasOne<Product>()
             .WithMany()

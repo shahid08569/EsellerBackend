@@ -1,5 +1,6 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Infrastructure.Settings;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -9,13 +10,28 @@ public class LocalFileStorageService : IFileStorageService
 {
     private readonly FileStorageSettings _settings;
     private readonly ILogger<LocalFileStorageService> _logger;
+    private readonly string _rootPath;
 
     public LocalFileStorageService(
         IOptions<FileStorageSettings> settings,
+        IHostEnvironment env,
         ILogger<LocalFileStorageService> logger)
     {
         _settings = settings.Value;
         _logger = logger;
+
+        var configured = string.IsNullOrWhiteSpace(_settings.BasePath)
+            ? "wwwroot/uploads"
+            : _settings.BasePath.Trim();
+
+        // Always resolve against API content root so uploads land in Eseller.API/wwwroot/uploads
+        // (relative paths previously depended on process CWD and files vanished).
+        _rootPath = Path.IsPathRooted(configured)
+            ? configured
+            : Path.GetFullPath(Path.Combine(env.ContentRootPath, configured));
+
+        Directory.CreateDirectory(_rootPath);
+        _logger.LogDebug("File storage root: {RootPath}", _rootPath);
     }
 
     public async Task<string> UploadAsync(
@@ -24,26 +40,23 @@ public class LocalFileStorageService : IFileStorageService
         string contentType,
         CancellationToken cancellationToken = default)
     {
-        // 1. Ensure directory exists
-        var fullPath = Path.Combine(_settings.BasePath, fileName);
+        var cleanRel = fileName.TrimStart('/', '\\').Replace('\\', '/');
+        if (cleanRel.StartsWith("uploads/", StringComparison.OrdinalIgnoreCase))
+            cleanRel = cleanRel["uploads/".Length..];
+
+        var fullPath = Path.Combine(_rootPath, cleanRel.Replace('/', Path.DirectorySeparatorChar));
         var directory = Path.GetDirectoryName(fullPath);
 
         if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-        {
             Directory.CreateDirectory(directory);
-        }
 
-        // 2. Write file
-        using (var fileStream = new FileStream(fullPath, FileMode.Create))
+        await using (var fileStream = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.None))
         {
             await stream.CopyToAsync(fileStream, cancellationToken);
         }
 
-        // 3. Return relative URL (e.g., /uploads/shops/xxx/logo.jpg)
-        var relativeUrl = "/" + fileName.Replace("\\", "/");
-
-        _logger.LogInformation("File uploaded: {RelativeUrl}", relativeUrl);
-
+        var relativeUrl = "/uploads/" + cleanRel;
+        _logger.LogDebug("File uploaded: {RelativeUrl} -> {FullPath}", relativeUrl, fullPath);
         return relativeUrl;
     }
 
@@ -54,9 +67,11 @@ public class LocalFileStorageService : IFileStorageService
         if (string.IsNullOrWhiteSpace(fileUrl))
             return Task.CompletedTask;
 
-        // Convert URL to file path
-        var relativePath = fileUrl.TrimStart('/').Replace("/", Path.DirectorySeparatorChar.ToString());
-        var fullPath = Path.Combine(_settings.BasePath, relativePath);
+        var cleanPath = fileUrl.TrimStart('/').Replace('\\', '/');
+        if (cleanPath.StartsWith("uploads/", StringComparison.OrdinalIgnoreCase))
+            cleanPath = cleanPath["uploads/".Length..];
+
+        var fullPath = Path.Combine(_rootPath, cleanPath.Replace('/', Path.DirectorySeparatorChar));
 
         if (File.Exists(fullPath))
         {

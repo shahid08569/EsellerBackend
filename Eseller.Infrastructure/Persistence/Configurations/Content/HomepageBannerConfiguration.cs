@@ -1,4 +1,4 @@
-﻿using Eseller.Domain.Entities.Content;
+using Eseller.Domain.Entities.Content;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -13,6 +13,15 @@ public class HomepageBannerConfiguration : IEntityTypeConfiguration<HomepageBann
 
         builder.Property(hb => hb.ImageUrl).IsRequired().HasMaxLength(500);
         builder.Property(hb => hb.LinkUrl).HasMaxLength(500);
+        builder.Property(hb => hb.Title).HasMaxLength(200);
+        builder.Property(hb => hb.Subtitle).HasMaxLength(200);
+        builder.Property(hb => hb.Description).HasMaxLength(1000);
+        builder.Property(hb => hb.Price).HasPrecision(18, 2);
+        builder.Property(hb => hb.OriginalPrice).HasPrecision(18, 2);
+        builder.Property(hb => hb.ButtonText).HasMaxLength(100);
+        builder.Property(hb => hb.BackgroundColor).HasMaxLength(300);
+        builder.Property(hb => hb.TextColor).HasMaxLength(50);
+        builder.Property(hb => hb.AvailableSizes).HasMaxLength(100);
         builder.Property(hb => hb.SortOrder).IsRequired().HasDefaultValue(0);
         builder.Property(hb => hb.IsActive).IsRequired().HasDefaultValue(true);
         builder.Property(hb => hb.CreatedAt).IsRequired();

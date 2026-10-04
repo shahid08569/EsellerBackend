@@ -1,4 +1,4 @@
-﻿using Eseller.Domain.Entities.Affiliate;
+using Eseller.Domain.Entities.Affiliate;
 using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Entities.Content;
 using Eseller.Domain.Entities.Engagement;
@@ -32,6 +32,8 @@ public interface IApplicationDbContext
     DbSet<Category> Categories { get; }
     DbSet<Brand> Brands { get; }
     DbSet<Shop> Shops { get; }
+    DbSet<ShopCategory> ShopCategories { get; }
+    DbSet<TierUpgradeRequest> TierUpgradeRequests { get; }
     DbSet<ShopImage> ShopImages { get; }
     DbSet<Product> Products { get; }
     DbSet<ProductImage> ProductImages { get; }

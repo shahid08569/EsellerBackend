@@ -88,6 +88,20 @@ public class CreateReviewCommandHandler
                     "You have already reviewed this item.",
                     "ALREADY_REVIEWED");
         }
+        else
+        {
+            // One review per user per product when not tied to an order line
+            var already = await _context.Reviews
+                .AnyAsync(r => r.UserId == user.Id && r.ProductId == request.ProductId,
+                    cancellationToken);
+            if (already)
+                return Result.Failure<Guid>(
+                    "You have already reviewed this product.",
+                    "ALREADY_REVIEWED");
+        }
+
+        if (request.Rating < 1 || request.Rating > 5)
+            return Result.Failure<Guid>("Rating must be between 1 and 5.", "VALIDATION_ERROR");
 
         var review = new Review
         {
@@ -97,13 +111,57 @@ public class CreateReviewCommandHandler
             Rating = request.Rating,
             Title = request.Title,
             Comment = request.Comment,
-            IsApproved = false,   // Admin moderation
+            IsApproved = true, // Live immediately so storefront rating updates dynamically
             CreatedAt = _dateTime.UtcNow
         };
 
         _context.Reviews.Add(review);
         await _context.SaveChangesAsync(cancellationToken);
 
+        await RecalculateAvgRatingAsync(request.ProductId, cancellationToken);
+
         return Result.Success(review.Id);
+    }
+
+    private async Task RecalculateAvgRatingAsync(Guid productId, CancellationToken cancellationToken)
+    {
+        var product = await _context.Products
+            .FirstOrDefaultAsync(p => p.Id == productId, cancellationToken);
+        if (product is null) return;
+
+        var approved = await _context.Reviews
+            .Where(r => r.ProductId == productId && r.IsApproved)
+            .Select(r => r.Rating)
+            .ToListAsync(cancellationToken);
+
+        product.AvgRating = approved.Count == 0
+            ? null
+            : (decimal)approved.Average();
+        product.SetUpdatedAt(_dateTime.UtcNow);
+
+        // Keep catalog twin / sibling listings in sync when possible
+        if (product.SourceProductId.HasValue)
+        {
+            var catalog = await _context.Products
+                .FirstOrDefaultAsync(p => p.Id == product.SourceProductId.Value, cancellationToken);
+            if (catalog is not null)
+            {
+                catalog.AvgRating = product.AvgRating;
+                catalog.SetUpdatedAt(_dateTime.UtcNow);
+            }
+        }
+        else
+        {
+            var listings = await _context.Products
+                .Where(p => p.SourceProductId == productId)
+                .ToListAsync(cancellationToken);
+            foreach (var listing in listings)
+            {
+                listing.AvgRating = product.AvgRating;
+                listing.SetUpdatedAt(_dateTime.UtcNow);
+            }
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
     }
 }

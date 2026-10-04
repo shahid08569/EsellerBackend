@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Domain.Entities.Identity;
 using Microsoft.Extensions.Logging;
 
@@ -30,7 +30,6 @@ public class LocationService : ILocationService
     {
         if (latitude < -90 || latitude > 90) return Task.FromResult(false);
         if (longitude < -180 || longitude > 180) return Task.FromResult(false);
-        if (latitude == 0 && longitude == 0) return Task.FromResult(false);
 
         return Task.FromResult(true);
     }

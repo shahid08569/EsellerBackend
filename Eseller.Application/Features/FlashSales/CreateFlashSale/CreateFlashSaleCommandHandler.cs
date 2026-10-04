@@ -55,13 +55,62 @@ public class CreateFlashSaleCommandHandler
                 "One or more products are not available.",
                 "PRODUCTS_NOT_AVAILABLE");
 
+        // Flash sale only for catalog SKUs that already have a seller listing
+        var listedCatalogIds = await _context.Products
+            .IgnoreQueryFilters()
+            .Where(l => l.SourceProductId != null
+                     && productIds.Contains(l.SourceProductId.Value)
+                     && l.DeletedAt == null
+                     && l.IsActive
+                     && l.IsApproved)
+            .Select(l => l.SourceProductId!.Value)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        var alreadyListings = await _context.Products
+            .IgnoreQueryFilters()
+            .Where(p => productIds.Contains(p.Id)
+                     && p.SourceProductId != null
+                     && p.DeletedAt == null
+                     && p.IsActive
+                     && p.IsApproved)
+            .Select(p => p.Id)
+            .ToListAsync(cancellationToken);
+
+        var allowed = listedCatalogIds.Concat(alreadyListings).Distinct().ToHashSet();
+        var unlisted = productIds.Where(id => !allowed.Contains(id)).ToList();
+        if (unlisted.Count > 0)
+            return Result.Failure<Guid>(
+                "Flash sale products must already be listed on a shop.",
+                "PRODUCTS_NOT_LISTED");
+
         var now = _dateTime.UtcNow;
+
+        static DateTime ToUtc(DateTime value)
+        {
+            return value.Kind switch
+            {
+                DateTimeKind.Utc => value,
+                DateTimeKind.Local => value.ToUniversalTime(),
+                _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+            };
+        }
+
+        var startDate = ToUtc(request.StartDate);
+        var endDate = ToUtc(request.EndDate);
+
+        // Avoid "not started yet" when admin picks "now" in local time ahead of UTC
+        if (startDate > now && startDate <= now.AddMinutes(30))
+            startDate = now;
+
+        if (endDate <= startDate)
+            endDate = startDate.AddDays(3);
 
         var flashSale = new FlashSale
         {
             Name = request.Name.Trim(),
-            StartDate = request.StartDate,
-            EndDate = request.EndDate,
+            StartDate = startDate,
+            EndDate = endDate,
             IsActive = true
         };
 

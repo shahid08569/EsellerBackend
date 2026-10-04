@@ -21,5 +21,16 @@ public class RegisterAffiliateCommandValidator : AbstractValidator<RegisterAffil
             .Matches(@"[A-Z]").WithMessage("Password must contain at least one uppercase letter.")
             .Matches(@"[a-z]").WithMessage("Password must contain at least one lowercase letter.")
             .Matches(@"[0-9]").WithMessage("Password must contain at least one digit.");
+
+        // ✅ Location validation
+        RuleFor(x => x.Latitude)
+            .InclusiveBetween(-90m, 90m).WithMessage("Invalid latitude.");
+
+        RuleFor(x => x.Longitude)
+            .InclusiveBetween(-180m, 180m).WithMessage("Invalid longitude.");
+
+        RuleFor(x => x.DeviceType)
+            .NotEmpty().WithMessage("Device type is required.")
+            .MaximumLength(50);
     }
 }

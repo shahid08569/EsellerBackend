@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -44,7 +44,24 @@ public class UpdateSettingCommandHandler
             .FirstOrDefaultAsync(s => s.Key == key, cancellationToken);
 
         if (setting is null)
-            return Result.Failure("Setting not found.", "SETTING_NOT_FOUND");
+        {
+            var detectedType = "string";
+            if (bool.TryParse(request.Value, out _)) detectedType = "bool";
+            else if (int.TryParse(request.Value, out _)) detectedType = "int";
+            else if (decimal.TryParse(request.Value, out _)) detectedType = "decimal";
+
+            setting = new Eseller.Domain.Entities.Content.Setting
+            {
+                Key = key,
+                Value = request.Value,
+                Type = detectedType,
+                IsActive = request.IsActive ?? true
+            };
+            setting.SetCreatedAt(_dateTime.UtcNow);
+            _context.Settings.Add(setting);
+            await _context.SaveChangesAsync(cancellationToken);
+            return Result.Success();
+        }
 
         // Validate value based on type
         var type = setting.Type?.ToLowerInvariant();

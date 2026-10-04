@@ -27,41 +27,112 @@ public class GetUnreadCountQueryHandler
         if (_currentUserService.AccountId is null)
             return Result.Failure<int>("User is not authenticated.", "UNAUTHENTICATED");
 
+        try
+        {
+            return Result.Success(await CountUnreadAsync(cancellationToken));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Client navigated away / poll aborted — not a server fault
+            return Result.Success(0);
+        }
+    }
+
+    private async Task<int> CountUnreadAsync(CancellationToken cancellationToken)
+    {
         var role = _currentUserService.RoleType;
 
         if (role == RoleType.SuperAdmin || role == RoleType.Partner)
         {
-            // Admin: unread messages from users
-            var count = await _context.ChatMessages
-                .CountAsync(cm => !cm.IsRead && cm.SenderRole == ChatSenderRole.User,
+            return await _context.ChatMessages
+                .AsNoTracking()
+                .CountAsync(cm => !cm.IsRead
+                    && (cm.SenderRole == ChatSenderRole.User
+                        || cm.SenderRole == ChatSenderRole.Shopkeeper),
                     cancellationToken);
-
-            return Result.Success(count);
         }
-        else if (role == RoleType.User)
+
+        if (role == RoleType.Shopkeeper)
         {
-            // Customer: unread messages from SuperAdmin/Partner
-            var user = await _context.Users
-                .FirstOrDefaultAsync(u => u.AccountId == _currentUserService.AccountId.Value,
+            var shopkeeper = await _context.Shopkeepers
+                .AsNoTracking()
+                .FirstOrDefaultAsync(sk => sk.AccountId == _currentUserService.AccountId!.Value,
                     cancellationToken);
 
-            if (user is null)
-                return Result.Success(0);
+            if (shopkeeper is null)
+                return 0;
 
-            var orderIds = await _context.OrderRequests
-                .Where(o => o.UserId == user.Id)
-                .Select(o => o.Id)
+            var shopIds = await _context.Shops
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null)
+                .Select(s => s.Id)
                 .ToListAsync(cancellationToken);
 
-            var count = await _context.ChatMessages
-                .CountAsync(cm => orderIds.Contains(cm.OrderRequestId)
+            if (shopIds.Count == 0)
+                return 0;
+
+            // 1) Super Admin → seller support rooms (OrderRequestId == Shop.Id)
+            var supportUnread = await _context.ChatMessages
+                .AsNoTracking()
+                .CountAsync(cm => shopIds.Contains(cm.OrderRequestId)
                                && !cm.IsRead
-                               && cm.SenderRole != ChatSenderRole.User,
+                               && (cm.SenderRole == ChatSenderRole.SuperAdmin
+                                   || cm.SenderRole == ChatSenderRole.Partner),
                     cancellationToken);
 
-            return Result.Success(count);
+            // 2) Customer ↔ shop threads (SHOP_CHAT_{shopId}_*) — filter in SQL per shop
+            var customerUnread = 0;
+            foreach (var shopId in shopIds)
+            {
+                var prefix = $"SHOP_CHAT_{shopId}_";
+                customerUnread += await (
+                    from cm in _context.ChatMessages.AsNoTracking()
+                    join o in _context.OrderRequests.AsNoTracking() on cm.OrderRequestId equals o.Id
+                    where !cm.IsRead
+                          && cm.SenderRole == ChatSenderRole.User
+                          && o.ShippingAddress != null
+                          && o.ShippingAddress.StartsWith(prefix)
+                    select cm.Id
+                ).CountAsync(cancellationToken);
+            }
+
+            // 3) Commerce order chats for this seller (join — no giant Id list in memory)
+            var orderUnread = await (
+                from cm in _context.ChatMessages.AsNoTracking()
+                join so in _context.SellerOrders.AsNoTracking() on cm.OrderRequestId equals so.OrderRequestId
+                where shopIds.Contains(so.ShopId)
+                      && !cm.IsRead
+                      && cm.SenderRole == ChatSenderRole.User
+                      && !shopIds.Contains(cm.OrderRequestId)
+                select cm.Id
+            ).Distinct().CountAsync(cancellationToken);
+
+            return supportUnread + customerUnread + orderUnread;
         }
 
-        return Result.Success(0);
+        if (role == RoleType.User)
+        {
+            var userId = await _context.Users
+                .AsNoTracking()
+                .Where(u => u.AccountId == _currentUserService.AccountId!.Value)
+                .Select(u => (Guid?)u.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (userId is null)
+                return 0;
+
+            // Single SQL join — avoid loading all order IDs then IN-clause
+            return await (
+                from cm in _context.ChatMessages.AsNoTracking()
+                join o in _context.OrderRequests.AsNoTracking() on cm.OrderRequestId equals o.Id
+                where o.UserId == userId.Value
+                      && !cm.IsRead
+                      && cm.SenderRole != ChatSenderRole.User
+                select cm.Id
+            ).CountAsync(cancellationToken);
+        }
+
+        return 0;
     }
 }
