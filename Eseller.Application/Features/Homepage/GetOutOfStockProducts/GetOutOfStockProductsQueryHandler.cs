@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Application.Features.Products;
 using MediatR;
@@ -27,7 +27,7 @@ public class GetOutOfStockProductsQueryHandler
         var limit = request.Limit > 50 ? 50 : (request.Limit < 1 ? 20 : request.Limit);
         var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
 
-        // ✅ Products jinka total stock == 0 (seller storefront only)
+        // ? Products jinka total stock == 0 (seller storefront only)
         var productIds = await MasterCatalog.StorefrontListings(_context, masterShopId)
             .Select(p => new
             {
@@ -87,6 +87,10 @@ public class GetOutOfStockProductsQueryHandler
                     .Where(s => s.Id == p.ShopId)
                     .Select(s => s.Slug)
                     .FirstOrDefault() ?? string.Empty,
+                ShopRating = _context.Shops
+                    .Where(s => s.Id == p.ShopId)
+                    .Select(s => s.Rating)
+                    .FirstOrDefault(),
                 CategoryName = _context.Categories
                     .Where(c => c.Id == p.CategoryId)
                     .Select(c => c.Name)
@@ -117,8 +121,7 @@ public class GetOutOfStockProductsQueryHandler
                 p.BasePrice,
                 p.PrimaryImageUrl,
                 p.ShopName,
-                p.ShopSlug,
-                p.CategoryName,
+                p.ShopSlug,p.CategoryName,
                 p.BrandName,
                 p.AvgRating,
                 p.IsFeatured,
@@ -126,7 +129,8 @@ public class GetOutOfStockProductsQueryHandler
                 p.IsApproved ? "Approved" : "Pending",
                 p.RejectionReason,
                 p.CreatedAt,
-                badges.GetValueOrDefault(p.Id)))
+                badges.GetValueOrDefault(p.Id),
+                ShopRating: p.ShopRating))
             .ToList();
     }
 }

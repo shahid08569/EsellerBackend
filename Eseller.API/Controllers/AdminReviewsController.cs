@@ -1,4 +1,5 @@
 ﻿using Eseller.Application.Features.Reviews.ApproveReview;
+using Eseller.Application.Features.Reviews.GetAdminReviews;
 using Eseller.Application.Features.Reviews.GetPendingReviews;
 using Eseller.Application.Features.Reviews.RejectReview;
 using MediatR;
@@ -20,6 +21,25 @@ public class AdminReviewsController : ControllerBase
     }
 
     /// <summary>
+    /// List product reviews for moderation. status: pending | approved | all
+    /// </summary>
+    [HttpGet]
+    public async Task<IActionResult> GetReviews(
+        [FromQuery] string status = "pending",
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetAdminReviewsQuery(status, pageNumber, pageSize);
+        var result = await _sender.Send(query, cancellationToken);
+
+        if (!result.IsSuccess)
+            return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
+
+        return Ok(result.Value);
+    }
+
+    /// <summary>
     /// Get all pending reviews.
     /// </summary>
     [HttpGet("pending")]
@@ -38,7 +58,7 @@ public class AdminReviewsController : ControllerBase
     }
 
     /// <summary>
-    /// Approve a review.
+    /// Keep (approve) a review — publishes it on the product.
     /// </summary>
     [HttpPut("{id:guid}/approve")]
     public async Task<IActionResult> Approve(
@@ -57,13 +77,14 @@ public class AdminReviewsController : ControllerBase
             };
         }
 
-        return Ok(new { message = "Review approved." });
+        return Ok(new { message = "Review kept and published." });
     }
 
     /// <summary>
-    /// Reject (delete) a review.
+    /// Delete a review permanently.
     /// </summary>
     [HttpPut("{id:guid}/reject")]
+    [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Reject(
         Guid id,
         CancellationToken cancellationToken)
@@ -80,6 +101,6 @@ public class AdminReviewsController : ControllerBase
             };
         }
 
-        return Ok(new { message = "Review rejected." });
+        return Ok(new { message = "Review deleted." });
     }
 }

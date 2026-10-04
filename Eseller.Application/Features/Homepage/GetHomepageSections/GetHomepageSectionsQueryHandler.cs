@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Application.Features.Products;
 using Eseller.Domain.Enums;
@@ -34,11 +34,11 @@ public class GetHomepageSectionsQueryHandler
         var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
         var baseQuery = MasterCatalog.StorefrontListings(_context, masterShopId);
 
-        // ✅ 1. Featured — catalog pins resolve to seller listings (or catalog fallback)
+        // ? 1. Featured � catalog pins resolve to seller listings (or catalog fallback)
         var featuredIds = await MasterCatalog.ResolveCuratedProductIdsAsync(
             _context, masterShopId, featured: true, hotSelling: false, limit, cancellationToken);
 
-        // ✅ 2. Best Selling
+        // ? 2. Best Selling
         var bestSellingIds = await _context.OrderRequestItems
             .Join(_context.OrderRequests,
                 oi => oi.OrderRequestId,
@@ -56,7 +56,7 @@ public class GetHomepageSectionsQueryHandler
             .Select(x => x.ProductId)
             .ToListAsync(cancellationToken);
 
-        // ✅ 3. Hot Selling — curated pins first, then last 30 days sales
+        // ? 3. Hot Selling � curated pins first, then last 30 days sales
         var hotSellingIds = await MasterCatalog.ResolveCuratedProductIdsAsync(
             _context, masterShopId, featured: false, hotSelling: true, limit, cancellationToken);
 
@@ -91,7 +91,7 @@ public class GetHomepageSectionsQueryHandler
             }
         }
 
-        // ✅ 4. New Arrivals
+        // ? 4. New Arrivals
         var newThreshold = now.AddDays(-30);
         var newArrivalIds = await baseQuery
             .Where(p => p.CreatedAt >= newThreshold)
@@ -100,7 +100,7 @@ public class GetHomepageSectionsQueryHandler
             .Select(p => p.Id)
             .ToListAsync(cancellationToken);
 
-        // ✅ 5. Flash Sale — map catalog SKUs to storefront listings when needed
+        // ? 5. Flash Sale � map catalog SKUs to storefront listings when needed
         var flashRawIds = await _context.FlashSaleProducts
             .Join(_context.FlashSales,
                 fsp => fsp.FlashSaleId,
@@ -116,7 +116,7 @@ public class GetHomepageSectionsQueryHandler
         var flashSaleIds = await MasterCatalog.MapToStorefrontOrSelfAsync(
             _context, masterShopId, flashRawIds, limit, cancellationToken);
 
-        // ✅ 6. Low Stock + Out of Stock (ek query mein)
+        // ? 6. Low Stock + Out of Stock (ek query mein)
         var stockData = await baseQuery
             .Select(p => new
             {
@@ -180,7 +180,7 @@ public class GetHomepageSectionsQueryHandler
     .ToList();
 
 
-        // ✅ Collect all
+        // ? Collect all
         var allIds = featuredIds
             .Concat(bestSellingIds)
             .Concat(hotSellingIds)
@@ -253,6 +253,9 @@ public class GetHomepageSectionsQueryHandler
                 ShopSlug = _context.Shops
                     .Where(s => s.Id == p.ShopId).Select(s => s.Slug)
                     .FirstOrDefault() ?? string.Empty,
+                ShopRating = _context.Shops
+                    .Where(s => s.Id == p.ShopId).Select(s => s.Rating)
+                    .FirstOrDefault(),
                 CategoryName = _context.Categories
                     .Where(c => c.Id == p.CategoryId).Select(c => c.Name)
                     .FirstOrDefault() ?? string.Empty,
@@ -280,8 +283,7 @@ public class GetHomepageSectionsQueryHandler
                 p.BasePrice,
                 p.PrimaryImageUrl,
                 p.ShopName,
-                p.ShopSlug,
-                p.CategoryName,
+                p.ShopSlug,p.CategoryName,
                 p.BrandName,
                 p.AvgRating,
                 p.IsFeatured,
@@ -289,7 +291,8 @@ public class GetHomepageSectionsQueryHandler
                 p.IsApproved ? "Approved" : (p.RejectionReason == null ? "Pending" : "Rejected"),
                 p.RejectionReason,
                 p.CreatedAt,
-                badges.GetValueOrDefault(p.Id)));
+                badges.GetValueOrDefault(p.Id),
+                ShopRating: p.ShopRating));
     }
 
     private static List<ProductListDto> FilterProducts(

@@ -24,19 +24,27 @@ public class AdminDashboardController : ControllerBase
     public async Task<IActionResult> GetPlatformDashboard(
         CancellationToken cancellationToken)
     {
-        var query = new GetPlatformDashboardQuery();
-        var result = await _sender.Send(query, cancellationToken);
-
-        if (!result.IsSuccess)
+        try
         {
-            return result.ErrorCode switch
-            {
-                "UNAUTHENTICATED" => Unauthorized(new { error = result.Error, errorCode = result.ErrorCode }),
-                "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
-                _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
-            };
-        }
+            var query = new GetPlatformDashboardQuery();
+            var result = await _sender.Send(query, cancellationToken);
 
-        return Ok(result.Value);
+            if (!result.IsSuccess)
+            {
+                return result.ErrorCode switch
+                {
+                    "UNAUTHENTICATED" => Unauthorized(new { error = result.Error, errorCode = result.ErrorCode }),
+                    "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
+                    _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
+                };
+            }
+
+            return Ok(result.Value);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Client navigated away / aborted — not a server fault
+            return NoContent();
+        }
     }
 }

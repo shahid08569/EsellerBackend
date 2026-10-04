@@ -74,6 +74,7 @@ public class GetCatalogProductsQueryHandler
                     .FirstOrDefault(),
                 ShopName = masterShop.Name,
                 ShopSlug = masterShop.Slug,
+                ShopRating = masterShop.Rating,
                 CategoryName = _context.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault() ?? string.Empty,
                 BrandName = p.BrandId == null
                     ? null
@@ -109,7 +110,8 @@ public class GetCatalogProductsQueryHandler
             p.CategoryId,
             p.BrandId,
             p.SourceProductId,
-            p.ShopId)).ToList();
+            p.ShopId,
+            p.ShopRating)).ToList();
 
         return Result.Success(new PagedList<ProductListDto>(
             productDtos,

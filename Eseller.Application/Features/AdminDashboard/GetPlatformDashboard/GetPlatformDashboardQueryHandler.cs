@@ -65,30 +65,61 @@ public class GetPlatformDashboardQueryHandler
         var pendingProducts = totalProducts - approvedProducts - rejectedProducts;
 
         // ═══════════════════════════════════════════════════════════
-        // ORDERS
+        // ORDERS — commerce only (same filter as Orders Hub)
+        // Single load → in-memory counts (fast + matches /orders list).
         // ═══════════════════════════════════════════════════════════
-        var totalOrders = await _context.OrderRequests.CountAsync(cancellationToken);
-        var pendingOrders = await _context.OrderRequests
-            .CountAsync(o => o.Status == OrderStatus.Pending, cancellationToken);
-        var deliveredOrders = await _context.OrderRequests
-            .CountAsync(o => o.Status == OrderStatus.Delivered, cancellationToken);
-        var cancelledOrders = await _context.OrderRequests
-            .CountAsync(o => o.Status == OrderStatus.Cancelled, cancellationToken);
-
-        // ═══════════════════════════════════════════════════════════
-        // REVENUE (Total + Delivered)
-        // ═══════════════════════════════════════════════════════════
-        var totalRevenue = await _context.OrderRequestItems
-            .SumAsync(i => (decimal?)i.TotalPriceSnapshot, cancellationToken) ?? 0m;
-
-        var deliveredOrderIds = await _context.OrderRequests
-            .Where(o => o.Status == OrderStatus.Delivered)
-            .Select(o => o.Id)
+        var commerceRows = await _context.OrderRequests
+            .AsNoTracking()
+            .Where(o => o.ShippingAddress == null
+                || (!o.ShippingAddress.StartsWith("SHOP_SUPPORT_")
+                    && !o.ShippingAddress.StartsWith("SHOP_CHAT_")
+                    && !o.ShippingAddress.StartsWith("CUSTOMER_SUPPORT_")
+                    && o.ShippingAddress != "Live Support Inquiry"))
+            .Where(o => _context.SellerOrders.Any(so => so.OrderRequestId == o.Id)
+                        || _context.OrderRequestItems.Any(i => i.OrderRequestId == o.Id))
+            .Select(o => new { o.Id, o.Status, o.CreatedAt })
             .ToListAsync(cancellationToken);
 
-        var deliveredRevenue = await _context.OrderRequestItems
-            .Where(i => deliveredOrderIds.Contains(i.OrderRequestId))
-            .SumAsync(i => (decimal?)i.TotalPriceSnapshot, cancellationToken) ?? 0m;
+        var totalOrders = commerceRows.Count;
+        // New = still Pending (needs first action)
+        var newOrders = commerceRows.Count(o => o.Status == OrderStatus.Pending);
+        // Pending = open / not finished (everything except Delivered + Cancelled)
+        var pendingOrders = commerceRows.Count(o =>
+            o.Status != OrderStatus.Delivered
+            && o.Status != OrderStatus.Cancelled
+            && o.Status != OrderStatus.Returned
+            && o.Status != OrderStatus.Refunded);
+        var deliveredOrders = commerceRows.Count(o => o.Status == OrderStatus.Delivered);
+        var cancelledOrders = commerceRows.Count(o => o.Status == OrderStatus.Cancelled);
+
+        var commerceOrderIds = commerceRows.Select(o => o.Id).ToList();
+        var deliveredOrderIds = commerceRows
+            .Where(o => o.Status == OrderStatus.Delivered)
+            .Select(o => o.Id)
+            .ToList();
+
+        // ═══════════════════════════════════════════════════════════
+        // REVENUE (Total + Delivered) — commerce order lines only
+        // ═══════════════════════════════════════════════════════════
+        decimal totalRevenue = 0m;
+        decimal deliveredRevenue = 0m;
+        if (commerceOrderIds.Count > 0)
+        {
+            var lineTotals = await _context.OrderRequestItems
+                .AsNoTracking()
+                .Where(i => commerceOrderIds.Contains(i.OrderRequestId))
+                .Select(i => new { i.OrderRequestId, i.TotalPriceSnapshot })
+                .ToListAsync(cancellationToken);
+
+            totalRevenue = lineTotals.Sum(i => i.TotalPriceSnapshot);
+            if (deliveredOrderIds.Count > 0)
+            {
+                var deliveredSet = deliveredOrderIds.ToHashSet();
+                deliveredRevenue = lineTotals
+                    .Where(i => deliveredSet.Contains(i.OrderRequestId))
+                    .Sum(i => i.TotalPriceSnapshot);
+            }
+        }
 
         // ═══════════════════════════════════════════════════════════
         // AFFILIATES
@@ -128,10 +159,9 @@ public class GetPlatformDashboardQueryHandler
         // ═══════════════════════════════════════════════════════════
         // RECENT ACTIVITY
         // ═══════════════════════════════════════════════════════════
-        var lastOrderAt = await _context.OrderRequests
-            .OrderByDescending(o => o.CreatedAt)
-            .Select(o => (DateTime?)o.CreatedAt)
-            .FirstOrDefaultAsync(cancellationToken);
+        DateTime? lastOrderAt = commerceRows.Count == 0
+            ? null
+            : commerceRows.Max(o => o.CreatedAt);
 
         var lastShopRegisteredAt = await _context.Shops
             .OrderByDescending(s => s.CreatedAt)
@@ -177,20 +207,27 @@ public class GetPlatformDashboardQueryHandler
         }).ToList();
 
         // ═══════════════════════════════════════════════════════════
-        // DYNAMIC MONTHLY REVENUE (last 12 months, real data only)
+        // DYNAMIC MONTHLY REVENUE + WEEKLY ORDERS (from in-memory rows)
         // ═══════════════════════════════════════════════════════════
         var nowUtc = DateTime.UtcNow;
         var monthStart = new DateTime(nowUtc.Year, nowUtc.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(-11);
-        var ordersWindow = await _context.OrderRequests
+        var ordersWindow = commerceRows
             .Where(o => o.CreatedAt >= monthStart && o.Status != OrderStatus.Cancelled)
             .Select(o => new { o.Id, o.CreatedAt })
-            .ToListAsync(cancellationToken);
+            .ToList();
 
-        var orderIdsWindow = ordersWindow.Select(o => o.Id).ToList();
-        var itemsWindow = await _context.OrderRequestItems
-            .Where(i => orderIdsWindow.Contains(i.OrderRequestId))
-            .Select(i => new { i.OrderRequestId, i.TotalPriceSnapshot })
-            .ToListAsync(cancellationToken);
+        Dictionary<Guid, decimal> itemSumByOrder = new();
+        if (ordersWindow.Count > 0)
+        {
+            var orderIdsWindow = ordersWindow.Select(o => o.Id).ToList();
+            var itemsWindow = await _context.OrderRequestItems
+                .AsNoTracking()
+                .Where(i => orderIdsWindow.Contains(i.OrderRequestId))
+                .GroupBy(i => i.OrderRequestId)
+                .Select(g => new { OrderRequestId = g.Key, Total = g.Sum(x => x.TotalPriceSnapshot) })
+                .ToListAsync(cancellationToken);
+            itemSumByOrder = itemsWindow.ToDictionary(x => x.OrderRequestId, x => x.Total);
+        }
 
         var monthlyRevenue = new List<MonthlyRevenuePointDto>();
         decimal prevRev = 0;
@@ -199,23 +236,14 @@ public class GetPlatformDashboardQueryHandler
             var cursor = monthStart.AddMonths(i);
             var mOrderIds = ordersWindow
                 .Where(o => o.CreatedAt.Year == cursor.Year && o.CreatedAt.Month == cursor.Month)
-                .Select(o => o.Id)
-                .ToHashSet();
-            var rev = itemsWindow.Where(it => mOrderIds.Contains(it.OrderRequestId)).Sum(it => it.TotalPriceSnapshot);
+                .Select(o => o.Id);
+            var rev = mOrderIds.Sum(id => itemSumByOrder.GetValueOrDefault(id));
             decimal growth = prevRev > 0 ? Math.Round(((rev - prevRev) / prevRev) * 100m, 1) : 0m;
             monthlyRevenue.Add(new MonthlyRevenuePointDto(cursor.ToString("MMM"), rev, growth));
             prevRev = rev;
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // DYNAMIC WEEKLY ORDERS (last 7 days, real counts)
-        // ═══════════════════════════════════════════════════════════
         var oneWeekAgo = DateTime.UtcNow.Date.AddDays(-6);
-        var ordersLastWeek = await _context.OrderRequests
-            .Where(o => o.CreatedAt >= oneWeekAgo)
-            .Select(o => new { o.CreatedAt.DayOfWeek })
-            .ToListAsync(cancellationToken);
-
         var dayMappings = new[]
         {
             new { Day = "Sat", Dow = DayOfWeek.Saturday },
@@ -228,7 +256,9 @@ public class GetPlatformDashboardQueryHandler
         };
 
         var weeklyOrders = dayMappings.Select(d =>
-            new DayOrderCountDto(d.Day, ordersLastWeek.Count(o => o.DayOfWeek == d.Dow))
+            new DayOrderCountDto(
+                d.Day,
+                commerceRows.Count(o => o.CreatedAt >= oneWeekAgo && o.CreatedAt.DayOfWeek == d.Dow))
         ).ToList();
 
         // ═══════════════════════════════════════════════════════════
@@ -245,6 +275,7 @@ public class GetPlatformDashboardQueryHandler
             rejectedProducts,
 
             totalOrders,
+            newOrders,
             pendingOrders,
             deliveredOrders,
             cancelledOrders,

@@ -11,4 +11,6 @@ public record ReviewDto(
     string? Title,
     string? Comment,
     bool IsApproved,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? ProductName = null,
+    string? ShopName = null);

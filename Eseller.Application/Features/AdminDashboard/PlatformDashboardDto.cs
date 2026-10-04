@@ -12,8 +12,9 @@ public record PlatformDashboardDto(
     int PendingProducts,
     int RejectedProducts,
 
-    // Orders
+    // Orders (commerce only — chat/support channels excluded)
     int TotalOrders,
+    int NewOrders,
     int PendingOrders,
     int DeliveredOrders,
     int CancelledOrders,
