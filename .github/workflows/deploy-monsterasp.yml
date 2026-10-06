@@ -98,7 +98,7 @@ jobs:
         shell: pwsh
         run: Start-Sleep -Seconds 8
 
-      - name: Deploy publish folder
+      - name: Deploy publish folder (exclude uploads — never mirror-delete images)
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
@@ -116,19 +116,88 @@ jobs:
             **/wwwroot/uploads/**
             **/*.pdb
 
-      - name: Deploy product/banner images (additive)
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
-          local-dir: ./publish/wwwroot/uploads/
-          server-dir: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}wwwroot/uploads/
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
+      # Additive only — FtpWebRequest PUT, never deletes remote files (FTP-Deploy mirror wiped images before).
+      - name: Upload product/banner images (additive, no delete)
+        shell: pwsh
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+          FTP_PROTOCOL: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
+        run: |
+          $localRoot = (Resolve-Path "publish/wwwroot/uploads").Path
+          $files = Get-ChildItem $localRoot -Recurse -File | Where-Object { $_.Name -ne '.keep' }
+          Write-Host "Local upload files: $($files.Count)"
+          if ($files.Count -lt 10) {
+            Write-Warning "Skipping image upload — expected ~197 files, found $($files.Count)"
+            exit 0
+          }
+
+          $baseDir = $env:FTP_SERVER_DIR.TrimEnd('/')
+          $remoteRoot = "$baseDir/wwwroot/uploads"
+          $useSsl = ($env:FTP_PROTOCOL -ne 'ftp')
+          $cred = New-Object System.Net.NetworkCredential($env:FTP_USERNAME, $env:FTP_PASSWORD)
+
+          function Ensure-FtpDir([string]$url) {
+            try {
+              $req = [System.Net.FtpWebRequest]::Create($url)
+              $req.Method = [System.Net.WebRequestMethods+Ftp]::MakeDirectory
+              $req.Credentials = $cred
+              $req.UseBinary = $true
+              $req.UsePassive = $true
+              $req.EnableSsl = $useSsl
+              $req.KeepAlive = $false
+              $resp = $req.GetResponse(); $resp.Close()
+            } catch { }
+          }
+
+          function Upload-File([string]$localPath, [string]$remoteUrl) {
+            $bytes = [IO.File]::ReadAllBytes($localPath)
+            $req = [System.Net.FtpWebRequest]::Create($remoteUrl)
+            $req.Method = [System.Net.WebRequestMethods+Ftp]::UploadFile
+            $req.Credentials = $cred
+            $req.UseBinary = $true
+            $req.UsePassive = $true
+            $req.EnableSsl = $useSsl
+            $req.ContentLength = $bytes.Length
+            $req.KeepAlive = $false
+            $stream = $req.GetRequestStream()
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Close()
+            $resp = $req.GetResponse(); $resp.Close()
+          }
+
+          Ensure-FtpDir "ftp://$($env:FTP_SERVER)$remoteRoot"
+          $dirs = $files | ForEach-Object {
+            $rel = $_.FullName.Substring($localRoot.Length).TrimStart('\', '/').Replace('\', '/')
+            $parent = Split-Path $rel -Parent
+            if ($parent) { $parent }
+          } | Select-Object -Unique | Sort-Object { $_.Length }
+
+          foreach ($d in $dirs) {
+            $parts = $d -split '/'
+            $acc = ""
+            foreach ($p in $parts) {
+              $acc = if ($acc) { "$acc/$p" } else { $p }
+              Ensure-FtpDir "ftp://$($env:FTP_SERVER)$remoteRoot/$acc"
+            }
+          }
+
+          $i = 0
+          $ok = 0
+          foreach ($f in $files) {
+            $i++
+            $rel = $f.FullName.Substring($localRoot.Length).TrimStart('\', '/').Replace('\', '/')
+            try {
+              Upload-File $f.FullName "ftp://$($env:FTP_SERVER)$remoteRoot/$rel"
+              $ok++
+              if ($i % 20 -eq 0) { Write-Host "[$i/$($files.Count)] uploaded…" }
+            } catch {
+              Write-Warning "Failed $rel : $($_.Exception.Message)"
+            }
+          }
+          Write-Host "Uploaded $ok / $($files.Count) image files to $remoteRoot"
 
       - name: Remove app_offline.htm
         shell: pwsh
