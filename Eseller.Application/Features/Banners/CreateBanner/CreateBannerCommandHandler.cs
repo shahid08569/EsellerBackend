@@ -37,19 +37,24 @@ public class CreateBannerCommandHandler
 
         var now = _dateTime.UtcNow;
 
+        static string? Clip(string? value, int max) =>
+            string.IsNullOrWhiteSpace(value)
+                ? null
+                : (value.Trim().Length <= max ? value.Trim() : value.Trim()[..max]);
+
         var banner = new HomepageBanner
         {
             ImageUrl = request.ImageUrl.Trim(),
-            LinkUrl = request.LinkUrl?.Trim(),
-            Title = request.Title?.Trim(),
-            Subtitle = request.Subtitle?.Trim(),
-            Description = request.Description?.Trim(),
+            LinkUrl = Clip(request.LinkUrl, 500),
+            Title = Clip(request.Title, 200),
+            Subtitle = Clip(request.Subtitle, 200),
+            Description = Clip(request.Description, 1000),
             Price = request.Price,
             OriginalPrice = request.OriginalPrice,
-            ButtonText = request.ButtonText?.Trim(),
-            BackgroundColor = request.BackgroundColor?.Trim(),
-            TextColor = request.TextColor?.Trim(),
-            AvailableSizes = request.AvailableSizes?.Trim(),
+            ButtonText = Clip(request.ButtonText, 100),
+            BackgroundColor = Clip(request.BackgroundColor, 300),
+            TextColor = Clip(request.TextColor, 50),
+            AvailableSizes = Clip(request.AvailableSizes, 100),
             SortOrder = request.SortOrder,
             IsActive = request.IsActive,
             StartDate = request.StartDate,
@@ -60,7 +65,16 @@ public class CreateBannerCommandHandler
         banner.SetUpdatedAt(now);
 
         _context.HomepageBanners.Add(banner);
-        await _context.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            return Result.Failure<Guid>(
+                $"Could not save banner: {ex.InnerException?.Message ?? ex.Message}",
+                "BANNER_SAVE_FAILED");
+        }
 
         return Result.Success(banner.Id);
     }

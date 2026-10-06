@@ -121,24 +121,38 @@ public class AdminBannersController : ControllerBase
     }
 
     [HttpPost("upload")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 10 * 1024 * 1024)]
     public async Task<IActionResult> UploadImage(
-        IFormFile file,
+        [FromForm] IFormFile? file,
         [FromServices] Eseller.Application.Abstractions.IFileStorageService fileStorage,
         CancellationToken cancellationToken)
     {
-        if (file is null || file.Length == 0)
-            return BadRequest(new { error = "No file provided" });
+        try
+        {
+            if (file is null || file.Length == 0)
+                return BadRequest(new { error = "No file provided", errorCode = "NO_FILE" });
 
-        var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-        if (!allowedExtensions.Contains(ext))
-            return BadRequest(new { error = "Invalid file type. Only JPG, PNG, and WEBP images are allowed." });
+            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
+            var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+            if (!allowedExtensions.Contains(ext))
+                return BadRequest(new { error = "Invalid file type. Only JPG, PNG, and WEBP images are allowed.", errorCode = "INVALID_FILE_TYPE" });
 
-        using var stream = file.OpenReadStream();
-        var uniqueFileName = $"banners/banner-{Guid.NewGuid()}{ext}";
-        var savedPath = await fileStorage.UploadAsync(stream, uniqueFileName, file.ContentType, cancellationToken);
+            await using var stream = file.OpenReadStream();
+            var uniqueFileName = $"banners/banner-{Guid.NewGuid()}{ext}";
+            var contentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
+            var savedPath = await fileStorage.UploadAsync(stream, uniqueFileName, contentType, cancellationToken);
 
-        return Ok(new { imageUrl = savedPath });
+            return Ok(new { imageUrl = savedPath });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                error = $"Banner image upload failed: {ex.Message}",
+                errorCode = "UPLOAD_FAILED"
+            });
+        }
     }
 
     [HttpDelete("{id:guid}")]
