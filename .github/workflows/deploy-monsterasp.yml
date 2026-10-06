@@ -108,6 +108,34 @@ jobs:
         shell: pwsh
         run: Start-Sleep -Seconds 8
 
+      - name: Invalidate FTP sync state (force full binary re-upload)
+        shell: pwsh
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+        run: |
+          # After a bad mirror wipe, sync-state still thinks DLLs exist → skips restore.
+          $dir = $env:FTP_SERVER_DIR.TrimEnd('/')
+          $url = "ftp://$($env:FTP_SERVER)$dir/.ftp-deploy-sync-state.json"
+          foreach ($enableSsl in @($true, $false)) {
+            try {
+              $req = [System.Net.FtpWebRequest]::Create($url)
+              $req.Method = [System.Net.WebRequestMethods+Ftp]::DeleteFile
+              $req.Credentials = New-Object System.Net.NetworkCredential($env:FTP_USERNAME, $env:FTP_PASSWORD)
+              $req.UsePassive = $true
+              $req.EnableSsl = $enableSsl
+              $resp = $req.GetResponse(); $resp.Close()
+              Write-Host "Deleted .ftp-deploy-sync-state.json (ssl=$enableSsl)"
+              exit 0
+            } catch {
+              Write-Host "sync-state delete ssl=$enableSsl : $($_.Exception.Message)"
+            }
+          }
+          Write-Host "No sync-state file (ok)."
+          exit 0
+
       - name: Deploy publish folder (exclude uploads — never mirror-delete images)
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
@@ -153,19 +181,7 @@ jobs:
         run: |
           $dir = $env:FTP_SERVER_DIR.TrimEnd('/')
           $url = "ftp://$($env:FTP_SERVER)$dir/app_offline.htm"
-          $attempts = @(
-            @('--ssl-reqd','--ftp-ssl'),
-            @()
-          )
-          foreach ($ssl in $attempts) {
-            & curl.exe -sS @ssl -u "$($env:FTP_USERNAME):$($env:FTP_PASSWORD)" -Q "DELE $dir/app_offline.htm" $url 2>$null
-            & curl.exe -sS @ssl -u "$($env:FTP_USERNAME):$($env:FTP_PASSWORD)" -X DELE $url
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "Removed app_offline.htm"
-              exit 0
-            }
-          }
-          # Fallback FtpWebRequest delete
+          $removed = $false
           foreach ($enableSsl in @($true, $false)) {
             try {
               $req = [System.Net.FtpWebRequest]::Create($url)
@@ -174,10 +190,14 @@ jobs:
               $req.UsePassive = $true
               $req.EnableSsl = $enableSsl
               $resp = $req.GetResponse(); $resp.Close()
-              Write-Host "Removed app_offline.htm (FtpWebRequest ssl=$enableSsl)"
-              exit 0
+              Write-Host "Removed app_offline.htm (ssl=$enableSsl)"
+              $removed = $true
+              break
             } catch {
-              Write-Host "delete retry ssl=$enableSsl : $($_.Exception.Message)"
+              Write-Host "delete attempt ssl=$enableSsl : $($_.Exception.Message)"
             }
           }
-          Write-Warning "Delete app_offline.htm manually in File Manager if site stays offline."
+          if (-not $removed) {
+            Write-Host "app_offline.htm already absent or could not delete (non-fatal)."
+          }
+          exit 0
