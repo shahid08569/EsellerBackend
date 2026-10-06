@@ -9,7 +9,7 @@ namespace Eseller.Application.Features.Affiliate.GetReferralCode;
 public class GetReferralCodeQueryHandler
     : IRequestHandler<GetReferralCodeQuery, Result<ReferralCodeDto>>
 {
-    private const string BaseUrl = "https://eseller.com";
+    private const string BaseUrl = "https://esellerglobal.com";
 
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;

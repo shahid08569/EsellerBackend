@@ -10,7 +10,7 @@ public class FileStorageSettings
     public string BasePath { get; set; } = "wwwroot/uploads";
 
     /// <summary>
-    /// Base URL for serving uploaded files (e.g., https://api.eseller.com).
+    /// Base URL for serving uploaded files (e.g., https://api.esellerglobal.com).
     /// </summary>
     public string BaseUrl { get; set; } = string.Empty;
 }
