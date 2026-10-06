@@ -14,12 +14,14 @@ public partial class AddShopCategoryIsRecommended : Migration
     /// <inheritdoc />
     protected override void Up(MigrationBuilder migrationBuilder)
     {
+        // Separate batches: SQL Server cannot reference a newly added column in the same batch.
         migrationBuilder.Sql(@"
 IF COL_LENGTH('ShopCategories', 'IsRecommended') IS NULL
     ALTER TABLE [ShopCategories] ADD [IsRecommended] bit NOT NULL CONSTRAINT DF_ShopCategories_IsRecommended DEFAULT 0;
-
--- Prefer Gold as the single recommended package when none set
-IF NOT EXISTS (SELECT 1 FROM [ShopCategories] WHERE [DeletedAt] IS NULL AND [IsRecommended] = 1)
+");
+        migrationBuilder.Sql(@"
+IF COL_LENGTH('ShopCategories', 'IsRecommended') IS NOT NULL
+AND NOT EXISTS (SELECT 1 FROM [ShopCategories] WHERE [DeletedAt] IS NULL AND [IsRecommended] = 1)
 BEGIN
     UPDATE TOP (1) [ShopCategories]
     SET [IsRecommended] = 1
