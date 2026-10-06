@@ -60,8 +60,16 @@ jobs:
           Copy-Item "deploy/monsterasp/web.config" "$out/web.config" -Force
           New-Item -ItemType Directory -Path "$out/logs" -Force | Out-Null
           Set-Content "$out/logs/.keep" -Value "keep"
-          New-Item -ItemType Directory -Path "$out/wwwroot/uploads" -Force | Out-Null
-          Set-Content "$out/wwwroot/uploads/.keep" -Value "keep"
+          # Ensure uploads from repo are in publish output (product/banner images)
+          $srcUploads = "Eseller.API/wwwroot/uploads"
+          $dstUploads = "$out/wwwroot/uploads"
+          New-Item -ItemType Directory -Path $dstUploads -Force | Out-Null
+          if (Test-Path $srcUploads) {
+            Copy-Item -Path "$srcUploads\*" -Destination $dstUploads -Recurse -Force
+            Write-Host "Copied uploads files: $((Get-ChildItem $dstUploads -Recurse -File).Count)"
+          } else {
+            Set-Content "$dstUploads/.keep" -Value "keep"
+          }
           # Keep server Production secrets (password/JWT) intact
           Remove-Item "$out/appsettings.Production.json" -Force -ErrorAction SilentlyContinue
           Get-ChildItem $out -Recurse -Directory |
@@ -107,6 +115,20 @@ jobs:
             **/logs/**
             **/wwwroot/uploads/**
             **/*.pdb
+
+      - name: Deploy product/banner images (additive)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
+          local-dir: ./publish/wwwroot/uploads/
+          server-dir: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}wwwroot/uploads/
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
 
       - name: Remove app_offline.htm
         shell: pwsh
