@@ -2,6 +2,9 @@
 # Secrets (repo Settings → Secrets → Actions):
 #   FTP_SERVER, FTP_USERNAME, FTP_PASSWORD
 # Optional: FTP_SERVER_DIR=/wwwroot/  FTP_PROTOCOL=ftps|ftp
+#
+# CRITICAL: Never use FTP-Deploy-Action with a tiny local folder (e.g. only app_offline.htm).
+# That action MIRRORS and deletes everything else on the server (DLLs + uploads).
 
 name: Deploy API → MonsterASP
 
@@ -60,7 +63,7 @@ jobs:
           Copy-Item "deploy/monsterasp/web.config" "$out/web.config" -Force
           New-Item -ItemType Directory -Path "$out/logs" -Force | Out-Null
           Set-Content "$out/logs/.keep" -Value "keep"
-          # Ensure uploads from repo are in publish output (product/banner images)
+          # Keep uploads in publish for the additive curl step only — excluded from mirror deploy.
           $srcUploads = "Eseller.API/wwwroot/uploads"
           $dstUploads = "$out/wwwroot/uploads"
           New-Item -ItemType Directory -Path $dstUploads -Force | Out-Null
@@ -77,22 +80,29 @@ jobs:
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           Write-Host "Published files: $((Get-ChildItem $out -Recurse -File).Count)"
 
-      - name: Prepare app_offline
+      - name: Stop site (single-file app_offline — no mirror delete)
         shell: pwsh
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+          FTP_PROTOCOL: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
         run: |
-          New-Item -ItemType Directory -Path ftp-offline -Force | Out-Null
-          Set-Content ftp-offline/app_offline.htm -Value "<html><body><h1>Updating Eseller API…</h1></body></html>"
-
-      - name: Stop site (app_offline.htm)
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
-          local-dir: ./ftp-offline/
-          server-dir: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
-          dangerous-clean-slate: false
+          $html = "<html><body><h1>Updating Eseller API…</h1></body></html>"
+          $tmp = Join-Path $env:RUNNER_TEMP "app_offline.htm"
+          Set-Content -Path $tmp -Value $html -Encoding ascii
+          $dir = $env:FTP_SERVER_DIR.TrimEnd('/')
+          $url = "ftp://$($env:FTP_SERVER)$dir/app_offline.htm"
+          $ssl = @()
+          if ($env:FTP_PROTOCOL -ne 'ftp') { $ssl = @('--ssl-reqd','--ftp-ssl') }
+          & curl.exe -sS --fail @ssl -u "$($env:FTP_USERNAME):$($env:FTP_PASSWORD)" -T $tmp $url
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "FTPS put failed; retry plain FTP"
+            & curl.exe -sS --fail -u "$($env:FTP_USERNAME):$($env:FTP_PASSWORD)" -T $tmp $url
+            if ($LASTEXITCODE -ne 0) { throw "Failed to upload app_offline.htm" }
+          }
+          Write-Host "Uploaded app_offline.htm only (no directory sync)."
 
       - name: Wait for IIS unlock
         shell: pwsh
@@ -114,10 +124,11 @@ jobs:
             **/appsettings.Production.json
             **/logs/**
             **/wwwroot/uploads/**
+            **/wwwroot/uploads/**
+            wwwroot/uploads/**
             **/*.pdb
 
       # Additive only — curl --ftp-create-dirs; never deletes remote files.
-      # Previous FtpWebRequest MKD failed silently → Uploaded 0/197 and empty/missing images.
       - name: Upload product/banner images (additive, no delete)
         shell: pwsh
         env:
@@ -131,28 +142,42 @@ jobs:
           ./deploy/monsterasp/upload-uploads-additive.ps1
 
       - name: Remove app_offline.htm
+        if: always()
         shell: pwsh
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
           FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+          FTP_PROTOCOL: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
         run: |
           $dir = $env:FTP_SERVER_DIR.TrimEnd('/')
-          $uri = "ftp://$($env:FTP_SERVER)$dir/app_offline.htm"
-          foreach ($ssl in @($true, $false)) {
+          $url = "ftp://$($env:FTP_SERVER)$dir/app_offline.htm"
+          $attempts = @(
+            @('--ssl-reqd','--ftp-ssl'),
+            @()
+          )
+          foreach ($ssl in $attempts) {
+            & curl.exe -sS @ssl -u "$($env:FTP_USERNAME):$($env:FTP_PASSWORD)" -Q "DELE $dir/app_offline.htm" $url 2>$null
+            & curl.exe -sS @ssl -u "$($env:FTP_USERNAME):$($env:FTP_PASSWORD)" -X DELE $url
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Removed app_offline.htm"
+              exit 0
+            }
+          }
+          # Fallback FtpWebRequest delete
+          foreach ($enableSsl in @($true, $false)) {
             try {
-              $req = [System.Net.FtpWebRequest]::Create($uri)
+              $req = [System.Net.FtpWebRequest]::Create($url)
               $req.Method = [System.Net.WebRequestMethods+Ftp]::DeleteFile
               $req.Credentials = New-Object System.Net.NetworkCredential($env:FTP_USERNAME, $env:FTP_PASSWORD)
               $req.UsePassive = $true
-              $req.EnableSsl = $ssl
-              $resp = $req.GetResponse()
-              $resp.Close()
-              Write-Host "Removed app_offline.htm (ssl=$ssl)"
+              $req.EnableSsl = $enableSsl
+              $resp = $req.GetResponse(); $resp.Close()
+              Write-Host "Removed app_offline.htm (FtpWebRequest ssl=$enableSsl)"
               exit 0
             } catch {
-              Write-Host "retry ssl=$ssl : $($_.Exception.Message)"
+              Write-Host "delete retry ssl=$enableSsl : $($_.Exception.Message)"
             }
           }
           Write-Warning "Delete app_offline.htm manually in File Manager if site stays offline."

@@ -1,6 +1,9 @@
 # Additive upload of Eseller.API/wwwroot/uploads → MonsterASP
 # Never deletes remote files. Creates missing directories via curl --ftp-create-dirs.
 #
+# IMPORTANT: Do NOT use SamKirkland/FTP-Deploy-Action for a folder that only contains
+# app_offline.htm — that action mirrors and DELETES the rest of the site (DLLs + images).
+#
 # Required env:
 #   FTP_SERVER, FTP_USERNAME, FTP_PASSWORD
 # Optional:
