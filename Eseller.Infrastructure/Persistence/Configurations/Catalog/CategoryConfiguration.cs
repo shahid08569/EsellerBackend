@@ -37,7 +37,7 @@ public class CategoryConfiguration : IEntityTypeConfiguration<Category>
 
         builder.HasIndex(c => new { c.IsFeaturedOnHomepage, c.HomepageDisplayOrder });
 
-        // ✅ Soft delete query filter
-        builder.HasQueryFilter(c => c.IsActive);
+        // Soft-delete only — IsActive controls nav visibility, not product lookups
+        builder.HasQueryFilter(c => c.DeletedAt == null);
     }
 }

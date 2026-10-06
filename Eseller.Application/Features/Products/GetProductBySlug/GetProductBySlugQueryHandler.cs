@@ -22,8 +22,11 @@ public class GetProductBySlugQueryHandler
         var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
 
         var product = await _context.Products
-            .Where(p => p.Slug == request.Slug && p.IsActive && p.IsApproved)
-            .Where(p => !masterShopId.HasValue || p.ShopId != masterShopId.Value)
+            .Where(p => p.Slug == request.Slug && p.IsActive && p.IsApproved && p.DeletedAt == null)
+            .Where(p =>
+                !masterShopId.HasValue
+                || p.ShopId != masterShopId.Value
+                || (p.ShopId == masterShopId.Value && p.SourceProductId == null && p.IsStorefrontLive))
             .Select(p => new ProductDto(
                 p.Id,
                 p.ShopId,

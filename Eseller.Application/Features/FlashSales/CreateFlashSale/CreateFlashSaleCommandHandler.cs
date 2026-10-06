@@ -55,34 +55,8 @@ public class CreateFlashSaleCommandHandler
                 "One or more products are not available.",
                 "PRODUCTS_NOT_AVAILABLE");
 
-        // Flash sale only for catalog SKUs that already have a seller listing
-        var listedCatalogIds = await _context.Products
-            .IgnoreQueryFilters()
-            .Where(l => l.SourceProductId != null
-                     && productIds.Contains(l.SourceProductId.Value)
-                     && l.DeletedAt == null
-                     && l.IsActive
-                     && l.IsApproved)
-            .Select(l => l.SourceProductId!.Value)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-
-        var alreadyListings = await _context.Products
-            .IgnoreQueryFilters()
-            .Where(p => productIds.Contains(p.Id)
-                     && p.SourceProductId != null
-                     && p.DeletedAt == null
-                     && p.IsActive
-                     && p.IsApproved)
-            .Select(p => p.Id)
-            .ToListAsync(cancellationToken);
-
-        var allowed = listedCatalogIds.Concat(alreadyListings).Distinct().ToHashSet();
-        var unlisted = productIds.Where(id => !allowed.Contains(id)).ToList();
-        if (unlisted.Count > 0)
-            return Result.Failure<Guid>(
-                "Flash sale products must already be listed on a shop.",
-                "PRODUCTS_NOT_LISTED");
+        // SuperAdmin may flash-sale any active approved catalog product
+        // (master warehouse SKUs do not need a seller listing first).
 
         var now = _dateTime.UtcNow;
 

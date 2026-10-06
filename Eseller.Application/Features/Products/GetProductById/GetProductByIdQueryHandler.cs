@@ -44,7 +44,21 @@ public class GetProductByIdQueryHandler
                 p.SeoDescription,
                 p.IsActive,
                 p.CreatedAt,
-                _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Rating).FirstOrDefault()))
+                _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Rating).FirstOrDefault(),
+                (
+                    from s in _context.Shops
+                    where s.Id == p.ShopId
+                    join sc in _context.ShopCategories on s.ShopCategoryId equals sc.Id into scj
+                    from sc in scj.DefaultIfEmpty()
+                    select s.CustomBadgeText ?? sc.BadgeText ?? sc.Name ?? "Bronze"
+                ).FirstOrDefault(),
+                (
+                    from s in _context.Shops
+                    where s.Id == p.ShopId
+                    join sc in _context.ShopCategories on s.ShopCategoryId equals sc.Id into scj
+                    from sc in scj.DefaultIfEmpty()
+                    select sc.BadgeColor ?? "#94A3B8"
+                ).FirstOrDefault()))
             .FirstOrDefaultAsync(cancellationToken);
 
         if (product is null)

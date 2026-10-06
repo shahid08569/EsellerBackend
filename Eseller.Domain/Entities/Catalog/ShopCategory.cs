@@ -15,6 +15,8 @@ public class ShopCategory : AuditableEntity, ISoftDelete
     public decimal PriceUsd { get; set; }
     /// <summary>Max approved+pending catalog listings allowed for shops on this tier.</summary>
     public int MaxProductListings { get; set; } = 200;
+    /// <summary>When true, seller upgrade modal shows Recommended on this package (at most one).</summary>
+    public bool IsRecommended { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime? DeletedAt { get; set; }
 }

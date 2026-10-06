@@ -156,6 +156,8 @@ public class AdminProductsController : ControllerBase
             var product = await FindCatalogProductAsync(id, cancellationToken);
             if (product is null) continue;
             product.IsFeatured = request.IsFeatured;
+            if (request.IsFeatured)
+                product.IsStorefrontLive = true;
             product.SetUpdatedAt(DateTime.UtcNow);
             await PropagateFeaturedFlagAsync(product.Id, request.IsFeatured, cancellationToken);
             updated++;
@@ -189,6 +191,8 @@ public class AdminProductsController : ControllerBase
             var product = await FindCatalogProductAsync(id, cancellationToken);
             if (product is null) continue;
             product.IsHotSelling = request.IsHotSelling;
+            if (request.IsHotSelling)
+                product.IsStorefrontLive = true;
             product.SetUpdatedAt(DateTime.UtcNow);
             await PropagateHotSellingFlagAsync(product.Id, request.IsHotSelling, cancellationToken);
             updated++;
@@ -244,7 +248,8 @@ public class AdminProductsController : ControllerBase
         var masterShop = await MasterCatalog.GetOrCreateMasterShopAsync(_context, cancellationToken);
         var mode = (string.IsNullOrWhiteSpace(tab) ? "featured" : tab).Trim().ToLowerInvariant();
 
-        // Only catalog SKUs that are already listed on at least one seller shop
+        // All Platform Master Warehouse catalog SKUs — SuperAdmin can list any existing
+        // product on the customer website without waiting for a seller "Add to Store".
         IQueryable<Domain.Entities.Catalog.Product> baseQuery = _context.Products
             .IgnoreQueryFilters()
             .Where(p =>
@@ -252,12 +257,7 @@ public class AdminProductsController : ControllerBase
                 && p.SourceProductId == null
                 && p.DeletedAt == null
                 && p.IsActive
-                && p.IsApproved
-                && _context.Products.IgnoreQueryFilters().Any(l =>
-                    l.SourceProductId == p.Id
-                    && l.DeletedAt == null
-                    && l.IsActive
-                    && l.IsApproved));
+                && p.IsApproved);
 
         IQueryable<Domain.Entities.Catalog.Product> query;
         if (mode == "featured")
@@ -289,6 +289,7 @@ public class AdminProductsController : ControllerBase
                 p.BasePrice,
                 p.IsFeatured,
                 p.IsHotSelling,
+                p.IsStorefrontLive,
                 p.ViewCount,
                 p.AvgRating,
                 p.IsActive,
@@ -306,6 +307,44 @@ public class AdminProductsController : ControllerBase
     }
 
     /// <summary>
+    /// Toggle Master Warehouse product visibility on the customer website.
+    /// Off = warehouse / seller catalog only; On = also live as Platform Master Warehouse.
+    /// </summary>
+    [HttpPut("{id:guid}/storefront-live")]
+    public async Task<IActionResult> SetStorefrontLive(
+        Guid id,
+        [FromBody] SetStorefrontLiveRequest request,
+        CancellationToken cancellationToken)
+    {
+        var product = await FindCatalogProductAsync(id, cancellationToken);
+        if (product is null)
+            return NotFound(new { error = "Catalog product not found.", errorCode = "PRODUCT_NOT_FOUND" });
+
+        product.IsStorefrontLive = request.IsStorefrontLive;
+        if (!request.IsStorefrontLive)
+        {
+            // Hide from homepage pins when taken offline
+            product.IsFeatured = false;
+            product.IsHotSelling = false;
+            await PropagateFeaturedFlagAsync(product.Id, false, cancellationToken);
+            await PropagateHotSellingFlagAsync(product.Id, false, cancellationToken);
+        }
+
+        product.SetUpdatedAt(DateTime.UtcNow);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            message = request.IsStorefrontLive
+                ? "Product is now live on the customer website (Warehouse)."
+                : "Product removed from customer website (Warehouse only).",
+            productId = product.Id,
+            isStorefrontLive = product.IsStorefrontLive,
+            status = product.IsStorefrontLive ? "Warehouse · Live" : "Warehouse"
+        });
+    }
+
+    /// <summary>
     /// Toggle master catalog product as homepage Featured.
     /// </summary>
     [HttpPut("{id:guid}/featured")]
@@ -318,10 +357,9 @@ public class AdminProductsController : ControllerBase
         if (product is null)
             return NotFound(new { error = "Catalog product not found.", errorCode = "PRODUCT_NOT_FOUND" });
 
-        if (request.IsFeatured && !await HasSellerListingAsync(product.Id, cancellationToken))
-            return BadRequest(new { error = "Product must be listed on a shop before Featured.", errorCode = "NOT_LISTED" });
-
         product.IsFeatured = request.IsFeatured;
+        if (request.IsFeatured)
+            product.IsStorefrontLive = true; // Featured implies live on website
         product.SetUpdatedAt(DateTime.UtcNow);
         await PropagateFeaturedFlagAsync(product.Id, request.IsFeatured, cancellationToken);
         await _context.SaveChangesAsync(cancellationToken);
@@ -332,7 +370,8 @@ public class AdminProductsController : ControllerBase
                 ? "Product marked as Featured for homepage."
                 : "Product removed from Featured.",
             productId = product.Id,
-            isFeatured = product.IsFeatured
+            isFeatured = product.IsFeatured,
+            isStorefrontLive = product.IsStorefrontLive
         });
     }
 
@@ -349,10 +388,9 @@ public class AdminProductsController : ControllerBase
         if (product is null)
             return NotFound(new { error = "Catalog product not found.", errorCode = "PRODUCT_NOT_FOUND" });
 
-        if (request.IsHotSelling && !await HasSellerListingAsync(product.Id, cancellationToken))
-            return BadRequest(new { error = "Product must be listed on a shop before Hot Selling.", errorCode = "NOT_LISTED" });
-
         product.IsHotSelling = request.IsHotSelling;
+        if (request.IsHotSelling)
+            product.IsStorefrontLive = true;
         product.SetUpdatedAt(DateTime.UtcNow);
         await PropagateHotSellingFlagAsync(product.Id, request.IsHotSelling, cancellationToken);
         await _context.SaveChangesAsync(cancellationToken);
@@ -365,17 +403,6 @@ public class AdminProductsController : ControllerBase
             productId = product.Id,
             isHotSelling = product.IsHotSelling
         });
-    }
-
-    private async Task<bool> HasSellerListingAsync(Guid catalogProductId, CancellationToken cancellationToken)
-    {
-        return await _context.Products
-            .IgnoreQueryFilters()
-            .AnyAsync(l =>
-                l.SourceProductId == catalogProductId
-                && l.DeletedAt == null
-                && l.IsActive
-                && l.IsApproved, cancellationToken);
     }
 
     private async Task PropagateFeaturedFlagAsync(
@@ -430,6 +457,7 @@ public class AdminProductsController : ControllerBase
 public record RejectProductRequest(string Reason);
 public record SetFeaturedRequest(bool IsFeatured);
 public record SetHotSellingRequest(bool IsHotSelling);
+public record SetStorefrontLiveRequest(bool IsStorefrontLive);
 public record BulkProductIdsRequest(Guid[]? ProductIds);
 public record BulkFeaturedRequest(Guid[]? ProductIds, bool IsFeatured);
 public record BulkHotSellingRequest(Guid[]? ProductIds, bool IsHotSelling);

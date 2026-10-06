@@ -16,19 +16,15 @@ public class MockSmsService : ISmsService
 
     public Task SendAsync(string phoneNumber, string message, CancellationToken cancellationToken = default)
     {
-        _logger.LogWarning(
-            "[MOCK SMS] To: {PhoneNumber} | Message: {Message}",
-            phoneNumber, message);
-
+        // Never log message body (may contain OTP / PII)
+        _logger.LogWarning("[MOCK SMS] To: {PhoneNumber} | length={Length}", phoneNumber, message?.Length ?? 0);
         return Task.CompletedTask;
     }
 
     public Task SendOtpAsync(string phoneNumber, string code, CancellationToken cancellationToken = default)
     {
-        _logger.LogWarning(
-            "[MOCK SMS OTP] To: {PhoneNumber} | OTP Code: {Code}",
-            phoneNumber, code);
-
+        // Never log the OTP itself
+        _logger.LogWarning("[MOCK SMS OTP] To: {PhoneNumber} | OTP generated (code not logged)", phoneNumber);
         return Task.CompletedTask;
     }
 }

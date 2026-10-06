@@ -1,5 +1,6 @@
 using Eseller.Domain.Entities.Affiliate;
 using Eseller.Domain.Entities.Catalog;
+using Eseller.Domain.Entities.Chat;
 using Eseller.Domain.Entities.Content;
 using Eseller.Domain.Entities.Engagement;
 using Eseller.Domain.Entities.Identity;
@@ -8,6 +9,7 @@ using Eseller.Domain.Entities.Payment;
 using Eseller.Domain.Entities.Promotions;
 using Eseller.Domain.Entities.Shipping;
 using Eseller.Domain.Entities.ShippingConfig;
+using Eseller.Domain.Entities.Notifications;
 using Eseller.Domain.Entities.Wallet;
 using Microsoft.EntityFrameworkCore;
 
@@ -51,6 +53,10 @@ public interface IApplicationDbContext
     DbSet<OrderStatusHistory> OrderStatusHistories { get; }
     DbSet<ChatMessage> ChatMessages { get; }
 
+    // Support chat (Customer|Seller ↔ Super Admin)
+    DbSet<Conversation> Conversations { get; }
+    DbSet<Message> Messages { get; }
+
     // Returns & Shipping
     DbSet<Shipment> Shipments { get; }
     DbSet<ReturnRequest> ReturnRequests { get; }
@@ -80,6 +86,7 @@ public interface IApplicationDbContext
     DbSet<Wallet> Wallets { get; }
     DbSet<WalletTransaction> WalletTransactions { get; }
     DbSet<Notification> Notifications { get; }
+    DbSet<ProductStockAlert> ProductStockAlerts { get; }
 
     // Content & Settings
     DbSet<BlogCategory> BlogCategories { get; }

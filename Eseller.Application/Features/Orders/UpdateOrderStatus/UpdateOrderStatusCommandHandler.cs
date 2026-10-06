@@ -14,18 +14,18 @@ public class UpdateOrderStatusCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
-    private readonly ISignalRNotificationService _notificationService;
+    private readonly IAppNotificationService _notifications;
 
     public UpdateOrderStatusCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
         IDateTime dateTime,
-        ISignalRNotificationService notificationService)
+        IAppNotificationService notifications)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
-        _notificationService = notificationService;
+        _notifications = notifications;
     }
 
     public async Task<Result> Handle(
@@ -89,10 +89,10 @@ public class UpdateOrderStatusCommandHandler
         });
 
         // Credit merchant earnings when order is Delivered (admin path).
-        // No chat messages on commerce orders — status goes via notifications only.
+        List<(Guid AccountId, decimal Credit)> creditedSellers = [];
         if (newStatus == OrderStatus.Delivered)
         {
-            await CreditSellerEarningsForOrderAsync(order.Id, now, cancellationToken);
+            creditedSellers = await CreditSellerEarningsForOrderAsync(order.Id, now, cancellationToken);
         }
         else if (newStatus == OrderStatus.Cancelled || newStatus == OrderStatus.Refunded)
         {
@@ -164,75 +164,63 @@ public class UpdateOrderStatusCommandHandler
             }
         }
 
-        // Notify linked shopkeepers + customer
-        var notifyAccountIds = await ResolveNotifyAccountIdsAsync(order.Id, order.UserId, cancellationToken);
-        var notifType = MapNotificationType(newStatus);
-        var title = $"Order #{order.Id.ToString()[..8].ToUpperInvariant()} → {newStatus}";
-        var message = BuildStatusMessage(newStatus);
-
-        var createdNotifs = new List<(Guid AccountId, Notification Notif)>();
-        foreach (var accountId in notifyAccountIds)
-        {
-            var notif = new Notification
-            {
-                AccountId = accountId,
-                Type = notifType,
-                Title = title,
-                Message = message,
-                IsRead = false
-            };
-            notif.SetCreatedAt(now);
-            notif.SetUpdatedAt(now);
-            _context.Notifications.Add(notif);
-            createdNotifs.Add((accountId, notif));
-        }
-
         await _context.SaveChangesAsync(cancellationToken);
 
-        foreach (var (accountId, notif) in createdNotifs)
+        if (newStatus == OrderStatus.Delivered && oldStatus != OrderStatus.Delivered)
         {
-            try
+            var shortRef = order.Id.ToString()[..8].ToUpperInvariant();
+            var sellerAccounts = await (
+                from so in _context.SellerOrders.AsNoTracking()
+                join s in _context.Shops.IgnoreQueryFilters().AsNoTracking() on so.ShopId equals s.Id
+                join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
+                where so.OrderRequestId == order.Id && s.DeletedAt == null
+                select new { so.Id, sk.AccountId }
+            ).Distinct().ToListAsync(cancellationToken);
+
+            foreach (var seller in sellerAccounts)
             {
-                await _notificationService.SendNotificationToAccountAsync(
-                    accountId, notif.Id, notif.Type, notif.Title, notif.Message, cancellationToken);
+                await _notifications.NotifyAsync(
+                    seller.AccountId,
+                    RoleType.Shopkeeper,
+                    NotificationType.OrderDelivered,
+                    $"Order #{shortRef} delivered",
+                    "An order has been marked as delivered.",
+                    NotificationEntityType.Order,
+                    order.Id,
+                    "/orders",
+                    $"OrderDelivered:{seller.Id:N}:Seller:{seller.AccountId:N}",
+                    cancellationToken);
             }
-            catch
+
+            foreach (var (accountId, credit) in creditedSellers)
             {
-                // Realtime delivery is best-effort
+                await _notifications.NotifyAsync(
+                    accountId,
+                    RoleType.Shopkeeper,
+                    NotificationType.PaymentCompleted,
+                    "Payment Completed",
+                    $"Payment for order #{shortRef} has been completed. Rs. {credit:N0} credited to your wallet.",
+                    NotificationEntityType.Payment,
+                    order.Id,
+                    "/earnings",
+                    $"PaymentCompleted:{order.Id:N}:Seller:{accountId:N}",
+                    cancellationToken);
+
+                await _notifications.NotifyAsync(
+                    accountId,
+                    RoleType.Shopkeeper,
+                    NotificationType.CommissionEarned,
+                    "Commission Earned",
+                    $"Congratulations! You earned Rs. {credit:N0} commission from order #{shortRef}.",
+                    NotificationEntityType.Earning,
+                    order.Id,
+                    "/earnings",
+                    $"CommissionEarned:{order.Id:N}:Seller:{accountId:N}",
+                    cancellationToken);
             }
         }
 
         return Result.Success();
-    }
-
-    private async Task<HashSet<Guid>> ResolveNotifyAccountIdsAsync(
-        Guid orderRequestId,
-        Guid userId,
-        CancellationToken cancellationToken)
-    {
-        var recipients = new HashSet<Guid>();
-
-        var shopkeeperAccountIds = await (
-            from so in _context.SellerOrders.AsNoTracking()
-            join s in _context.Shops.IgnoreQueryFilters().AsNoTracking() on so.ShopId equals s.Id
-            join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
-            where so.OrderRequestId == orderRequestId && s.DeletedAt == null
-            select sk.AccountId
-        ).Distinct().ToListAsync(cancellationToken);
-
-        foreach (var id in shopkeeperAccountIds)
-            recipients.Add(id);
-
-        var customerAccountId = await _context.Users
-            .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => (Guid?)u.AccountId)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (customerAccountId.HasValue)
-            recipients.Add(customerAccountId.Value);
-
-        return recipients;
     }
 
     private static bool IsChatChannel(string? shippingAddress)
@@ -245,15 +233,6 @@ public class UpdateOrderStatusCommandHandler
             || shippingAddress.StartsWith("CUSTOMER_SUPPORT_", StringComparison.OrdinalIgnoreCase)
             || shippingAddress.Equals("Live Support Inquiry", StringComparison.OrdinalIgnoreCase);
     }
-
-    private static NotificationType MapNotificationType(OrderStatus status) => status switch
-    {
-        OrderStatus.Confirmed => NotificationType.OrderConfirmed,
-        OrderStatus.Shipped or OrderStatus.OutForDelivery => NotificationType.OrderShipped,
-        OrderStatus.Delivered => NotificationType.OrderDelivered,
-        OrderStatus.Cancelled => NotificationType.OrderCancelled,
-        _ => NotificationType.OrderPlaced
-    };
 
     private static bool IsValidTransition(OrderStatus from, OrderStatus to)
     {
@@ -285,30 +264,13 @@ public class UpdateOrderStatusCommandHandler
         };
     }
 
-    private static string BuildStatusMessage(OrderStatus status)
-    {
-        return status switch
-        {
-            OrderStatus.Confirmed => "✅ Your order has been confirmed. We'll start processing it soon.",
-            OrderStatus.Processing => "⚙️ Your order is being processed.",
-            OrderStatus.Packed => "📦 Your order has been packed and is ready for shipping.",
-            OrderStatus.Shipped => "🚚 Your order has been shipped.",
-            OrderStatus.OutForDelivery => "🛵 Your order is out for delivery.",
-            OrderStatus.Delivered => "✅ Your order has been delivered. Thank you!",
-            OrderStatus.Cancelled => "❌ Your order has been cancelled.",
-            OrderStatus.ReturnRequested => "🔄 Return requested. We'll review it.",
-            OrderStatus.Returned => "📦 Return received. Refund will be processed.",
-            OrderStatus.RefundPending => "💰 Refund is being processed.",
-            OrderStatus.Refunded => "✅ Refund has been completed.",
-            _ => $"Order status updated to {status}."
-        };
-    }
-
-    private async Task CreditSellerEarningsForOrderAsync(
+    private async Task<List<(Guid AccountId, decimal Credit)>> CreditSellerEarningsForOrderAsync(
         Guid orderRequestId,
         DateTime now,
         CancellationToken cancellationToken)
     {
+        var credited = new List<(Guid AccountId, decimal Credit)>();
+
         var sellerOrders = await (
             from so in _context.SellerOrders.AsNoTracking()
             join s in _context.Shops.IgnoreQueryFilters().AsNoTracking() on so.ShopId equals s.Id
@@ -317,7 +279,7 @@ public class UpdateOrderStatusCommandHandler
             select new { so.Id, sk.AccountId }
         ).ToListAsync(cancellationToken);
 
-        if (sellerOrders.Count == 0) return;
+        if (sellerOrders.Count == 0) return credited;
 
         var sellerOrderIds = sellerOrders.Select(x => x.Id).ToList();
         var earnings = await _context.SellerEarnings
@@ -361,7 +323,11 @@ public class UpdateOrderStatusCommandHandler
                 Description = $"Seller earning released for delivered order",
                 CreatedAt = now
             });
+
+            credited.Add((accountId, credit));
         }
+
+        return credited;
     }
 
     private async Task ReversePendingSellerEarningsForOrderAsync(

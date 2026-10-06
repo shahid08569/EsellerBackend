@@ -1,0 +1,136 @@
+# Push → build Eseller.API → FTP deploy to MonsterASP wwwroot
+# Secrets (repo Settings → Secrets → Actions):
+#   FTP_SERVER, FTP_USERNAME, FTP_PASSWORD
+# Optional: FTP_SERVER_DIR=/wwwroot/  FTP_PROTOCOL=ftps|ftp
+
+name: Deploy API → MonsterASP
+
+on:
+  push:
+    branches: [master, main, "minor-fixes**"]
+    paths:
+      - "Eseller.API/**"
+      - "Eseller.Application/**"
+      - "Eseller.Domain/**"
+      - "Eseller.Infrastructure/**"
+      - "deploy/monsterasp/**"
+      - ".github/workflows/deploy-monsterasp.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-api-monsterasp
+  cancel-in-progress: true
+
+jobs:
+  build_and_deploy:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate FTP secrets
+        shell: pwsh
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace($env:FTP_SERVER)) { $missing += 'FTP_SERVER' }
+          if ([string]::IsNullOrWhiteSpace($env:FTP_USERNAME)) { $missing += 'FTP_USERNAME' }
+          if ([string]::IsNullOrWhiteSpace($env:FTP_PASSWORD)) { $missing += 'FTP_PASSWORD' }
+          if ($missing.Count -gt 0) {
+            throw "Missing GitHub Secrets: $($missing -join ', ')"
+          }
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish API
+        shell: pwsh
+        run: |
+          $out = "publish"
+          if (Test-Path $out) { Remove-Item $out -Recurse -Force }
+          dotnet publish "Eseller.API/Eseller.API.csproj" -c Release -o $out --self-contained false `
+            /p:DebugType=None /p:DebugSymbols=false `
+            /p:SatelliteResourceLanguages=en `
+            /p:CopyOutputSymbolsToPublishDirectory=false
+          Copy-Item "deploy/monsterasp/web.config" "$out/web.config" -Force
+          New-Item -ItemType Directory -Path "$out/logs" -Force | Out-Null
+          Set-Content "$out/logs/.keep" -Value "keep"
+          New-Item -ItemType Directory -Path "$out/wwwroot/uploads" -Force | Out-Null
+          Set-Content "$out/wwwroot/uploads/.keep" -Value "keep"
+          # Keep server Production secrets (password/JWT) intact
+          Remove-Item "$out/appsettings.Production.json" -Force -ErrorAction SilentlyContinue
+          Get-ChildItem $out -Recurse -Directory |
+            Where-Object { @('cs','de','es','fr','it','ja','ko','pl','pt-BR','ru','tr','zh-Hans','zh-Hant') -contains $_.Name } |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Host "Published files: $((Get-ChildItem $out -Recurse -File).Count)"
+
+      - name: Prepare app_offline
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path ftp-offline -Force | Out-Null
+          Set-Content ftp-offline/app_offline.htm -Value "<html><body><h1>Updating Eseller API…</h1></body></html>"
+
+      - name: Stop site (app_offline.htm)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
+          local-dir: ./ftp-offline/
+          server-dir: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+          dangerous-clean-slate: false
+
+      - name: Wait for IIS unlock
+        shell: pwsh
+        run: Start-Sleep -Seconds 8
+
+      - name: Deploy publish folder
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
+          local-dir: ./publish/
+          server-dir: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/appsettings.Production.json
+            **/logs/**
+            **/wwwroot/uploads/**
+            **/*.pdb
+
+      - name: Remove app_offline.htm
+        shell: pwsh
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+        run: |
+          $dir = $env:FTP_SERVER_DIR.TrimEnd('/')
+          $uri = "ftp://$($env:FTP_SERVER)$dir/app_offline.htm"
+          foreach ($ssl in @($true, $false)) {
+            try {
+              $req = [System.Net.FtpWebRequest]::Create($uri)
+              $req.Method = [System.Net.WebRequestMethods+Ftp]::DeleteFile
+              $req.Credentials = New-Object System.Net.NetworkCredential($env:FTP_USERNAME, $env:FTP_PASSWORD)
+              $req.UsePassive = $true
+              $req.EnableSsl = $ssl
+              $resp = $req.GetResponse()
+              $resp.Close()
+              Write-Host "Removed app_offline.htm (ssl=$ssl)"
+              exit 0
+            } catch {
+              Write-Host "retry ssl=$ssl : $($_.Exception.Message)"
+            }
+          }
+          Write-Warning "Delete app_offline.htm manually in File Manager if site stays offline."

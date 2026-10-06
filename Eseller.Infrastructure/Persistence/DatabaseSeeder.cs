@@ -2,8 +2,10 @@
 using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Entities.Identity;
 using Eseller.Domain.Enums;
+using Eseller.Infrastructure.Settings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Eseller.Infrastructure.Persistence;
 
@@ -13,17 +15,20 @@ public class DatabaseSeeder
     private readonly IPasswordHasher _passwordHasher;
     private readonly IDateTime _dateTime;
     private readonly ILogger<DatabaseSeeder> _logger;
+    private readonly SeedSettings _seedSettings;
 
     public DatabaseSeeder(
         EsellerDbContext context,
         IPasswordHasher passwordHasher,
         IDateTime dateTime,
-        ILogger<DatabaseSeeder> logger)
+        ILogger<DatabaseSeeder> logger,
+        IOptions<SeedSettings> seedSettings)
     {
         _context = context;
         _passwordHasher = passwordHasher;
         _dateTime = dateTime;
         _logger = logger;
+        _seedSettings = seedSettings.Value;
     }
 
     public async Task SeedAsync(CancellationToken cancellationToken = default)
@@ -118,47 +123,35 @@ public class DatabaseSeeder
 
     private async Task SeedSuperAdminAsync(CancellationToken cancellationToken)
     {
-        const string superAdminEmail = "superadmin@eseller.com";
-        const string superAdminUsername = "superadmin";
-        const string superAdminPassword = "SuperAdmin@123"; // ⚠️ Change in production
+        var email = string.IsNullOrWhiteSpace(_seedSettings.SuperAdminEmail)
+            ? "superadmin@eseller.com"
+            : _seedSettings.SuperAdminEmail.Trim();
+        var username = string.IsNullOrWhiteSpace(_seedSettings.SuperAdminUsername)
+            ? "superadmin"
+            : _seedSettings.SuperAdminUsername.Trim();
 
-        // Find by email OR username OR any SuperAdmin role account
-        var existing = await _context.Accounts
-            .FirstOrDefaultAsync(a =>
-                a.Email == superAdminEmail
-                || a.Username == superAdminUsername
-                || a.RoleType == RoleType.SuperAdmin, cancellationToken);
+        var existingAdmin = await _context.Accounts
+            .AnyAsync(a => a.RoleType == RoleType.SuperAdmin, cancellationToken);
 
-        if (existing is not null)
+        if (existingAdmin)
         {
-            // Always repair: reactivate + restore known local credentials
-            existing.Email = superAdminEmail;
-            existing.Username = superAdminUsername;
-            existing.PasswordHash = _passwordHasher.Hash(superAdminPassword);
-            existing.RoleType = RoleType.SuperAdmin;
-            existing.IsActive = true;
-            existing.IsEmailVerified = true;
-            existing.IsPhoneVerified = true;
+            // Never reset credentials of an existing SuperAdmin (production-safe)
+            return;
+        }
 
-            var hasProfile = await _context.SuperAdmins
-                .AnyAsync(s => s.AccountId == existing.Id, cancellationToken);
-            if (!hasProfile)
-            {
-                _context.SuperAdmins.Add(new SuperAdmin { AccountId = existing.Id });
-            }
-
-            await _context.SaveChangesAsync(cancellationToken);
+        var password = _seedSettings.SuperAdminPassword?.Trim() ?? string.Empty;
+        if (password.Length < 12)
+        {
             _logger.LogWarning(
-                "🔐 SuperAdmin repaired/reactivated — Email: {Email}, Password: {Password}",
-                superAdminEmail, superAdminPassword);
+                "SuperAdmin seed skipped — set SeedSettings:SuperAdminPassword (min 12 chars) via user-secrets or environment.");
             return;
         }
 
         var account = new Account
         {
-            Username = superAdminUsername,
-            Email = superAdminEmail,
-            PasswordHash = _passwordHasher.Hash(superAdminPassword),
+            Username = username,
+            Email = email,
+            PasswordHash = _passwordHasher.Hash(password),
             RoleType = RoleType.SuperAdmin,
             IsActive = true,
             IsEmailVerified = true,
@@ -170,8 +163,8 @@ public class DatabaseSeeder
         await _context.SaveChangesAsync(cancellationToken);
 
         _logger.LogWarning(
-            "🔐 SuperAdmin seeded — Email: {Email}, Username: {Username}, Password: {Password}",
-            superAdminEmail, superAdminUsername, superAdminPassword);
+            "SuperAdmin account created for {Email}. Change the password after first login.",
+            email);
     }
 
     /// <summary>

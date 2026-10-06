@@ -1,6 +1,5 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
-using Eseller.Domain.Entities.Wallet;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -12,13 +11,16 @@ public class RejectProductCommandHandler
 {
     private readonly IApplicationDbContext _context;
     private readonly IDateTime _dateTime;
+    private readonly IAppNotificationService _notifications;
 
     public RejectProductCommandHandler(
         IApplicationDbContext context,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        IAppNotificationService notifications)
     {
         _context = context;
         _dateTime = dateTime;
+        _notifications = notifications;
     }
 
     public async Task<Result> Handle(
@@ -34,6 +36,7 @@ public class RejectProductCommandHandler
 
         product.Reject(request.Reason);
         product.SetUpdatedAt(_dateTime.UtcNow);
+        await _context.SaveChangesAsync(cancellationToken);
 
         var shopkeeperAccountId = await _context.Shops
             .Where(s => s.Id == product.ShopId)
@@ -43,19 +46,18 @@ public class RejectProductCommandHandler
         if (shopkeeperAccountId != Guid.Empty)
         {
             var reason = string.IsNullOrWhiteSpace(request.Reason) ? "No reason provided." : request.Reason.Trim();
-            var notif = new Notification
-            {
-                AccountId = shopkeeperAccountId,
-                Type = NotificationType.ProductRejected,
-                Title = "Product rejected",
-                Message = $"Your product \"{product.Name}\" was rejected. Reason: {reason}",
-                IsRead = false
-            };
-            notif.SetCreatedAt(_dateTime.UtcNow);
-            _context.Notifications.Add(notif);
+            await _notifications.NotifyAsync(
+                shopkeeperAccountId,
+                RoleType.Shopkeeper,
+                NotificationType.ProductListingRequestUpdated,
+                "Product Listing Request Updated",
+                $"Your product \"{product.Name}\" was rejected. Reason: {reason}",
+                NotificationEntityType.Product,
+                product.Id,
+                "/products",
+                $"ProductListingRequestUpdated:{product.Id:N}:Rejected:Seller:{shopkeeperAccountId:N}",
+                cancellationToken);
         }
-
-        await _context.SaveChangesAsync(cancellationToken);
 
         return Result.Success();
     }

@@ -402,6 +402,10 @@ public static class MasterCatalog
             .FirstOrDefaultAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Public website products: approved seller shop listings +
+    /// Master Warehouse catalog SKUs that SuperAdmin explicitly marked live.
+    /// </summary>
     public static IQueryable<Product> StorefrontListings(
         IApplicationDbContext context,
         Guid? masterShopId) =>
@@ -410,7 +414,14 @@ public static class MasterCatalog
                 p.IsActive
                 && p.IsApproved
                 && p.DeletedAt == null
-                && (!masterShopId.HasValue || p.ShopId != masterShopId.Value));
+                && (
+                    !masterShopId.HasValue
+                        ? true
+                        : p.ShopId != masterShopId.Value
+                          || (p.ShopId == masterShopId.Value
+                              && p.SourceProductId == null
+                              && p.IsStorefrontLive)
+                ));
 
     /// <summary>
     /// Homepage curated IDs for Featured / Hot Selling.
@@ -453,6 +464,15 @@ public static class MasterCatalog
               .Select(x => (x.Id, x.SourceProductId, x.CreatedAt))
               .ToList();
 
+        // Which catalog SKUs are opted-in to the customer website (no seller listing needed)
+        var liveCatalogIds = catalogIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await context.Products
+                .Where(p => catalogIds.Contains(p.Id) && p.IsStorefrontLive)
+                .Select(p => p.Id)
+                .ToListAsync(cancellationToken))
+              .ToHashSet();
+
         var result = new List<Guid>();
         var usedSources = new HashSet<Guid>();
 
@@ -463,10 +483,15 @@ public static class MasterCatalog
                 .OrderByDescending(l => l.CreatedAt)
                 .FirstOrDefault();
 
-            // Only shop-listed products appear in Featured / Hot Selling
+            // Prefer seller listing; else master product only if SuperAdmin marked it live
             if (listing.Id != Guid.Empty)
             {
                 result.Add(listing.Id);
+                usedSources.Add(catalogId);
+            }
+            else if (liveCatalogIds.Contains(catalogId))
+            {
+                result.Add(catalogId);
                 usedSources.Add(catalogId);
             }
 
@@ -506,7 +531,7 @@ public static class MasterCatalog
 
         var products = await context.Products
             .Where(p => productIds.Contains(p.Id) && p.IsActive && p.IsApproved && p.DeletedAt == null)
-            .Select(p => new { p.Id, p.ShopId, p.SourceProductId })
+            .Select(p => new { p.Id, p.ShopId, p.SourceProductId, p.IsStorefrontLive })
             .ToListAsync(cancellationToken);
 
         var catalogIds = products
@@ -531,7 +556,7 @@ public static class MasterCatalog
 
             if (row.SourceProductId == null && (!masterShopId.HasValue || row.ShopId == masterShopId))
             {
-                // Catalog SKU → prefer a live seller listing; skip if unlisted
+                // Catalog SKU → prefer a live seller listing; else master only if opted-in
                 var listing = listings
                     .Where(l => l.SourceId == id)
                     .OrderByDescending(l => l.CreatedAt)
@@ -539,6 +564,8 @@ public static class MasterCatalog
                     .FirstOrDefault();
                 if (listing != Guid.Empty)
                     mapped.Add(listing);
+                else if (row.IsStorefrontLive)
+                    mapped.Add(id);
             }
             else if (!masterShopId.HasValue || row.ShopId != masterShopId)
             {

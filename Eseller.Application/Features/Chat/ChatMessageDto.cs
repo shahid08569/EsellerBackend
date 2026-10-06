@@ -9,4 +9,8 @@ public record ChatMessageDto(
     bool IsRead,
     DateTime? ReadAt,
     DateTime? DeliveredAt,
-    DateTime SentAt);
+    DateTime SentAt,
+    string? AttachmentUrl = null,
+    string? AttachmentFileName = null,
+    string? AttachmentContentType = null,
+    long? AttachmentSizeBytes = null);

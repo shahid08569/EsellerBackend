@@ -50,6 +50,16 @@ public class UpdateShopCategoryCommandHandler
         category.IsActive = request.IsActive;
         category.PriceUsd = request.PriceUsd < 0 ? 0 : request.PriceUsd;
         category.MaxProductListings = request.MaxProductListings <= 0 ? 200 : request.MaxProductListings;
+        category.IsRecommended = request.IsRecommended;
+
+        if (request.IsRecommended)
+        {
+            var others = await _context.ShopCategories
+                .Where(sc => sc.Id != request.Id && sc.DeletedAt == null && sc.IsRecommended)
+                .ToListAsync(cancellationToken);
+            foreach (var o in others)
+                o.IsRecommended = false;
+        }
 
         await _context.SaveChangesAsync(cancellationToken);
 

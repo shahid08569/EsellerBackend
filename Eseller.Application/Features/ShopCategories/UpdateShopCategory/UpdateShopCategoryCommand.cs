@@ -14,4 +14,5 @@ public record UpdateShopCategoryCommand(
     int DisplayOrder,
     bool IsActive,
     decimal PriceUsd = 0,
-    int MaxProductListings = 200) : IRequest<Result>;
+    int MaxProductListings = 200,
+    bool IsRecommended = false) : IRequest<Result>;

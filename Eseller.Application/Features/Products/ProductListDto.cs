@@ -22,4 +22,12 @@ public record ProductListDto(
     Guid? SourceProductId = null,
     Guid? ShopId = null,
     /// <summary>SuperAdmin platform rating for the store (0–5).</summary>
-    decimal ShopRating = 0);
+    decimal ShopRating = 0,
+    /// <summary>Seller tier badge text (Gold / Diamond / Bronze…).</summary>
+    string? ShopBadgeText = null,
+    /// <summary>Seller tier badge color hex.</summary>
+    string? ShopBadgeColor = null,
+    /// <summary>Short product description for cards (optional).</summary>
+    string? Description = null,
+    /// <summary>Master Warehouse: opted-in to customer website (sellers ignore).</summary>
+    bool IsStorefrontLive = false);

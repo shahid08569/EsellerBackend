@@ -19,6 +19,9 @@ public class JwtService : IJwtService
         _settings = settings.Value;
     }
 
+    public int AccessTokenExpirationMinutes =>
+        _settings.AccessTokenExpirationMinutes > 0 ? _settings.AccessTokenExpirationMinutes : 15;
+
     public string GenerateAccessToken(Guid accountId, string username, RoleType roleType)
     {
         var claims = new[]

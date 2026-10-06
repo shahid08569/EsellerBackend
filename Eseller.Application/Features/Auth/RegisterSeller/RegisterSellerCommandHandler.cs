@@ -15,20 +15,20 @@ public class RegisterSellerCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly IPasswordHasher _passwordHasher;
     private readonly ILocationService _locationService;
-    private readonly ISignalRNotificationService _signalR;
+    private readonly IAppNotificationService _notifications;
     private readonly IDateTime _dateTime;
 
     public RegisterSellerCommandHandler(
         IApplicationDbContext context,
         IPasswordHasher passwordHasher,
         ILocationService locationService,
-        ISignalRNotificationService signalR,
+        IAppNotificationService notifications,
         IDateTime dateTime)
     {
         _context = context;
         _passwordHasher = passwordHasher;
         _locationService = locationService;
-        _signalR = signalR;
+        _notifications = notifications;
         _dateTime = dateTime;
     }
 
@@ -152,54 +152,16 @@ public class RegisterSellerCommandHandler
             null,
             cancellationToken);
 
-        // 9. Pending approval notice for the new seller + alert admins
-        var now = _dateTime.UtcNow;
-        var sellerNotif = new Notification
-        {
-            AccountId = account.Id,
-            Type = NotificationType.SystemAlert,
-            Title = "Approval pending",
-            Message = "Your seller account is under review. You cannot sell until Super Admin approves your store.",
-            IsRead = false
-        };
-        sellerNotif.SetCreatedAt(now);
-        sellerNotif.SetUpdatedAt(now);
-        _context.Notifications.Add(sellerNotif);
+        await _notifications.NotifyAdminsAsync(
+            NotificationType.NewSeller,
+            "New Seller Registered",
+            $"A new seller has registered: \"{shop.Name}\" ({account.Email}).",
+            NotificationEntityType.Seller,
+            shopkeeper.Id,
+            "/sellers",
+            $"NewSeller:{shopkeeper.Id:N}",
+            cancellationToken);
 
-        var adminIds = await _context.Accounts
-            .Where(a => a.RoleType == RoleType.SuperAdmin || a.RoleType == RoleType.Partner)
-            .Select(a => a.Id)
-            .ToListAsync(cancellationToken);
-
-        var adminNotifs = new List<Notification>();
-        foreach (var adminId in adminIds)
-        {
-            var n = new Notification
-            {
-                AccountId = adminId,
-                Type = NotificationType.NewSellerRegistration,
-                Title = "New seller registration",
-                Message = $"\"{shop.Name}\" ({account.Email}) applied and is awaiting Super Admin approval.",
-                IsRead = false
-            };
-            n.SetCreatedAt(now);
-            n.SetUpdatedAt(now);
-            adminNotifs.Add(n);
-            _context.Notifications.Add(n);
-        }
-
-        await _context.SaveChangesAsync(cancellationToken);
-
-        await _signalR.SendNotificationToAccountAsync(
-            account.Id, sellerNotif.Id, sellerNotif.Type, sellerNotif.Title, sellerNotif.Message, cancellationToken);
-
-        foreach (var n in adminNotifs)
-        {
-            await _signalR.SendNotificationToAccountAsync(
-                n.AccountId, n.Id, n.Type, n.Title, n.Message, cancellationToken);
-        }
-
-        // 12. Return
         return Result.Success(new RegisterSellerResponse(
             account.Id,
             shopkeeper.Id,

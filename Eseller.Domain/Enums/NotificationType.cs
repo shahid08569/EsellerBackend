@@ -1,24 +1,21 @@
 namespace Eseller.Domain.Enums;
 
+/// <summary>
+/// Allowed notification types only (Super Admin + Seller requirements).
+/// </summary>
 public enum NotificationType
 {
-    OrderPlaced = 1,
-    OrderConfirmed = 2,
-    OrderShipped = 3,
-    OrderDelivered = 4,
-    OrderCancelled = 5,
-    ShopApproved = 6,
-    ShopRejected = 7,
-    ProductApproved = 8,
-    ProductRejected = 9,
-    WithdrawalRequested = 10,
-    WithdrawalProcessed = 11,
-    ReturnRequested = 12,
-    RefundProcessed = 13,
-    NewChatMessage = 14,
-    NewSellerRegistration = 15,
-    NewOrderForSuperAdmin = 16,
-    TierUpgradeApproved = 17,
-    TierUpgradeRejected = 18,
-    SystemAlert = 19
+    NewCustomer = 1,
+    NewSeller = 2,
+    NewOrder = 3,
+    NewMessage = 4,
+    ProductListingRequest = 5,
+    ProductOutOfStock = 6,
+    TierUpdated = 7,
+    OrderDelivered = 8,
+    PaymentCompleted = 9,
+    CommissionEarned = 10,
+    TierBadgeRequestUpdated = 11,
+    ProductListingRequestUpdated = 12,
+    NewProduct = 13
 }

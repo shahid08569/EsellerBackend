@@ -27,11 +27,16 @@ public class AuthController : ControllerBase
 
     private readonly ISender _sender;
     private readonly JwtSettings _jwtSettings;
+    private readonly IHostEnvironment _env;
 
-    public AuthController(ISender sender, IOptions<JwtSettings> jwtSettings)
+    public AuthController(
+        ISender sender,
+        IOptions<JwtSettings> jwtSettings,
+        IHostEnvironment env)
     {
         _sender = sender;
         _jwtSettings = jwtSettings.Value;
+        _env = env;
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -226,11 +231,13 @@ public class AuthController : ControllerBase
         var result = await _sender.Send(command, cancellationToken);
         if (!result.IsSuccess)
             return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
+
+        // Never expose OTP outside Development (even when mock SMS is on).
         return Ok(new
         {
             message = result.Value!.Message,
             maskedPhone = result.Value.MaskedPhone,
-            debugOtp = result.Value.DebugOtp
+            debugOtp = _env.IsDevelopment() ? result.Value.DebugOtp : null
         });
     }
 
@@ -291,19 +298,29 @@ public class AuthController : ControllerBase
             return BadRequest(new { error = "Document file is required.", errorCode = "FILE_REQUIRED" });
 
         var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".pdf", ".webp" };
+        var allowedContentTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "image/jpeg", "image/png", "image/webp", "application/pdf"
+        };
         var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
         if (!allowedExtensions.Contains(ext))
             return BadRequest(new { error = "Only JPG, PNG, PDF, and WEBP documents are allowed.", errorCode = "INVALID_FILE_TYPE" });
+
+        if (!string.IsNullOrWhiteSpace(file.ContentType) && !allowedContentTypes.Contains(file.ContentType))
+            return BadRequest(new { error = "Invalid document content type.", errorCode = "INVALID_CONTENT_TYPE" });
+
+        if (file.Length > 10 * 1024 * 1024)
+            return BadRequest(new { error = "Document must be 10 MB or smaller.", errorCode = "FILE_TOO_LARGE" });
 
         var uniqueFileName = $"documents/verification-{Guid.NewGuid()}{ext}";
         using var stream = file.OpenReadStream();
         var documentUrl = await fileStorageService.UploadAsync(
             stream,
             uniqueFileName,
-            file.ContentType,
+            string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
             cancellationToken);
 
-        return Ok(new { documentUrl, fileName = file.FileName });
+        return Ok(new { documentUrl, fileName = Path.GetFileName(file.FileName) });
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -317,8 +334,10 @@ public class AuthController : ControllerBase
         {
             HttpOnly = true,
             Secure = isProduction,
-            SameSite = SameSiteMode.Lax,
-            Expires = DateTimeOffset.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays)
+            SameSite = isProduction ? SameSiteMode.None : SameSiteMode.Lax,
+            Expires = DateTimeOffset.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays),
+            Path = "/",
+            IsEssential = true
         };
 
         Response.Cookies.Append(RefreshTokenCookieName, refreshToken, cookieOptions);

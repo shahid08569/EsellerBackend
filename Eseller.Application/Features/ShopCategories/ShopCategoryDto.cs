@@ -13,4 +13,5 @@ public record ShopCategoryDto(
     int ShopsCount,
     DateTime CreatedAt,
     decimal PriceUsd = 0,
-    int MaxProductListings = 200);
+    int MaxProductListings = 200,
+    bool IsRecommended = false);

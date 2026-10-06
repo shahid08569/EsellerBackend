@@ -43,6 +43,7 @@ public static class DependencyInjection
 
         // JWT Settings
         services.Configure<JwtSettings>(configuration.GetSection(JwtSettings.SectionName));
+        services.Configure<SeedSettings>(configuration.GetSection(SeedSettings.SectionName));
 
         // Email Settings
         services.Configure<EmailSettings>(configuration.GetSection(EmailSettings.SectionName));
@@ -55,6 +56,17 @@ public static class DependencyInjection
 
         var jwtSettings = configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
             ?? throw new InvalidOperationException("JWT settings are not configured.");
+
+        if (string.IsNullOrWhiteSpace(jwtSettings.SecretKey) || jwtSettings.SecretKey.Length < 32)
+            throw new InvalidOperationException(
+                "JwtSettings:SecretKey must be configured (min 32 chars) via user-secrets or environment.");
+
+        // Block known placeholders / weak keys that might slip into Production.json
+        if (jwtSettings.SecretKey.Contains("REPLACE_WITH", StringComparison.OrdinalIgnoreCase)
+            || jwtSettings.SecretKey.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase)
+            || jwtSettings.SecretKey.Contains("YOUR_SECRET", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "JwtSettings:SecretKey is a placeholder. Set a strong random secret via environment or user-secrets.");
 
         // File Upload
         services.Configure<FileStorageSettings>(configuration.GetSection(FileStorageSettings.SectionName));
@@ -111,7 +123,27 @@ public static class DependencyInjection
         services.AddSingleton<IDateTime, DateTimeService>();
         services.AddScoped<IJwtService, JwtService>();
         services.AddScoped<IEmailService, EmailService>();
-        services.AddScoped<ISmsService, MockSmsService>();
+
+        var smsSettings = configuration.GetSection(SmsSettings.SectionName).Get<SmsSettings>()
+            ?? new SmsSettings();
+        var envName = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+            ?? configuration["ASPNETCORE_ENVIRONMENT"]
+            ?? "Production";
+        var isDevelopment = envName.Equals("Development", StringComparison.OrdinalIgnoreCase);
+
+        if (smsSettings.UseMock)
+        {
+            if (!isDevelopment)
+                throw new InvalidOperationException(
+                    "SmsSettings:UseMock must be false outside Development. Wire a real SMS provider.");
+            services.AddScoped<ISmsService, MockSmsService>();
+        }
+        else
+        {
+            // No third-party SMS adapter yet — fail closed rather than silently logging OTPs.
+            services.AddScoped<ISmsService, UnconfiguredSmsService>();
+        }
+
         services.AddScoped<IVerificationTokenService, VerificationTokenService>();
         services.AddScoped<ILocationService, LocationService>();
         services.AddScoped<DatabaseSeeder>();

@@ -1,6 +1,5 @@
 using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
-using Eseller.Domain.Entities.Orders;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -12,13 +11,16 @@ public class GetChatMessagesQueryHandler
 {
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IDateTime _dateTime;
 
     public GetChatMessagesQueryHandler(
         IApplicationDbContext context,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        IDateTime dateTime)
     {
         _context = context;
         _currentUserService = currentUserService;
+        _dateTime = dateTime;
     }
 
     public async Task<Result<PagedList<ChatMessageDto>>> Handle(
@@ -29,99 +31,72 @@ public class GetChatMessagesQueryHandler
             return Result.Failure<PagedList<ChatMessageDto>>(
                 "User is not authenticated.", "UNAUTHENTICATED");
 
-        // Find order — or create shop↔admin support channel keyed by Shop.Id
-        var order = await _context.OrderRequests
-            .FirstOrDefaultAsync(o => o.Id == request.OrderRequestId, cancellationToken);
+        var conversation = await _context.Conversations
+            .FirstOrDefaultAsync(c => c.Id == request.OrderRequestId, cancellationToken);
 
-        if (order is null || order.UserId == Guid.Empty)
+        if (conversation is null)
         {
-            order = await ShopSupportChannel.EnsureAsync(
-                _context,
-                request.OrderRequestId,
-                DateTime.UtcNow,
-                cancellationToken);
-
-            if (order is null)
-                return Result.Failure<PagedList<ChatMessageDto>>(
-                    "Order or shop support channel not found.", "ORDER_NOT_FOUND");
-        }
-
-        // Permission check
-        var role = _currentUserService.RoleType;
-        var isAdmin = role == RoleType.SuperAdmin || role == RoleType.Partner;
-        var isCustomer = role == RoleType.User;
-        var isShopkeeper = role == RoleType.Shopkeeper;
-
-        if (isShopkeeper)
-        {
-            var shopkeeper = await _context.Shopkeepers
-                .FirstOrDefaultAsync(sk => sk.AccountId == _currentUserService.AccountId.Value, cancellationToken);
-            if (shopkeeper is null)
-                return Result.Failure<PagedList<ChatMessageDto>>("You do not have permission.", "FORBIDDEN");
-
-            var shops = await _context.Shops
-                .IgnoreQueryFilters()
-                .Where(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null)
-                .Select(s => s.Id)
-                .ToListAsync(cancellationToken);
-
-            // Seller may only read Super Admin shop-support threads.
-            var ownsSupport = shops.Contains(order.Id)
-                || (!string.IsNullOrWhiteSpace(order.ShippingAddress)
-                    && shops.Any(id =>
-                        order.ShippingAddress!.Equals($"SHOP_SUPPORT_{id}", StringComparison.OrdinalIgnoreCase)));
-
-            if (!ownsSupport)
-                return Result.Failure<PagedList<ChatMessageDto>>(
-                    "You can only open Super Admin support chat.", "FORBIDDEN");
-        }
-        else if (!isAdmin)
-        {
-            if (!isCustomer)
-                return Result.Failure<PagedList<ChatMessageDto>>(
-                    "You do not have permission.", "FORBIDDEN");
-
-            var user = await _context.Users
-                .FirstOrDefaultAsync(u => u.AccountId == _currentUserService.AccountId.Value,
-                    cancellationToken);
-
-            if (user is null || order.UserId != user.Id)
-                return Result.Failure<PagedList<ChatMessageDto>>(
-                    "You do not have permission.", "FORBIDDEN");
-
-            var supportMarker = $"CUSTOMER_SUPPORT_{user.Id}";
-            if (!string.Equals(order.ShippingAddress, supportMarker, StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(order.ShippingAddress, "Live Support Inquiry", StringComparison.OrdinalIgnoreCase))
+            // Lazy ensure shop/user rooms
+            var isShop = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
+                .AnyAsync(s => s.Id == request.OrderRequestId && s.DeletedAt == null, cancellationToken);
+            if (isShop)
             {
-                return Result.Failure<PagedList<ChatMessageDto>>(
-                    "You can only open Super Admin support chat.", "FORBIDDEN");
+                conversation = await SupportConversationService.GetOrCreateAsync(
+                    _context, request.OrderRequestId, ChatParticipantType.Seller,
+                    _dateTime.UtcNow, cancellationToken);
+            }
+            else
+            {
+                var isUser = await _context.Users.AsNoTracking()
+                    .AnyAsync(u => u.Id == request.OrderRequestId, cancellationToken);
+                if (isUser)
+                {
+                    conversation = await SupportConversationService.GetOrCreateAsync(
+                        _context, request.OrderRequestId, ChatParticipantType.Customer,
+                        _dateTime.UtcNow, cancellationToken);
+                }
             }
         }
 
-        var query = _context.ChatMessages
-            .Where(cm => cm.OrderRequestId == request.OrderRequestId)
-            .OrderBy(cm => cm.SentAt);
+        if (conversation is null)
+            return Result.Failure<PagedList<ChatMessageDto>>(
+                "Conversation not found.", "ORDER_NOT_FOUND");
 
-        var totalCount = await query.CountAsync(cancellationToken);
+        if (!await SupportConversationService.CanAccessAsync(
+                _context, _currentUserService, conversation, cancellationToken))
+            return Result.Failure<PagedList<ChatMessageDto>>(
+                "You do not have permission.", "FORBIDDEN");
 
-        var messages = await query
+        // Latest page first for UX: return chronological page of latest N
+        var totalCount = await _context.Messages
+            .CountAsync(m => m.ConversationId == conversation.Id, cancellationToken);
+
+        var messages = await _context.Messages
+            .AsNoTracking()
+            .Where(m => m.ConversationId == conversation.Id)
+            .OrderByDescending(m => m.SentAt)
             .Skip((request.PageNumber - 1) * request.PageSize)
             .Take(request.PageSize)
-            .Select(cm => new ChatMessageDto(
-                cm.Id,
-                cm.OrderRequestId,
-                cm.SenderAccountId,
-                cm.SenderRole.ToString(),
-                cm.Message,
-                cm.IsRead,
-                cm.ReadAt,
-                cm.DeliveredAt,
-                cm.SentAt))
+            .Select(m => new ChatMessageDto(
+                m.Id,
+                m.ConversationId,
+                m.SenderId,
+                m.SenderRole.ToString(),
+                m.Content,
+                m.IsRead,
+                m.ReadAt,
+                null,
+                m.SentAt,
+                m.AttachmentUrl,
+                m.AttachmentFileName,
+                m.AttachmentContentType,
+                m.AttachmentSizeBytes))
             .ToListAsync(cancellationToken);
 
-        var pagedList = new PagedList<ChatMessageDto>(
-            messages, totalCount, request.PageNumber, request.PageSize);
+        // Oldest → newest for chat window
+        messages.Reverse();
 
-        return Result.Success(pagedList);
+        return Result.Success(new PagedList<ChatMessageDto>(
+            messages, totalCount, request.PageNumber, request.PageSize));
     }
 }

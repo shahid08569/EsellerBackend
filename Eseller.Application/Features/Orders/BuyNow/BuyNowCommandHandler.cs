@@ -5,7 +5,6 @@ using Eseller.Application.Common;
 using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Entities.Orders;
 using Eseller.Domain.Entities.Payment;
-using Eseller.Domain.Entities.Wallet;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -21,17 +20,20 @@ public class BuyNowCommandHandler
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
     private readonly ISignalRNotificationService _notificationService;
+    private readonly IAppNotificationService _notifications;
 
     public BuyNowCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
         IDateTime dateTime,
-        ISignalRNotificationService notificationService)
+        ISignalRNotificationService notificationService,
+        IAppNotificationService notifications)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
         _notificationService = notificationService;
+        _notifications = notifications;
     }
 
     public async Task<Result<Guid>> Handle(
@@ -257,60 +259,33 @@ public class BuyNowCommandHandler
 
         var shortRef = orderRequest.Id.ToString()[..8].ToUpperInvariant();
         var customerLabel = orderRequest.CustomerName ?? user.Name ?? "Customer";
-        var notifTitle = $"New order #{shortRef}";
+        var notifTitle = $"New Order #{shortRef}";
         var notifBody = $"{customerLabel} placed an order ({request.Quantity} items, Rs. {grossTotal:N0}).";
-        var notifNow = _dateTime.UtcNow;
-        var createdNotifs = new List<(Guid AccountId, Notification Notif)>();
 
         if (shopkeeperAccountId.HasValue)
         {
-            var notif = new Notification
-            {
-                AccountId = shopkeeperAccountId.Value,
-                Type = NotificationType.OrderPlaced,
-                Title = notifTitle,
-                Message = notifBody,
-                IsRead = false
-            };
-            notif.SetCreatedAt(notifNow);
-            notif.SetUpdatedAt(notifNow);
-            _context.Notifications.Add(notif);
-            createdNotifs.Add((shopkeeperAccountId.Value, notif));
+            await _notifications.NotifyAsync(
+                shopkeeperAccountId.Value,
+                RoleType.Shopkeeper,
+                NotificationType.NewOrder,
+                notifTitle,
+                notifBody,
+                NotificationEntityType.Order,
+                orderRequest.Id,
+                "/orders",
+                $"NewOrder:{orderRequest.Id:N}:Seller:{shopkeeperAccountId.Value:N}",
+                cancellationToken);
         }
 
-        var adminAccounts = await _context.Accounts
-            .AsNoTracking()
-            .Where(a => a.RoleType == RoleType.SuperAdmin || a.RoleType == RoleType.Partner)
-            .Select(a => a.Id)
-            .ToListAsync(cancellationToken);
-
-        foreach (var adminId in adminAccounts)
-        {
-            var notif = new Notification
-            {
-                AccountId = adminId,
-                Type = NotificationType.NewOrderForSuperAdmin,
-                Title = notifTitle,
-                Message = notifBody,
-                IsRead = false
-            };
-            notif.SetCreatedAt(notifNow);
-            notif.SetUpdatedAt(notifNow);
-            _context.Notifications.Add(notif);
-            createdNotifs.Add((adminId, notif));
-        }
-
-        await _context.SaveChangesAsync(cancellationToken);
-
-        foreach (var (accountId, notif) in createdNotifs)
-        {
-            try
-            {
-                await _notificationService.SendNotificationToAccountAsync(
-                    accountId, notif.Id, notif.Type, notif.Title, notif.Message, cancellationToken);
-            }
-            catch { /* best-effort */ }
-        }
+        await _notifications.NotifyAdminsAsync(
+            NotificationType.NewOrder,
+            notifTitle,
+            notifBody,
+            NotificationEntityType.Order,
+            orderRequest.Id,
+            "/orders",
+            $"NewOrder:{orderRequest.Id:N}",
+            cancellationToken);
 
         try
         {
@@ -318,6 +293,15 @@ public class BuyNowCommandHandler
                 orderRequest.Id, customerLabel, request.Quantity, grossTotal, cancellationToken);
         }
         catch { /* best-effort */ }
+
+        if (previousQty > 0 && variant.StockQty <= 0)
+        {
+            try
+            {
+                await _notifications.NotifyProductOutOfStockOnceAsync(product.Id, product.Name, cancellationToken);
+            }
+            catch { /* best-effort */ }
+        }
 
         return Result.Success(orderRequest.Id);
     }

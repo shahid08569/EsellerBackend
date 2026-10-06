@@ -40,13 +40,10 @@ public class LocalFileStorageService : IFileStorageService
         string contentType,
         CancellationToken cancellationToken = default)
     {
-        var cleanRel = fileName.TrimStart('/', '\\').Replace('\\', '/');
-        if (cleanRel.StartsWith("uploads/", StringComparison.OrdinalIgnoreCase))
-            cleanRel = cleanRel["uploads/".Length..];
+        var cleanRel = NormalizeRelativePath(fileName);
+        var fullPath = ResolveUnderRoot(cleanRel);
 
-        var fullPath = Path.Combine(_rootPath, cleanRel.Replace('/', Path.DirectorySeparatorChar));
         var directory = Path.GetDirectoryName(fullPath);
-
         if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
             Directory.CreateDirectory(directory);
 
@@ -55,7 +52,7 @@ public class LocalFileStorageService : IFileStorageService
             await stream.CopyToAsync(fileStream, cancellationToken);
         }
 
-        var relativeUrl = "/uploads/" + cleanRel;
+        var relativeUrl = "/uploads/" + cleanRel.Replace('\\', '/');
         _logger.LogDebug("File uploaded: {RelativeUrl} -> {FullPath}", relativeUrl, fullPath);
         return relativeUrl;
     }
@@ -67,18 +64,52 @@ public class LocalFileStorageService : IFileStorageService
         if (string.IsNullOrWhiteSpace(fileUrl))
             return Task.CompletedTask;
 
-        var cleanPath = fileUrl.TrimStart('/').Replace('\\', '/');
-        if (cleanPath.StartsWith("uploads/", StringComparison.OrdinalIgnoreCase))
-            cleanPath = cleanPath["uploads/".Length..];
-
-        var fullPath = Path.Combine(_rootPath, cleanPath.Replace('/', Path.DirectorySeparatorChar));
-
-        if (File.Exists(fullPath))
+        try
         {
-            File.Delete(fullPath);
-            _logger.LogInformation("File deleted: {FileUrl}", fileUrl);
+            var cleanPath = NormalizeRelativePath(fileUrl);
+            var fullPath = ResolveUnderRoot(cleanPath);
+
+            if (File.Exists(fullPath))
+            {
+                File.Delete(fullPath);
+                _logger.LogInformation("File deleted: {FileUrl}", fileUrl);
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Rejected unsafe file path for delete: {FileUrl}", fileUrl);
         }
 
         return Task.CompletedTask;
+    }
+
+    private static string NormalizeRelativePath(string fileNameOrUrl)
+    {
+        var cleanRel = fileNameOrUrl.Trim().TrimStart('/', '\\').Replace('\\', '/');
+        if (cleanRel.StartsWith("uploads/", StringComparison.OrdinalIgnoreCase))
+            cleanRel = cleanRel["uploads/".Length..];
+
+        // Reject path traversal segments
+        var segments = cleanRel.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Any(s => s is "." or ".."))
+            throw new InvalidOperationException("Invalid file path.");
+
+        return string.Join('/', segments);
+    }
+
+    private string ResolveUnderRoot(string relativePath)
+    {
+        var candidate = Path.GetFullPath(
+            Path.Combine(_rootPath, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+
+        var rootFull = Path.GetFullPath(_rootPath);
+        if (!rootFull.EndsWith(Path.DirectorySeparatorChar))
+            rootFull += Path.DirectorySeparatorChar;
+
+        if (!candidate.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(candidate, Path.GetFullPath(_rootPath), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("File path escapes storage root.");
+
+        return candidate;
     }
 }

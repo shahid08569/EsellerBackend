@@ -69,6 +69,20 @@ public class GetProductsQueryHandler
                     ShopName = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Name).FirstOrDefault() ?? string.Empty,
                     ShopSlug = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Slug).FirstOrDefault() ?? string.Empty,
                     ShopRating = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Rating).FirstOrDefault(),
+                    ShopBadgeText = (
+                        from s in _context.Shops
+                        where s.Id == p.ShopId
+                        join sc in _context.ShopCategories on s.ShopCategoryId equals sc.Id into scj
+                        from sc in scj.DefaultIfEmpty()
+                        select s.CustomBadgeText ?? sc.BadgeText ?? sc.Name ?? "Bronze"
+                    ).FirstOrDefault(),
+                    ShopBadgeColor = (
+                        from s in _context.Shops
+                        where s.Id == p.ShopId
+                        join sc in _context.ShopCategories on s.ShopCategoryId equals sc.Id into scj
+                        from sc in scj.DefaultIfEmpty()
+                        select sc.BadgeColor ?? "#94A3B8"
+                    ).FirstOrDefault(),
                     CategoryName = _context.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault() ?? string.Empty,
                     BrandName = p.BrandId == null
                         ? null
@@ -110,7 +124,9 @@ public class GetProductsQueryHandler
                 p.BrandId,
                 p.SourceProductId,
                 p.ShopId,
-                p.ShopRating)).ToList();
+                p.ShopRating,
+                p.ShopBadgeText,
+                p.ShopBadgeColor)).ToList();
 
             return Result.Success(new PagedList<ProductListDto>(
                 curatedDtos,
@@ -119,7 +135,7 @@ public class GetProductsQueryHandler
                 request.PageSize));
         }
 
-        // Public marketplace — seller listings only (never master warehouse catalog)
+        // Public marketplace — approved seller listings + Platform Master Warehouse catalog
         var query = MasterCatalog.StorefrontListings(_context, masterShopId);
 
         // Filters
@@ -194,6 +210,20 @@ public class GetProductsQueryHandler
                 ShopName = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Name).FirstOrDefault() ?? string.Empty,
                 ShopSlug = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Slug).FirstOrDefault() ?? string.Empty,
                 ShopRating = _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Rating).FirstOrDefault(),
+                ShopBadgeText = (
+                    from s in _context.Shops
+                    where s.Id == p.ShopId
+                    join sc in _context.ShopCategories on s.ShopCategoryId equals sc.Id into scj
+                    from sc in scj.DefaultIfEmpty()
+                    select s.CustomBadgeText ?? sc.BadgeText ?? sc.Name ?? "Bronze"
+                ).FirstOrDefault(),
+                ShopBadgeColor = (
+                    from s in _context.Shops
+                    where s.Id == p.ShopId
+                    join sc in _context.ShopCategories on s.ShopCategoryId equals sc.Id into scj
+                    from sc in scj.DefaultIfEmpty()
+                    select sc.BadgeColor ?? "#94A3B8"
+                ).FirstOrDefault(),
                 CategoryName = _context.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault() ?? string.Empty,
                 BrandName = p.BrandId == null
                     ? null
@@ -235,7 +265,9 @@ public class GetProductsQueryHandler
             p.BrandId,
             p.SourceProductId,
             p.ShopId,
-            p.ShopRating)).ToList();
+            p.ShopRating,
+            p.ShopBadgeText,
+            p.ShopBadgeColor)).ToList();
 
         var pagedList = new PagedList<ProductListDto>(
             productDtos,

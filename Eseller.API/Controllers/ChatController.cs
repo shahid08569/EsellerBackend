@@ -24,17 +24,20 @@ public class ChatController : ControllerBase
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
+    private readonly ISignalRNotificationService _signalR;
 
     public ChatController(
         ISender sender,
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        ISignalRNotificationService signalR)
     {
         _sender = sender;
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
+        _signalR = signalR;
     }
 
     /// <summary>
@@ -76,32 +79,14 @@ public class ChatController : ControllerBase
             await _context.SaveChangesAsync(cancellationToken);
         }
 
-        var marker = $"CUSTOMER_SUPPORT_{user.Id}";
-        var order = await _context.OrderRequests
-            .FirstOrDefaultAsync(o => o.UserId == user.Id && o.ShippingAddress == marker, cancellationToken);
-
-        if (order is null)
-        {
-            order = new OrderRequest
-            {
-                UserId = user.Id,
-                CustomerName = user.Name,
-                CustomerPhone = user.Phone ?? "N/A",
-                ShippingAddress = marker,
-                City = "Online",
-                OrderNotes = "Customer ↔ Platform support channel",
-                Status = OrderStatus.Pending
-            };
-            order.SetCreatedAt(_dateTime.UtcNow);
-            order.SetUpdatedAt(_dateTime.UtcNow);
-            _context.OrderRequests.Add(order);
-            await _context.SaveChangesAsync(cancellationToken);
-        }
+        var conversation = await SupportConversationService.GetOrCreateAsync(
+            _context, user.Id, ChatParticipantType.Customer, _dateTime.UtcNow, cancellationToken);
 
         return Ok(new
         {
-            orderRequestId = order.Id,
-            orderRef = order.Id.ToString()
+            conversationId = conversation.Id,
+            orderRequestId = conversation.Id, // legacy alias for Angular
+            orderRef = conversation.Id.ToString()
         });
     }
 
@@ -128,10 +113,8 @@ public class ChatController : ControllerBase
         if (shop is null)
             return NotFound(new { error = "Shop not found.", errorCode = "SHOP_NOT_FOUND" });
 
-        var channel = await ShopSupportChannel.EnsureAsync(
-            _context, shop.Id, _dateTime.UtcNow, cancellationToken);
-        if (channel is null)
-            return BadRequest(new { error = "Could not open support channel.", errorCode = "CHANNEL_FAILED" });
+        var conversation = await SupportConversationService.GetOrCreateAsync(
+            _context, shop.Id, ChatParticipantType.Seller, _dateTime.UtcNow, cancellationToken);
 
         object? productPayload = null;
 
@@ -155,34 +138,29 @@ public class ChatController : ControllerBase
                 .Select(i => i.ImageUrl)
                 .FirstOrDefaultAsync(cancellationToken);
 
-            // Persist product context for admin inbox feed
-            channel.OrderNotes = ProductChatContext.Encode(product.Id, product.Name, product.BasePrice, imageUrl);
-            channel.SetUpdatedAt(_dateTime.UtcNow);
-
             var inquiryMessage = ProductChatContext.BuildMessage(product.Name, product.BasePrice, product.Id, imageUrl);
 
-            // Avoid spamming identical inquiry if last message is the same product
-            var lastMsg = await _context.ChatMessages
-                .Where(m => m.OrderRequestId == channel.Id)
+            var lastMsg = await _context.Messages
+                .Where(m => m.ConversationId == conversation.Id)
                 .OrderByDescending(m => m.SentAt)
-                .Select(m => m.Message)
+                .Select(m => m.Content)
                 .FirstOrDefaultAsync(cancellationToken);
 
             if (lastMsg is null || !lastMsg.Contains(product.Id.ToString(), StringComparison.OrdinalIgnoreCase))
             {
-                var chatMsg = new ChatMessage
+                _context.Messages.Add(new Domain.Entities.Chat.Message
                 {
-                    OrderRequestId = channel.Id,
-                    SenderAccountId = _currentUserService.AccountId.Value,
+                    ConversationId = conversation.Id,
+                    SenderId = _currentUserService.AccountId.Value,
                     SenderRole = ChatSenderRole.Shopkeeper,
-                    Message = inquiryMessage,
+                    Content = inquiryMessage,
                     SentAt = _dateTime.UtcNow,
                     IsRead = false
-                };
-                _context.ChatMessages.Add(chatMsg);
+                });
+                conversation.LastMessageAt = _dateTime.UtcNow;
+                conversation.SetUpdatedAt(_dateTime.UtcNow);
+                await _context.SaveChangesAsync(cancellationToken);
             }
-
-            await _context.SaveChangesAsync(cancellationToken);
 
             productPayload = new
             {
@@ -195,8 +173,9 @@ public class ChatController : ControllerBase
 
         return Ok(new
         {
-            orderRequestId = channel.Id,
-            orderRef = channel.Id.ToString(),
+            conversationId = conversation.Id,
+            orderRequestId = conversation.Id,
+            orderRef = conversation.Id.ToString(),
             shopId = shop.Id,
             shopName = shop.Name,
             product = productPayload
@@ -354,20 +333,102 @@ public class ChatController : ControllerBase
         [FromBody] SendMessageRequest request,
         CancellationToken cancellationToken)
     {
-        var command = new SendChatMessageCommand(orderId, request.Message);
+        var command = new SendChatMessageCommand(
+            orderId,
+            request.Message,
+            request.AttachmentUrl,
+            request.AttachmentFileName,
+            request.AttachmentContentType,
+            request.AttachmentSizeBytes);
         var result = await _sender.Send(command, cancellationToken);
 
         if (!result.IsSuccess)
         {
             return result.ErrorCode switch
             {
-                "ORDER_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
+                "ORDER_NOT_FOUND" or "CONVERSATION_NOT_FOUND" =>
+                    NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
                 "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
                 _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
             };
         }
 
         return Ok(new { messageId = result.Value, message = "Message sent." });
+    }
+
+    /// <summary>
+    /// Upload a chat attachment (image/pdf/doc). Returns URL to attach on send.
+    /// </summary>
+    [HttpPost("attachments")]
+    [RequestSizeLimit(10_485_760)]
+    public async Task<IActionResult> UploadAttachment(
+        IFormFile file,
+        [FromServices] IFileStorageService fileStorage,
+        CancellationToken cancellationToken)
+    {
+        if (_currentUserService.AccountId is null)
+            return Unauthorized();
+
+        if (file is null || file.Length == 0)
+            return BadRequest(new { error = "File is required.", errorCode = "FILE_REQUIRED" });
+
+        if (file.Length > 10_485_760)
+            return BadRequest(new { error = "Max file size is 10 MB.", errorCode = "FILE_TOO_LARGE" });
+
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "image/jpeg", "image/png", "image/webp", "image/gif",
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "text/plain"
+        };
+
+        var extByMime = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            [".jpg"] = ["image/jpeg"],
+            [".jpeg"] = ["image/jpeg"],
+            [".png"] = ["image/png"],
+            [".webp"] = ["image/webp"],
+            [".gif"] = ["image/gif"],
+            [".pdf"] = ["application/pdf"],
+            [".doc"] = ["application/msword"],
+            [".docx"] = ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+            [".xls"] = ["application/vnd.ms-excel"],
+            [".xlsx"] = ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+            [".txt"] = ["text/plain"]
+        };
+
+        var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant() ?? "";
+        var contentType = string.IsNullOrWhiteSpace(file.ContentType)
+            ? "application/octet-stream"
+            : file.ContentType.Trim();
+
+        // Browsers often send octet-stream / empty — fall back to extension allowlist
+        if (!allowed.Contains(contentType))
+        {
+            if (extByMime.TryGetValue(ext, out var mimes))
+                contentType = mimes[0];
+            else
+                return BadRequest(new { error = "File type not allowed.", errorCode = "FILE_TYPE" });
+        }
+
+        if (string.IsNullOrWhiteSpace(ext))
+            ext = ".bin";
+        var relativeName = $"chat/{_currentUserService.AccountId.Value:N}/{Guid.NewGuid():N}{ext}";
+
+        await using var stream = file.OpenReadStream();
+        var url = await fileStorage.UploadAsync(stream, relativeName, contentType, cancellationToken);
+
+        return Ok(new
+        {
+            url,
+            fileName = Path.GetFileName(file.FileName),
+            contentType,
+            sizeBytes = file.Length
+        });
     }
 
     /// <summary>
@@ -397,6 +458,7 @@ public class ChatController : ControllerBase
 
     /// <summary>
     /// Mark all unread inbound messages in a conversation/thread as read.
+    /// Shop support threads use Shop.Id as the room key — ensure channel exists before marking.
     /// </summary>
     [HttpPut("{orderRequestId:guid}/read")]
     public async Task<IActionResult> MarkConversationAsRead(
@@ -406,27 +468,103 @@ public class ChatController : ControllerBase
         if (_currentUserService.AccountId is null)
             return Unauthorized(new { error = "User is not authenticated.", errorCode = "UNAUTHENTICATED" });
 
-        var order = await _context.OrderRequests
-            .FirstOrDefaultAsync(o => o.Id == orderRequestId, cancellationToken);
-        if (order is null)
-            return NotFound(new { error = "Conversation not found.", errorCode = "ORDER_NOT_FOUND" });
+        var conversation = await _context.Conversations
+            .FirstOrDefaultAsync(c => c.Id == orderRequestId, cancellationToken);
 
-        var unread = await _context.ChatMessages
-            .Where(cm => cm.OrderRequestId == orderRequestId
-                      && !cm.IsRead
-                      && cm.SenderAccountId != _currentUserService.AccountId.Value)
-            .ToListAsync(cancellationToken);
-
-        var marked = 0;
-        foreach (var msg in unread)
+        if (conversation is null)
         {
-            var mark = await _sender.Send(new MarkMessageAsReadCommand(msg.Id), cancellationToken);
-            if (!mark.IsSuccess && mark.ErrorCode == "FORBIDDEN")
-                return StatusCode(StatusCodes.Status403Forbidden, new { error = mark.Error, errorCode = mark.ErrorCode });
-            if (mark.IsSuccess) marked++;
+            var isShop = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
+                .AnyAsync(s => s.Id == orderRequestId && s.DeletedAt == null, cancellationToken);
+            if (isShop)
+            {
+                conversation = await SupportConversationService.GetOrCreateAsync(
+                    _context, orderRequestId, ChatParticipantType.Seller, _dateTime.UtcNow, cancellationToken);
+            }
+            else
+            {
+                var isUser = await _context.Users.AsNoTracking()
+                    .AnyAsync(u => u.Id == orderRequestId, cancellationToken);
+                if (isUser)
+                {
+                    conversation = await SupportConversationService.GetOrCreateAsync(
+                        _context, orderRequestId, ChatParticipantType.Customer, _dateTime.UtcNow, cancellationToken);
+                }
+            }
         }
 
-        return Ok(new { message = "Conversation marked as read.", markedCount = marked });
+        if (conversation is null)
+            return NotFound(new { error = "Conversation not found.", errorCode = "ORDER_NOT_FOUND" });
+
+        if (!await SupportConversationService.CanAccessAsync(
+                _context, _currentUserService, conversation, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden.", errorCode = "FORBIDDEN" });
+
+        var role = _currentUserService.RoleType;
+        var isAdmin = role == RoleType.SuperAdmin || role == RoleType.Partner;
+        var now = _dateTime.UtcNow;
+
+        var query = _context.Messages
+            .Where(m => m.ConversationId == conversation.Id
+                        && !m.IsRead
+                        && m.SenderId != _currentUserService.AccountId.Value);
+
+        if (isAdmin)
+        {
+            query = query.Where(m =>
+                m.SenderRole == ChatSenderRole.Shopkeeper || m.SenderRole == ChatSenderRole.User);
+        }
+        else
+        {
+            query = query.Where(m =>
+                m.SenderRole == ChatSenderRole.SuperAdmin || m.SenderRole == ChatSenderRole.Partner);
+        }
+
+        var unread = await query.ToListAsync(cancellationToken);
+        foreach (var msg in unread)
+        {
+            msg.IsRead = true;
+            msg.ReadAt = now;
+        }
+
+        // Clear bell notifications for this conversation so they disappear after opening/reading
+        var accountId = _currentUserService.AccountId.Value;
+        var chatNotifs = await _context.Notifications
+            .Where(n => n.RecipientUserId == accountId
+                        && !n.IsRead
+                        && n.Type == NotificationType.NewMessage
+                        && n.EntityType == NotificationEntityType.Conversation
+                        && n.EntityId == conversation.Id)
+            .ToListAsync(cancellationToken);
+
+        foreach (var n in chatNotifs)
+        {
+            n.IsRead = true;
+            n.SetUpdatedAt(now);
+        }
+
+        if (unread.Count > 0 || chatNotifs.Count > 0)
+            await _context.SaveChangesAsync(cancellationToken);
+
+        if (chatNotifs.Count > 0)
+        {
+            try
+            {
+                var remaining = await _context.Notifications.AsNoTracking()
+                    .CountAsync(n => n.RecipientUserId == accountId && !n.IsRead, cancellationToken);
+                await _signalR.SendUnreadCountChangedAsync(accountId, remaining, cancellationToken);
+            }
+            catch
+            {
+                // best-effort realtime
+            }
+        }
+
+        return Ok(new
+        {
+            message = "Conversation marked as read.",
+            markedCount = unread.Count,
+            notificationsCleared = chatNotifs.Count
+        });
     }
 
     /// <summary>
@@ -436,22 +574,30 @@ public class ChatController : ControllerBase
     [Authorize(Roles = "SuperAdmin,Partner")]
     public async Task<IActionResult> GetConversations(
         [FromQuery] int pageNumber = 1,
-        [FromQuery] int pageSize = 20,
+        [FromQuery] int pageSize = 500,
         CancellationToken cancellationToken = default)
     {
-        var query = new GetConversationsQuery(pageNumber, pageSize);
-        var result = await _sender.Send(query, cancellationToken);
-
-        if (!result.IsSuccess)
+        try
         {
-            return result.ErrorCode switch
-            {
-                "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
-                _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
-            };
-        }
+            var query = new GetConversationsQuery(pageNumber, pageSize);
+            var result = await _sender.Send(query, cancellationToken);
 
-        return Ok(result.Value);
+            if (!result.IsSuccess)
+            {
+                return result.ErrorCode switch
+                {
+                    "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
+                    _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
+                };
+            }
+
+            return Ok(result.Value);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Client navigated away / refresh aborted the request — not a fault
+            return NoContent();
+        }
     }
 
     /// <summary>
@@ -496,4 +642,9 @@ public class ChatController : ControllerBase
 // REQUEST DTOs
 // ─────────────────────────────────────────────────────────────
 
-public record SendMessageRequest(string Message);
+public record SendMessageRequest(
+    string? Message,
+    string? AttachmentUrl = null,
+    string? AttachmentFileName = null,
+    string? AttachmentContentType = null,
+    long? AttachmentSizeBytes = null);

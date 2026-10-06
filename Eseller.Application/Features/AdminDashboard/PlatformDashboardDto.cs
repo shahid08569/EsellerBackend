@@ -54,4 +54,4 @@ public record PlatformDashboardDto(
 
 public record MonthlyRevenuePointDto(string Month, decimal Revenue, decimal GrowthPercent);
 public record DayOrderCountDto(string Day, int Orders);
-public record LowStockItemDto(Guid Id, string Name, string Sku, string CategoryName, int Stock, string? ImageUrl);
+public record LowStockItemDto(Guid Id, string Name, string Sku, string CategoryName, int Stock, string? ImageUrl);

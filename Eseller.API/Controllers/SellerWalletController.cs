@@ -2,7 +2,6 @@ using Eseller.Application.Abstractions;
 using Eseller.Domain.Entities.Payment;
 using Eseller.Domain.Entities.Wallet;
 using Eseller.Domain.Enums;
-using Notification = Eseller.Domain.Entities.Wallet.Notification;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,7 +13,8 @@ namespace Eseller.API.Controllers;
 [Authorize(Roles = "Shopkeeper")]
 public class SellerWalletController : ControllerBase
 {
-    private const decimal DefaultMinimumWithdrawal = 1000m;
+    public const string MinimumWithdrawalSettingKey = "DefaultWithdrawalThreshold";
+    private const decimal FallbackMinimumWithdrawal = 1000m;
 
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUser;
@@ -71,6 +71,8 @@ public class SellerWalletController : ControllerBase
             .Where(w => w.AccountId == accountId.Value && w.Status == WithdrawalStatus.Pending)
             .SumAsync(w => w.Amount, cancellationToken);
 
+        var minimumWithdrawal = await ResolveMinimumWithdrawalAsync(cancellationToken);
+
         return Ok(new
         {
             walletBalance = wallet.Balance,
@@ -79,7 +81,7 @@ public class SellerWalletController : ControllerBase
             withdrawnEarnings = withdrawn,
             pendingWithdrawals,
             availableToWithdraw = wallet.Balance,
-            minimumWithdrawal = DefaultMinimumWithdrawal,
+            minimumWithdrawal,
             merchantSharePercent = 20
         });
     }
@@ -126,10 +128,11 @@ public class SellerWalletController : ControllerBase
         var accountId = _currentUser.AccountId;
         if (accountId is null) return Unauthorized();
 
-        if (body.Amount < DefaultMinimumWithdrawal)
+        var minimumWithdrawal = await ResolveMinimumWithdrawalAsync(cancellationToken);
+        if (body.Amount < minimumWithdrawal)
             return BadRequest(new
             {
-                error = $"Minimum withdrawal amount is $ {DefaultMinimumWithdrawal:N0}.",
+                error = $"Minimum withdrawal amount is $ {minimumWithdrawal:N0}.",
                 errorCode = "BELOW_MINIMUM"
             });
 
@@ -179,27 +182,6 @@ public class SellerWalletController : ControllerBase
         withdrawal.SetUpdatedAt(now);
         _context.Withdrawals.Add(withdrawal);
 
-        // Notify SuperAdmin
-        var adminIds = await _context.Accounts
-            .Where(a => a.RoleType == RoleType.SuperAdmin || a.RoleType == RoleType.Partner)
-            .Select(a => a.Id)
-            .ToListAsync(cancellationToken);
-
-        foreach (var adminId in adminIds)
-        {
-            var n = new Notification
-            {
-                AccountId = adminId,
-                Type = NotificationType.WithdrawalRequested,
-                Title = "Seller withdrawal request",
-                Message = $"{shopkeeper.Name} requested $ {body.Amount:N2} withdrawal.",
-                IsRead = false
-            };
-            n.SetCreatedAt(now);
-            n.SetUpdatedAt(now);
-            _context.Notifications.Add(n);
-        }
-
         await _context.SaveChangesAsync(cancellationToken);
 
         return Ok(new
@@ -207,6 +189,22 @@ public class SellerWalletController : ControllerBase
             id = withdrawal.Id,
             message = "Withdrawal request submitted to Super Admin."
         });
+    }
+
+    private async Task<decimal> ResolveMinimumWithdrawalAsync(CancellationToken cancellationToken)
+    {
+        var setting = await _context.Settings.AsNoTracking()
+            .FirstOrDefaultAsync(s =>
+                s.Key == MinimumWithdrawalSettingKey
+                && s.IsActive, cancellationToken);
+
+        if (setting is not null
+            && decimal.TryParse(setting.Value, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            && parsed > 0)
+            return parsed;
+
+        return FallbackMinimumWithdrawal;
     }
 
     private async Task<Wallet> EnsureWalletAsync(Guid accountId, CancellationToken cancellationToken)

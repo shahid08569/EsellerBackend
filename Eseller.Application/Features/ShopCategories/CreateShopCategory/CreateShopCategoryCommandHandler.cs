@@ -35,6 +35,15 @@ public class CreateShopCategoryCommandHandler
         if (exists)
             return Result.Failure<Guid>("A shop category with this name or slug already exists.", "CATEGORY_EXISTS");
 
+        if (request.IsRecommended)
+        {
+            var others = await _context.ShopCategories
+                .Where(sc => sc.DeletedAt == null && sc.IsRecommended)
+                .ToListAsync(cancellationToken);
+            foreach (var o in others)
+                o.IsRecommended = false;
+        }
+
         var shopCategory = new ShopCategory
         {
             Name = trimmedName,
@@ -42,10 +51,11 @@ public class CreateShopCategoryCommandHandler
             Description = request.Description?.Trim(),
             BadgeText = request.BadgeText?.Trim() ?? $"{trimmedName} Store",
             BadgeColor = request.BadgeColor?.Trim() ?? "#F59E0B",
-            IconUrl = request.IconUrl?.Trim() ?? "⭐",
+            IconUrl = request.IconUrl?.Trim() ?? "👑",
             DisplayOrder = request.DisplayOrder,
             PriceUsd = request.PriceUsd < 0 ? 0 : request.PriceUsd,
             MaxProductListings = request.MaxProductListings <= 0 ? 200 : request.MaxProductListings,
+            IsRecommended = request.IsRecommended,
             IsActive = true
         };
 

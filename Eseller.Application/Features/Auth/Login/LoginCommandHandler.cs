@@ -1,5 +1,4 @@
-﻿
-using Eseller.Application.Abstractions;
+﻿using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Identity;
 using MediatR;
@@ -43,10 +42,22 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
                 "Valid location is required to login.",
                 "LOCATION_REQUIRED");
         }
-        // 2. Find account by username or email
+
+        var loginKey = (request.UsernameOrEmail ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(loginKey))
+        {
+            return Result.Failure<LoginResponse>(
+                "Invalid credentials.",
+                "INVALID_CREDENTIALS");
+        }
+
+        var loginKeyLower = loginKey.ToLowerInvariant();
+
+        // 2. Find account by username or email (trim + case-insensitive)
         var account = await _context.Accounts
-            .FirstOrDefaultAsync(a => a.Username == request.UsernameOrEmail
-                                   || a.Email == request.UsernameOrEmail,
+            .FirstOrDefaultAsync(a =>
+                    a.Username.ToLower() == loginKeyLower
+                    || a.Email.ToLower() == loginKeyLower,
                 cancellationToken);
 
         if (account is null)
@@ -56,7 +67,7 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
                 "INVALID_CREDENTIALS");
         }
 
-        // 3. Verify password
+        // 3. Verify password (do not trim — must match registration exactly)
         if (!_passwordHasher.Verify(request.Password, account.PasswordHash))
         {
             return Result.Failure<LoginResponse>(
@@ -111,8 +122,7 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
             null,
             cancellationToken);
 
-
-        // 10. Return response
+        // 10. Return response — client expiry must match JWT lifetime
         return Result.Success(new LoginResponse(
             account.Id,
             account.Username,
@@ -120,6 +130,6 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
             account.RoleType.ToString(),
             accessToken,
             refreshToken,
-            _dateTime.UtcNow.AddMinutes(15)));
+            _dateTime.UtcNow.AddMinutes(_jwtService.AccessTokenExpirationMinutes)));
     }
 }
