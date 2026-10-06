@@ -143,7 +143,9 @@ var seedSettings = app.Configuration.GetSection(SeedSettings.SectionName).Get<Se
     ?? new SeedSettings();
 
 var shouldMigrate = seedSettings.AutoMigrate || app.Environment.IsDevelopment();
-var shouldSeed = seedSettings.SeedOnStartup || app.Environment.IsDevelopment();
+// Idempotent: categories/brands/tiers always; SuperAdmin only when password is configured.
+// Production.json often has SeedOnStartup=false and is not overwritten by FTP deploy.
+var shouldSeed = true;
 
 if (shouldMigrate || shouldSeed)
 {
