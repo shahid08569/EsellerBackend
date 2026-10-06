@@ -131,4 +131,34 @@ public class SignalRNotificationService : ISignalRNotificationService
             .Group("SuperAdmin")
             .ReceiveOrderNotification(orderRequestId, customerName, itemCount, totalAmount, DateTime.UtcNow);
     }
+
+    public async Task BroadcastMessageReadAsync(
+        Guid conversationId,
+        Guid messageId,
+        DateTime readAt,
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<Guid>? notifyAccountIds = null)
+    {
+        var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            $"conversation:{conversationId}",
+            $"order-{conversationId}"
+        };
+
+        if (notifyAccountIds is { Count: > 0 })
+        {
+            foreach (var accountId in notifyAccountIds.Distinct())
+            {
+                if (accountId != Guid.Empty)
+                    groups.Add($"account-{accountId}");
+            }
+        }
+
+        foreach (var group in groups)
+        {
+            await _chatHubContext.Clients
+                .Group(group)
+                .MessageRead(messageId, readAt);
+        }
+    }
 }

@@ -42,4 +42,12 @@ public interface ISignalRNotificationService
         int conversationUnread,
         IReadOnlyCollection<Guid> accountIds,
         CancellationToken cancellationToken);
+
+    /// <summary>Notify message sender(s) that their outbound message was read (WhatsApp-style ✓✓).</summary>
+    Task BroadcastMessageReadAsync(
+        Guid conversationId,
+        Guid messageId,
+        DateTime readAt,
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<Guid>? notifyAccountIds = null);
 }

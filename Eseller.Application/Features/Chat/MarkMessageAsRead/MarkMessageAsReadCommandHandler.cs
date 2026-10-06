@@ -12,15 +12,18 @@ public class MarkMessageAsReadCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
+    private readonly ISignalRNotificationService _signalR;
 
     public MarkMessageAsReadCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        ISignalRNotificationService signalR)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
+        _signalR = signalR;
     }
 
     public async Task<Result> Handle(
@@ -51,9 +54,24 @@ public class MarkMessageAsReadCommandHandler
 
         if (!message.IsRead)
         {
+            var readAt = _dateTime.UtcNow;
             message.IsRead = true;
-            message.ReadAt = _dateTime.UtcNow;
+            message.ReadAt = readAt;
             await _context.SaveChangesAsync(cancellationToken);
+
+            try
+            {
+                await _signalR.BroadcastMessageReadAsync(
+                    conversation.Id,
+                    message.Id,
+                    readAt,
+                    cancellationToken,
+                    notifyAccountIds: new[] { message.SenderId });
+            }
+            catch
+            {
+                // best-effort realtime
+            }
         }
 
         return Result.Success();

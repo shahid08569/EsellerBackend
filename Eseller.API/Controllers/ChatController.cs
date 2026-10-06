@@ -545,6 +545,26 @@ public class ChatController : ControllerBase
         if (unread.Count > 0 || chatNotifs.Count > 0)
             await _context.SaveChangesAsync(cancellationToken);
 
+        if (unread.Count > 0)
+        {
+            try
+            {
+                foreach (var msg in unread)
+                {
+                    await _signalR.BroadcastMessageReadAsync(
+                        conversation.Id,
+                        msg.Id,
+                        msg.ReadAt ?? now,
+                        cancellationToken,
+                        notifyAccountIds: new[] { msg.SenderId });
+                }
+            }
+            catch
+            {
+                // best-effort realtime
+            }
+        }
+
         if (chatNotifs.Count > 0)
         {
             try

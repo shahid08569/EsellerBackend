@@ -71,27 +71,61 @@ public class GetChatMessagesQueryHandler
         var totalCount = await _context.Messages
             .CountAsync(m => m.ConversationId == conversation.Id, cancellationToken);
 
-        var messages = await _context.Messages
-            .AsNoTracking()
-            .Where(m => m.ConversationId == conversation.Id)
-            .OrderByDescending(m => m.SentAt)
-            .Skip((request.PageNumber - 1) * request.PageSize)
-            .Take(request.PageSize)
-            .Select(m => new ChatMessageDto(
-                m.Id,
-                m.ConversationId,
-                m.SenderId,
-                m.SenderRole.ToString(),
-                m.Content,
-                m.IsRead,
-                m.ReadAt,
-                null,
-                m.SentAt,
-                m.AttachmentUrl,
-                m.AttachmentFileName,
-                m.AttachmentContentType,
-                m.AttachmentSizeBytes))
-            .ToListAsync(cancellationToken);
+        List<ChatMessageDto> messages;
+
+        if (totalCount > 0)
+        {
+            messages = await _context.Messages
+                .AsNoTracking()
+                .Where(m => m.ConversationId == conversation.Id)
+                .OrderByDescending(m => m.SentAt)
+                .Skip((request.PageNumber - 1) * request.PageSize)
+                .Take(request.PageSize)
+                .Select(m => new ChatMessageDto(
+                    m.Id,
+                    m.ConversationId,
+                    m.SenderId,
+                    m.SenderRole.ToString(),
+                    m.Content,
+                    m.IsRead,
+                    m.ReadAt,
+                    null,
+                    m.SentAt,
+                    m.AttachmentUrl,
+                    m.AttachmentFileName,
+                    m.AttachmentContentType,
+                    m.AttachmentSizeBytes))
+                .ToListAsync(cancellationToken);
+        }
+        else
+        {
+            // Legacy ChatMessages (shop.id / order id room keys) before Messages migration
+            var legacyRoomIds = new[] { conversation.Id, conversation.ParticipantId }.Distinct().ToList();
+            totalCount = await _context.ChatMessages
+                .CountAsync(cm => legacyRoomIds.Contains(cm.OrderRequestId), cancellationToken);
+
+            messages = await _context.ChatMessages
+                .AsNoTracking()
+                .Where(cm => legacyRoomIds.Contains(cm.OrderRequestId))
+                .OrderByDescending(cm => cm.SentAt)
+                .Skip((request.PageNumber - 1) * request.PageSize)
+                .Take(request.PageSize)
+                .Select(cm => new ChatMessageDto(
+                    cm.Id,
+                    cm.OrderRequestId,
+                    cm.SenderAccountId,
+                    cm.SenderRole.ToString(),
+                    cm.Message,
+                    cm.IsRead,
+                    cm.ReadAt,
+                    cm.DeliveredAt,
+                    cm.SentAt,
+                    null,
+                    null,
+                    null,
+                    null))
+                .ToListAsync(cancellationToken);
+        }
 
         // Oldest → newest for chat window
         messages.Reverse();
