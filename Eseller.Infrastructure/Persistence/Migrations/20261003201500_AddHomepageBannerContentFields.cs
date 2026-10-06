@@ -1,3 +1,5 @@
+using Eseller.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -6,8 +8,10 @@ namespace Eseller.Infrastructure.Persistence.Migrations;
 
 /// <summary>
 /// Adds content fields to HomepageBanners that exist on the entity/snapshot
-/// but were never applied to the database.
+/// but were never applied to the database (migration previously lacked [Migration] attribute).
 /// </summary>
+[DbContext(typeof(EsellerDbContext))]
+[Migration("20261003201500_AddHomepageBannerContentFields")]
 public partial class AddHomepageBannerContentFields : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
@@ -32,7 +36,7 @@ public partial class AddHomepageBannerContentFields : Migration
                 ALTER TABLE [HomepageBanners] ADD [ButtonText] nvarchar(100) NULL;
 
             IF COL_LENGTH('HomepageBanners', 'BackgroundColor') IS NULL
-                ALTER TABLE [HomepageBanners] ADD [BackgroundColor] nvarchar(50) NULL;
+                ALTER TABLE [HomepageBanners] ADD [BackgroundColor] nvarchar(300) NULL;
 
             IF COL_LENGTH('HomepageBanners', 'TextColor') IS NULL
                 ALTER TABLE [HomepageBanners] ADD [TextColor] nvarchar(50) NULL;

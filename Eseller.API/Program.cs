@@ -157,6 +157,28 @@ if (shouldMigrate || shouldSeed)
         if (shouldMigrate)
             await db.Database.MigrateAsync();
 
+        // Belt-and-suspenders: banner content columns (migration historically lacked [Migration] attr).
+        await db.Database.ExecuteSqlRawAsync("""
+            IF COL_LENGTH('HomepageBanners', 'Title') IS NULL
+                ALTER TABLE [HomepageBanners] ADD [Title] nvarchar(200) NULL;
+            IF COL_LENGTH('HomepageBanners', 'Subtitle') IS NULL
+                ALTER TABLE [HomepageBanners] ADD [Subtitle] nvarchar(200) NULL;
+            IF COL_LENGTH('HomepageBanners', 'Description') IS NULL
+                ALTER TABLE [HomepageBanners] ADD [Description] nvarchar(1000) NULL;
+            IF COL_LENGTH('HomepageBanners', 'Price') IS NULL
+                ALTER TABLE [HomepageBanners] ADD [Price] decimal(18,2) NULL;
+            IF COL_LENGTH('HomepageBanners', 'OriginalPrice') IS NULL
+                ALTER TABLE [HomepageBanners] ADD [OriginalPrice] decimal(18,2) NULL;
+            IF COL_LENGTH('HomepageBanners', 'ButtonText') IS NULL
+                ALTER TABLE [HomepageBanners] ADD [ButtonText] nvarchar(100) NULL;
+            IF COL_LENGTH('HomepageBanners', 'BackgroundColor') IS NULL
+                ALTER TABLE [HomepageBanners] ADD [BackgroundColor] nvarchar(300) NULL;
+            IF COL_LENGTH('HomepageBanners', 'TextColor') IS NULL
+                ALTER TABLE [HomepageBanners] ADD [TextColor] nvarchar(50) NULL;
+            IF COL_LENGTH('HomepageBanners', 'AvailableSizes') IS NULL
+                ALTER TABLE [HomepageBanners] ADD [AvailableSizes] nvarchar(100) NULL;
+            """);
+
         if (shouldSeed)
         {
             var seeder = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
@@ -178,9 +200,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseStaticFiles();
 
-var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "uploads");
-if (!Directory.Exists(uploadsDir))
-    Directory.CreateDirectory(uploadsDir);
+var uploadsDir = Eseller.Infrastructure.Services.UploadsPathResolver.Resolve(
+    app.Environment, app.Configuration);
+Log.Information("Serving uploads from {UploadsDir}", uploadsDir);
 
 app.UseStaticFiles(new StaticFileOptions
 {
@@ -208,6 +230,27 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.MapHealthChecks("/health");
+
+// Diagnostics: confirms uploads folder on MonsterASP (no secrets).
+app.MapGet("/health/uploads", () =>
+{
+    var exists = Directory.Exists(uploadsDir);
+    var fileCount = 0;
+    try
+    {
+        if (exists)
+            fileCount = Directory.GetFiles(uploadsDir, "*", SearchOption.AllDirectories).Length;
+    }
+    catch { /* ignore */ }
+
+    return Results.Ok(new
+    {
+        uploadsDir,
+        exists,
+        fileCount,
+        contentRoot = app.Environment.ContentRootPath
+    });
+});
 
 app.MapHub<ChatHub>("/hubs/chat");
 app.MapHub<NotificationHub>("/hubs/notifications");

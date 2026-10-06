@@ -1,5 +1,6 @@
 using Eseller.Application.Abstractions;
 using Eseller.Infrastructure.Settings;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -15,23 +16,13 @@ public class LocalFileStorageService : IFileStorageService
     public LocalFileStorageService(
         IOptions<FileStorageSettings> settings,
         IHostEnvironment env,
+        IConfiguration configuration,
         ILogger<LocalFileStorageService> logger)
     {
         _settings = settings.Value;
         _logger = logger;
-
-        var configured = string.IsNullOrWhiteSpace(_settings.BasePath)
-            ? "wwwroot/uploads"
-            : _settings.BasePath.Trim();
-
-        // Always resolve against API content root so uploads land in Eseller.API/wwwroot/uploads
-        // (relative paths previously depended on process CWD and files vanished).
-        _rootPath = Path.IsPathRooted(configured)
-            ? configured
-            : Path.GetFullPath(Path.Combine(env.ContentRootPath, configured));
-
-        Directory.CreateDirectory(_rootPath);
-        _logger.LogDebug("File storage root: {RootPath}", _rootPath);
+        _rootPath = UploadsPathResolver.Resolve(env, configuration);
+        _logger.LogInformation("File storage root: {RootPath}", _rootPath);
     }
 
     public async Task<string> UploadAsync(
