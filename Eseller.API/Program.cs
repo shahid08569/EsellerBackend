@@ -217,7 +217,21 @@ app.UseStaticFiles(new StaticFileOptions
             ctx.Context.Response.StatusCode = StatusCodes.Status404NotFound;
             ctx.Context.Response.ContentLength = 0;
             ctx.Context.Response.Body = Stream.Null;
+            return;
         }
+
+        // Treat empty placeholders as missing so UIs show fallbacks instead of blank images
+        try
+        {
+            var fileInfo = ctx.File;
+            if (fileInfo is { Exists: true, Length: <= 0 })
+            {
+                ctx.Context.Response.StatusCode = StatusCodes.Status404NotFound;
+                ctx.Context.Response.ContentLength = 0;
+                ctx.Context.Response.Body = Stream.Null;
+            }
+        }
+        catch { /* ignore */ }
     }
 });
 
@@ -236,10 +250,32 @@ app.MapGet("/health/uploads", () =>
 {
     var exists = Directory.Exists(uploadsDir);
     var fileCount = 0;
+    var zeroByteCount = 0;
+    var nonEmptyCount = 0;
+    long totalBytes = 0;
+    var samples = new List<object>();
     try
     {
         if (exists)
-            fileCount = Directory.GetFiles(uploadsDir, "*", SearchOption.AllDirectories).Length;
+        {
+            foreach (var path in Directory.EnumerateFiles(uploadsDir, "*", SearchOption.AllDirectories))
+            {
+                fileCount++;
+                long len = 0;
+                try { len = new FileInfo(path).Length; } catch { /* ignore */ }
+                if (len <= 0) zeroByteCount++;
+                else
+                {
+                    nonEmptyCount++;
+                    totalBytes += len;
+                    if (samples.Count < 5)
+                    {
+                        var rel = Path.GetRelativePath(uploadsDir, path).Replace('\\', '/');
+                        samples.Add(new { path = "/uploads/" + rel, bytes = len });
+                    }
+                }
+            }
+        }
     }
     catch { /* ignore */ }
 
@@ -248,6 +284,10 @@ app.MapGet("/health/uploads", () =>
         uploadsDir,
         exists,
         fileCount,
+        nonEmptyCount,
+        zeroByteCount,
+        totalBytes,
+        samples,
         contentRoot = app.Environment.ContentRootPath
     });
 });
