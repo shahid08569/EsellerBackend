@@ -1,11 +1,14 @@
+using Eseller.API.Filters;
 using Eseller.API.Middleware;
 using Eseller.Application;
 using Eseller.Application.Abstractions;
 using Eseller.Infrastructure;
 using Eseller.Infrastructure.BackgroundJobs;
 using Eseller.Infrastructure.Persistence;
+using Eseller.Infrastructure.Settings;
 using Eseller.Infrastructure.SignalR;
 using Eseller.Infrastructure.SignalR.Hubs;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
@@ -28,25 +31,30 @@ builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
 
 // ─── API ────────────────────────────────────────────────────
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    options.Filters.Add<RequestAbortedExceptionFilter>();
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
 
-// ─── CORS ───────────────────────────────────────────────────
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    // Trust reverse proxy (nginx/Azure) — restrict KnownProxies in hardened deployments
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
+// ─── CORS (config-driven) ───────────────────────────────────
+var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? Array.Empty<string>();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("FrontendPolicy", policy =>
     {
-        policy.WithOrigins(
-                "http://localhost:4200",
-                "http://localhost:4201",
-                "http://localhost:4202",
-                "http://localhost:4203",
-                "http://localhost:54007",
-                "https://eseller.com",
-                "https://seller.eseller.com",
-                "https://admin.eseller.com",
-                "https://affiliate.eseller.com")
+        policy.WithOrigins(corsOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -64,8 +72,15 @@ builder.Services.AddRateLimiter(options =>
 
         var path = context.Request.Path.Value?.ToLowerInvariant() ?? "";
 
-        // Auth endpoints: strict limit (5/min)
-        if (path.Contains("/auth/login") || path.Contains("/auth/register"))
+        // Auth-sensitive endpoints: strict limit (5/min)
+        if (path.Contains("/auth/login")
+            || path.Contains("/auth/register")
+            || path.Contains("/auth/forgot-password")
+            || path.Contains("/auth/reset-password")
+            || path.Contains("/auth/refresh-token")
+            || path.Contains("/auth/send-phone-otp")
+            || path.Contains("/auth/verify-phone-otp")
+            || path.Contains("/auth/upload-document"))
         {
             return RateLimitPartition.GetFixedWindowLimiter(
                 partitionKey: $"auth-{partitionKey}",
@@ -114,34 +129,45 @@ builder.Services.AddProblemDetails();
 
 var app = builder.Build();
 
+app.UseForwardedHeaders();
+
 // ─── Middleware Pipeline ────────────────────────────────────
-// Quiet request logging in Development (errors still go through exception handler)
 if (!app.Environment.IsDevelopment())
 {
     app.UseSerilogRequestLogging();
+    app.UseHsts();
 }
 app.UseExceptionHandler();
 
-// Ensure database schema + seed (dev/local resilience)
-using (var scope = app.Services.CreateScope())
+var seedSettings = app.Configuration.GetSection(SeedSettings.SectionName).Get<SeedSettings>()
+    ?? new SeedSettings();
+
+var shouldMigrate = seedSettings.AutoMigrate || app.Environment.IsDevelopment();
+var shouldSeed = seedSettings.SeedOnStartup || app.Environment.IsDevelopment();
+
+if (shouldMigrate || shouldSeed)
 {
+    using var scope = app.Services.CreateScope();
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
     try
     {
-        var db = scope.ServiceProvider.GetRequiredService<Eseller.Infrastructure.Persistence.EsellerDbContext>();
-        await db.Database.MigrateAsync();
+        var db = scope.ServiceProvider.GetRequiredService<EsellerDbContext>();
+        if (shouldMigrate)
+            await db.Database.MigrateAsync();
 
-        var seeder = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
-        await seeder.SeedAsync();
+        if (shouldSeed)
+        {
+            var seeder = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
+            await seeder.SeedAsync();
+        }
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Database migrate/seed failed. Check SQL Server (EsellerDb) is ONLINE and connection string is correct.");
+        logger.LogError(ex, "Database migrate/seed failed. Check SQL Server and connection string.");
         throw;
     }
 }
 
-// Scalar (Development only)
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
@@ -152,14 +178,23 @@ app.UseStaticFiles();
 
 var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "uploads");
 if (!Directory.Exists(uploadsDir))
-{
     Directory.CreateDirectory(uploadsDir);
-}
 
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(uploadsDir),
-    RequestPath = "/uploads"
+    RequestPath = "/uploads",
+    OnPrepareResponse = ctx =>
+    {
+        // KYC / verification docs must not be world-readable
+        var path = ctx.Context.Request.Path.Value ?? "";
+        if (path.Contains("/documents/", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Context.Response.StatusCode = StatusCodes.Status404NotFound;
+            ctx.Context.Response.ContentLength = 0;
+            ctx.Context.Response.Body = Stream.Null;
+        }
+    }
 });
 
 app.UseCors("FrontendPolicy");
@@ -170,16 +205,14 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
-// ─── Endpoints ──────────────────────────────────────────────
 app.MapHealthChecks("/health");
 
 app.MapHub<ChatHub>("/hubs/chat");
 app.MapHub<NotificationHub>("/hubs/notifications");
 
-// ─── Run ────────────────────────────────────────────────────
 try
 {
-    Log.Information("Starting Eseller API");
+    Log.Information("Starting Eseller API ({Environment})", app.Environment.EnvironmentName);
     app.Run();
 }
 catch (Exception ex)

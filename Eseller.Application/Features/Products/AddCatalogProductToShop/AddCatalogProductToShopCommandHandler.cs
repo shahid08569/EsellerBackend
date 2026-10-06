@@ -13,15 +13,18 @@ public class AddCatalogProductToShopCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
+    private readonly IAppNotificationService _notifications;
 
     public AddCatalogProductToShopCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        IAppNotificationService notifications)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
+        _notifications = notifications;
     }
 
     public async Task<Result<Guid>> Handle(
@@ -141,6 +144,28 @@ public class AddCatalogProductToShopCommandHandler
         shop.TotalProducts = usedSlots + 1;
         shop.SetUpdatedAt(now);
         await _context.SaveChangesAsync(cancellationToken);
+
+        await _notifications.NotifyAdminsAsync(
+            NotificationType.ProductListingRequest,
+            "Product Listing Request",
+            $"{shop.Name} requested listing for \"{listing.Name}\".",
+            NotificationEntityType.Product,
+            listing.Id,
+            "/products?status=pending",
+            $"ProductListingRequest:{listing.Id:N}",
+            cancellationToken);
+
+        await _notifications.NotifyAsync(
+            _currentUserService.AccountId.Value,
+            RoleType.Shopkeeper,
+            NotificationType.NewProduct,
+            "New Product",
+            $"\"{listing.Name}\" was added to your shop and is pending approval.",
+            NotificationEntityType.Product,
+            listing.Id,
+            "/products",
+            $"NewProduct:{listing.Id:N}:Seller:{_currentUserService.AccountId.Value:N}",
+            cancellationToken);
 
         return Result.Success(listing.Id);
     }

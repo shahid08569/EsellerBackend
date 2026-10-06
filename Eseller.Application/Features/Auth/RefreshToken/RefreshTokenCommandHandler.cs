@@ -114,7 +114,7 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, R
         return Result.Success(new RefreshTokenResponse(
             newAccessToken,
             newRefreshToken,
-            _dateTime.UtcNow.AddMinutes(15),
+            _dateTime.UtcNow.AddMinutes(_jwtService.AccessTokenExpirationMinutes),
             account.Id,
             account.Username,
             account.Email,

@@ -34,7 +34,7 @@ public class GetHomepageSectionsQueryHandler
         var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
         var baseQuery = MasterCatalog.StorefrontListings(_context, masterShopId);
 
-        // ? 1. Featured  catalog pins resolve to seller listings (or catalog fallback)
+        // ? 1. Featured ï¿½ catalog pins resolve to seller listings (or catalog fallback)
         var featuredIds = await MasterCatalog.ResolveCuratedProductIdsAsync(
             _context, masterShopId, featured: true, hotSelling: false, limit, cancellationToken);
 
@@ -56,7 +56,7 @@ public class GetHomepageSectionsQueryHandler
             .Select(x => x.ProductId)
             .ToListAsync(cancellationToken);
 
-        // ? 3. Hot Selling  curated pins first, then last 30 days sales
+        // ? 3. Hot Selling ï¿½ curated pins first, then last 30 days sales
         var hotSellingIds = await MasterCatalog.ResolveCuratedProductIdsAsync(
             _context, masterShopId, featured: false, hotSelling: true, limit, cancellationToken);
 
@@ -100,7 +100,7 @@ public class GetHomepageSectionsQueryHandler
             .Select(p => p.Id)
             .ToListAsync(cancellationToken);
 
-        // ? 5. Flash Sale  map catalog SKUs to storefront listings when needed
+        // ? 5. Flash Sale ï¿½ map catalog SKUs to storefront listings when needed
         var flashRawIds = await _context.FlashSaleProducts
             .Join(_context.FlashSales,
                 fsp => fsp.FlashSaleId,
@@ -256,6 +256,20 @@ public class GetHomepageSectionsQueryHandler
                 ShopRating = _context.Shops
                     .Where(s => s.Id == p.ShopId).Select(s => s.Rating)
                     .FirstOrDefault(),
+                ShopBadgeText = (
+                    from s in _context.Shops
+                    where s.Id == p.ShopId
+                    join sc in _context.ShopCategories on s.ShopCategoryId equals sc.Id into scj
+                    from sc in scj.DefaultIfEmpty()
+                    select s.CustomBadgeText ?? sc.BadgeText ?? sc.Name ?? "Bronze"
+                ).FirstOrDefault(),
+                ShopBadgeColor = (
+                    from s in _context.Shops
+                    where s.Id == p.ShopId
+                    join sc in _context.ShopCategories on s.ShopCategoryId equals sc.Id into scj
+                    from sc in scj.DefaultIfEmpty()
+                    select sc.BadgeColor ?? "#94A3B8"
+                ).FirstOrDefault(),
                 CategoryName = _context.Categories
                     .Where(c => c.Id == p.CategoryId).Select(c => c.Name)
                     .FirstOrDefault() ?? string.Empty,
@@ -283,7 +297,8 @@ public class GetHomepageSectionsQueryHandler
                 p.BasePrice,
                 p.PrimaryImageUrl,
                 p.ShopName,
-                p.ShopSlug,p.CategoryName,
+                p.ShopSlug,
+                p.CategoryName,
                 p.BrandName,
                 p.AvgRating,
                 p.IsFeatured,
@@ -292,7 +307,9 @@ public class GetHomepageSectionsQueryHandler
                 p.RejectionReason,
                 p.CreatedAt,
                 badges.GetValueOrDefault(p.Id),
-                ShopRating: p.ShopRating));
+                ShopRating: p.ShopRating,
+                ShopBadgeText: p.ShopBadgeText,
+                ShopBadgeColor: p.ShopBadgeColor));
     }
 
     private static List<ProductListDto> FilterProducts(

@@ -10,13 +10,19 @@ public class MarkNotificationReadCommandHandler
 {
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IDateTime _dateTime;
+    private readonly ISignalRNotificationService _signalR;
 
     public MarkNotificationReadCommandHandler(
         IApplicationDbContext context,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        IDateTime dateTime,
+        ISignalRNotificationService signalR)
     {
         _context = context;
         _currentUserService = currentUserService;
+        _dateTime = dateTime;
+        _signalR = signalR;
     }
 
     public async Task<Result> Handle(
@@ -26,16 +32,31 @@ public class MarkNotificationReadCommandHandler
         if (_currentUserService.AccountId is null)
             return Result.Failure("User is not authenticated.", "UNAUTHENTICATED");
 
+        var accountId = _currentUserService.AccountId.Value;
         var notification = await _context.Notifications
             .FirstOrDefaultAsync(n => n.Id == request.NotificationId
-                                   && n.AccountId == _currentUserService.AccountId.Value,
+                                   && n.RecipientUserId == accountId,
                 cancellationToken);
 
         if (notification is null)
             return Result.Failure("Notification not found.", "NOTIFICATION_NOT_FOUND");
 
-        notification.IsRead = true;
-        await _context.SaveChangesAsync(cancellationToken);
+        if (!notification.IsRead)
+        {
+            var now = _dateTime.UtcNow;
+            notification.IsRead = true;
+            notification.ReadAt = now;
+            notification.SetUpdatedAt(now);
+            await _context.SaveChangesAsync(cancellationToken);
+
+            var unread = await _context.Notifications.AsNoTracking()
+                .CountAsync(n => n.RecipientUserId == accountId && !n.IsRead, cancellationToken);
+            try
+            {
+                await _signalR.SendUnreadCountChangedAsync(accountId, unread, cancellationToken);
+            }
+            catch { /* best-effort */ }
+        }
 
         return Result.Success();
     }

@@ -18,6 +18,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
         builder.Property(p => p.IsFeatured).IsRequired().HasDefaultValue(false);
         builder.Property(p => p.IsHotSelling).IsRequired().HasDefaultValue(false);
         builder.Property(p => p.IsApproved).IsRequired().HasDefaultValue(false);
+        builder.Property(p => p.IsStorefrontLive).IsRequired().HasDefaultValue(false);
         builder.Property(p => p.ViewCount).IsRequired().HasDefaultValue(0);
         builder.Property(p => p.AvgRating).HasPrecision(3, 2);
         builder.Property(p => p.SeoTitle).HasMaxLength(200);
@@ -60,6 +61,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
         builder.HasIndex(p => p.IsFeatured);
         builder.HasIndex(p => p.IsHotSelling);
         builder.HasIndex(p => p.IsApproved);
+        builder.HasIndex(p => p.IsStorefrontLive);
 
         builder.HasQueryFilter(s => s.IsActive);
     }

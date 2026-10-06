@@ -12,4 +12,5 @@ public record CreateShopCategoryCommand(
     string? IconUrl,
     int DisplayOrder = 0,
     decimal PriceUsd = 0,
-    int MaxProductListings = 200) : IRequest<Result<Guid>>;
+    int MaxProductListings = 200,
+    bool IsRecommended = false) : IRequest<Result<Guid>>;

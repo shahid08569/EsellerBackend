@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Identity;
 using Eseller.Domain.Enums;
@@ -14,17 +14,20 @@ public class RegisterCustomerCommandHandler
     private readonly IPasswordHasher _passwordHasher;
     private readonly ILocationService _locationService;
     private readonly IDateTime _dateTime;
+    private readonly IAppNotificationService _notifications;
 
     public RegisterCustomerCommandHandler(
         IApplicationDbContext context,
         IPasswordHasher passwordHasher,
         ILocationService locationService,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        IAppNotificationService notifications)
     {
         _context = context;
         _passwordHasher = passwordHasher;
         _locationService = locationService;
         _dateTime = dateTime;
+        _notifications = notifications;
     }
 
     public async Task<Result<RegisterCustomerResponse>> Handle(
@@ -64,15 +67,15 @@ public class RegisterCustomerCommandHandler
 
         _context.Accounts.Add(account);
 
-        // Customers auto-approve on register — no email OTP, no SuperAdmin queue.
-        _context.Users.Add(new User
+        var user = new User
         {
             AccountId = account.Id,
             Name = name,
             Phone = phone,
             Status = UserApprovalStatus.Approved,
             ApprovedAt = _dateTime.UtcNow
-        });
+        };
+        _context.Users.Add(user);
 
         await _context.SaveChangesAsync(cancellationToken);
 
@@ -92,6 +95,16 @@ public class RegisterCustomerCommandHandler
         {
             // Ignore location logging failures
         }
+
+        await _notifications.NotifyAdminsAsync(
+            NotificationType.NewCustomer,
+            "New Customer Registered",
+            $"A new customer has registered: {name} ({email}).",
+            NotificationEntityType.Customer,
+            user.Id,
+            "/customers",
+            $"NewCustomer:{user.Id:N}",
+            cancellationToken);
 
         return Result.Success(new RegisterCustomerResponse(
             account.Id,

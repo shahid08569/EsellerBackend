@@ -24,4 +24,6 @@ public record ProductDto(
     bool IsActive,
     DateTime CreatedAt,
     /// <summary>SuperAdmin platform rating for the store (0–5).</summary>
-    decimal ShopRating = 0);
+    decimal ShopRating = 0,
+    string? ShopBadgeText = null,
+    string? ShopBadgeColor = null);

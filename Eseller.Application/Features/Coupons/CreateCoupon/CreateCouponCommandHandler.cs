@@ -28,17 +28,23 @@ public class CreateCouponCommandHandler
         if (_currentUserService.AccountId is null)
             return Result.Failure<Guid>("User is not authenticated.", "UNAUTHENTICATED");
 
-        // Normalize code
+        var role = _currentUserService.RoleType;
+        var isAdmin = role == RoleType.SuperAdmin || role == RoleType.Partner;
+
+        // Shopkeepers may only create Restricted (product-scoped) coupons — never Platform-wide
+        if (!isAdmin && request.ScopeType == CouponScopeType.Platform)
+            return Result.Failure<Guid>(
+                "Shopkeepers cannot create platform-wide coupons.",
+                "FORBIDDEN");
+
         var code = request.Code.Trim().ToUpperInvariant();
 
-        // Check code uniqueness
         var codeExists = await _context.Coupons
             .AnyAsync(c => c.Code == code, cancellationToken);
 
         if (codeExists)
             return Result.Failure<Guid>("Coupon code already exists.", "CODE_TAKEN");
 
-        // Create coupon
         var coupon = new Coupon
         {
             Code = code,
@@ -56,39 +62,30 @@ public class CreateCouponCommandHandler
 
         _context.Coupons.Add(coupon);
 
-        // Add junction entries (Restricted scope) & verify product ownership 
-
         if (request.ScopeType == CouponScopeType.Restricted
-    && request.ProductIds?.Count > 0)
+            && request.ProductIds?.Count > 0
+            && !isAdmin)
         {
-            var role = _currentUserService.RoleType;
-            var isAdmin = role == RoleType.SuperAdmin || role == RoleType.Partner;
+            var shopkeeper = await _context.Shopkeepers
+                .FirstOrDefaultAsync(sk => sk.AccountId == _currentUserService.AccountId.Value,
+                    cancellationToken);
 
-            if (!isAdmin)
-            {
-                // Verify all products belong to this shopkeeper
-                var shopkeeper = await _context.Shopkeepers
-                    .FirstOrDefaultAsync(sk => sk.AccountId == _currentUserService.AccountId.Value,
-                        cancellationToken);
+            if (shopkeeper is null)
+                return Result.Failure<Guid>("Shopkeeper not found.", "SHOPKEEPER_NOT_FOUND");
 
-                if (shopkeeper is null)
-                    return Result.Failure<Guid>("Shopkeeper not found.", "SHOPKEEPER_NOT_FOUND");
+            var ownedProductCount = await _context.Products
+                .Where(p => request.ProductIds.Contains(p.Id) && p.ShopId != Guid.Empty)
+                .Join(_context.Shops.Where(s => s.ShopkeeperId == shopkeeper.Id),
+                      p => p.ShopId, s => s.Id, (p, s) => p)
+                .CountAsync(cancellationToken);
 
-                var ownedProductCount = await _context.Products
-                    .Where(p => request.ProductIds.Contains(p.Id) && p.ShopId != Guid.Empty)
-                    .Join(_context.Shops.Where(s => s.ShopkeeperId == shopkeeper.Id),
-                          p => p.ShopId, s => s.Id, (p, s) => p)
-                    .CountAsync(cancellationToken);
-
-                if (ownedProductCount != request.ProductIds.Count)
-                    return Result.Failure<Guid>(
-                        "You do not have permission to create coupons for these products.",
-                        "FORBIDDEN");
-            }
-
+            if (ownedProductCount != request.ProductIds.Count)
+                return Result.Failure<Guid>(
+                    "You do not have permission to create coupons for these products.",
+                    "FORBIDDEN");
         }
-            await _context.SaveChangesAsync(cancellationToken);
 
-            return Result.Success(coupon.Id);
-        }
+        await _context.SaveChangesAsync(cancellationToken);
+        return Result.Success(coupon.Id);
     }
+}

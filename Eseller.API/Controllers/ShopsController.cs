@@ -9,6 +9,8 @@ using Eseller.Application.Features.Shops.GetShops;
 using Eseller.Application.Features.Shops.UpdateShop;
 using Eseller.Application.Features.Shops.UploadShopBanner;
 using Eseller.Application.Features.Shops.UploadShopLogo;
+using Eseller.Domain.Entities.Catalog;
+using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -70,13 +72,21 @@ public class ShopsController : ControllerBase
         [FromQuery] Guid? shopCategoryId = null,
         CancellationToken cancellationToken = default)
     {
-        var query = new GetShopsQuery(pageNumber, pageSize, shopCategoryId);
-        var result = await _sender.Send(query, cancellationToken);
+        try
+        {
+            var query = new GetShopsQuery(pageNumber, pageSize, shopCategoryId);
+            var result = await _sender.Send(query, cancellationToken);
 
-        if (!result.IsSuccess)
-            return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
+            if (!result.IsSuccess)
+                return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
 
-        return Ok(result.Value);
+            return Ok(result.Value);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            // Dashboard reload / navigation aborts the request — not a fault
+            return NoContent();
+        }
     }
 
 
@@ -296,6 +306,7 @@ public class ShopsController : ControllerBase
         [FromBody] RequestTierUpgradeRequest request,
         [FromServices] IApplicationDbContext context,
         [FromServices] ICurrentUserService currentUserService,
+        [FromServices] IAppNotificationService notifications,
         CancellationToken cancellationToken)
     {
         if (currentUserService.AccountId == null) return Unauthorized();
@@ -310,26 +321,54 @@ public class ShopsController : ControllerBase
         if (shop == null) return NotFound(new { error = "Shop not found." });
 
         var categories = await context.ShopCategories.Where(sc => sc.DeletedAt == null).ToListAsync(cancellationToken);
-        var targetCat = categories.FirstOrDefault(c => 
-            c.Name.Contains(request.RequestedTier, StringComparison.OrdinalIgnoreCase) ||
-            request.RequestedTier.Contains(c.Name, StringComparison.OrdinalIgnoreCase) ||
-            (!string.IsNullOrWhiteSpace(c.BadgeText) && (
+
+        ShopCategory? targetCat = null;
+        if (request.RequestedCategoryId is Guid catId && catId != Guid.Empty)
+            targetCat = categories.FirstOrDefault(c => c.Id == catId);
+
+        targetCat ??= categories.FirstOrDefault(c =>
+            (!string.IsNullOrWhiteSpace(request.RequestedTier) && (
+                string.Equals(c.Name, request.RequestedTier, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(c.BadgeText, request.RequestedTier, StringComparison.OrdinalIgnoreCase) ||
+                c.Name.Contains(request.RequestedTier, StringComparison.OrdinalIgnoreCase) ||
+                request.RequestedTier.Contains(c.Name, StringComparison.OrdinalIgnoreCase))) ||
+            (!string.IsNullOrWhiteSpace(c.BadgeText) && !string.IsNullOrWhiteSpace(request.RequestedTier) && (
                 c.BadgeText.Contains(request.RequestedTier, StringComparison.OrdinalIgnoreCase) ||
                 request.RequestedTier.Contains(c.BadgeText, StringComparison.OrdinalIgnoreCase))));
 
-        var price = targetCat?.PriceUsd > 0 ? targetCat.PriceUsd : request.Price;
+        if (targetCat == null)
+            return BadRequest(new { error = $"Unknown package '{request.RequestedTier}'. Pick a plan from the list.", errorCode = "TIER_NOT_FOUND" });
+
+        // Block duplicate pending request for same shop + tier
+        var hasPending = await context.TierUpgradeRequests.AnyAsync(r =>
+            r.ShopId == shop.Id
+            && r.Status == "Pending"
+            && (r.RequestedCategoryId == targetCat.Id
+                || r.RequestedTier == targetCat.Name
+                || r.RequestedTier == targetCat.BadgeText), cancellationToken);
+        if (hasPending)
+            return BadRequest(new { error = "You already have a pending request for this package. Wait for Super Admin review.", errorCode = "TIER_REQUEST_PENDING" });
+
+        var price = targetCat.PriceUsd > 0 ? targetCat.PriceUsd : request.Price;
         if (price > 0 && string.IsNullOrWhiteSpace(request.ReceiptUrl))
             return BadRequest(new { error = "Payment receipt is required for paid package upgrades.", errorCode = "RECEIPT_REQUIRED" });
+
+        var currentCat = shop.ShopCategoryId.HasValue
+            ? categories.FirstOrDefault(c => c.Id == shop.ShopCategoryId.Value)
+            : null;
+        var currentLabel = !string.IsNullOrWhiteSpace(shop.CustomBadgeText)
+            ? shop.CustomBadgeText!
+            : (currentCat?.BadgeText ?? currentCat?.Name ?? "Bronze (Free)");
 
         var tierReq = new Eseller.Domain.Entities.Catalog.TierUpgradeRequest
         {
             ShopId = shop.Id,
             ShopName = shop.Name,
             MerchantName = shopkeeper.Name,
-            CurrentTier = !string.IsNullOrWhiteSpace(shop.CustomBadgeText) ? shop.CustomBadgeText : (shop.ShopCategoryId.HasValue ? "Active Tier" : "Bronze (Free)"),
-            RequestedTier = request.RequestedTier,
-            RequestedCategoryId = targetCat?.Id,
-            BadgeText = targetCat?.BadgeText ?? request.RequestedTier,
+            CurrentTier = currentLabel,
+            RequestedTier = targetCat.Name,
+            RequestedCategoryId = targetCat.Id,
+            BadgeText = targetCat.BadgeText ?? targetCat.Name,
             Price = price,
             PaymentMethod = request.PaymentMethod ?? "Raast / Online Bank Transfer",
             ReferenceNote = request.ReferenceNote ?? string.Empty,
@@ -341,6 +380,16 @@ public class ShopsController : ControllerBase
 
         context.TierUpgradeRequests.Add(tierReq);
         await context.SaveChangesAsync(cancellationToken);
+
+        await notifications.NotifyAdminsAsync(
+            NotificationType.TierUpdated,
+            "Pending Tier Upgrade Request",
+            $"{shop.Name} requested upgrade to {targetCat.Name}. Open Tier Requests to Approve or Reject.",
+            NotificationEntityType.TierRequest,
+            tierReq.Id,
+            "/shops?view=tiers",
+            $"TierUpdated:{tierReq.Id:N}",
+            cancellationToken);
 
         return Ok(new { message = "Tier upgrade request submitted for Super Admin review.", requestId = tierReq.Id });
     }
@@ -360,4 +409,5 @@ public record RequestTierUpgradeRequest(
     decimal Price,
     string? PaymentMethod,
     string? ReferenceNote,
-    string? ReceiptUrl);
+    string? ReceiptUrl,
+    Guid? RequestedCategoryId = null);

@@ -32,139 +32,177 @@ public class AdminController : ControllerBase
         [FromQuery] ShopkeeperApprovalStatus? status,
         CancellationToken cancellationToken)
     {
-        var query = _context.Shopkeepers.AsQueryable();
-
-        if (status.HasValue)
-            query = query.Where(s => s.Status == status.Value);
-
-        var shopkeepers = await query
-            .OrderByDescending(s => s.CreatedAt)
-            .ToListAsync(cancellationToken);
-
-        if (!shopkeepers.Any())
-            return Ok(Array.Empty<object>());
-
-        var accountIds = shopkeepers.Select(s => s.AccountId).ToList();
-        var shopkeeperIds = shopkeepers.Select(s => s.Id).ToList();
-
-        var accounts = await _context.Accounts
-            .Where(a => accountIds.Contains(a.Id))
-            .ToDictionaryAsync(a => a.Id, cancellationToken);
-
-        // Include inactive (pending) shops; exclude soft-deleted so deleted stores leave the list
-        var shops = await _context.Shops
-            .IgnoreQueryFilters()
-            .Where(s => shopkeeperIds.Contains(s.ShopkeeperId) && s.DeletedAt == null)
-            .ToDictionaryAsync(s => s.ShopkeeperId, cancellationToken);
-
-        var shopIds = shops.Values.Select(sh => sh.Id).ToList();
-
-        // Real product counts per shop
-        var realProductCountsByShop = await _context.Products
-            .IgnoreQueryFilters()
-            .Where(p => shopIds.Contains(p.ShopId) && p.DeletedAt == null)
-            .GroupBy(p => p.ShopId)
-            .Select(g => new { ShopId = g.Key, Count = g.Count() })
-            .ToDictionaryAsync(x => x.ShopId, x => x.Count, cancellationToken);
-
-        // Real average ratings per shop from approved reviews
-        var shopProductMap = await _context.Products
-            .IgnoreQueryFilters()
-            .Where(p => shopIds.Contains(p.ShopId) && p.DeletedAt == null)
-            .Select(p => new { p.Id, p.ShopId })
-            .ToListAsync(cancellationToken);
-
-        var prodToShop = shopProductMap.ToDictionary(p => p.Id, p => p.ShopId);
-        var prodIds = prodToShop.Keys.ToList();
-
-        var shopReviews = await _context.Reviews
-            .Where(r => prodIds.Contains(r.ProductId) && r.IsApproved)
-            .Select(r => new { r.ProductId, r.Rating })
-            .ToListAsync(cancellationToken);
-
-        var ratingByShop = shopReviews
-            .GroupBy(r => prodToShop[r.ProductId])
-            .ToDictionary(g => g.Key, g => Math.Round((decimal)g.Average(r => r.Rating), 1));
-
-        var sellerOrders = await _context.SellerOrders
-            .Where(so => shopIds.Contains(so.ShopId))
-            .Select(so => new { so.Id, so.ShopId })
-            .ToListAsync(cancellationToken);
-
-        var sellerOrderIds = sellerOrders.Select(so => so.Id).ToList();
-        var orderItems = await _context.OrderRequestItems
-            .Where(ori => sellerOrderIds.Contains(ori.SellerOrderId))
-            .Select(ori => new { ori.SellerOrderId, ori.TotalPriceSnapshot })
-            .ToListAsync(cancellationToken);
-
-        var itemPricesBySellerOrder = orderItems.GroupBy(ori => ori.SellerOrderId).ToDictionary(g => g.Key, g => g.Sum(x => x.TotalPriceSnapshot));
-        var ordersCountByShop = sellerOrders.GroupBy(so => so.ShopId).ToDictionary(g => g.Key, g => g.Count());
-        var revenueByShop = sellerOrders.GroupBy(so => so.ShopId).ToDictionary(g => g.Key, g => g.Sum(so => itemPricesBySellerOrder.TryGetValue(so.Id, out var p) ? p : 0m));
-
-        var locationLogs = await _context.LocationLogs
-            .Where(l => l.AccountId.HasValue && accountIds.Contains(l.AccountId.Value))
-            .OrderByDescending(l => l.RecordedAt)
-            .ToListAsync(cancellationToken);
-
-        var latestLogByAccount = locationLogs
-            .GroupBy(l => l.AccountId!.Value)
-            .ToDictionary(g => g.Key, g => g.First());
-
-        var result = shopkeepers.Select(s =>
+        try
         {
-            var acc = accounts.GetValueOrDefault(s.AccountId);
-            var shop = shops.GetValueOrDefault(s.Id);
-            latestLogByAccount.TryGetValue(s.AccountId, out var loc);
-            var shopId = shop?.Id;
-            var totOrders = shopId.HasValue && ordersCountByShop.TryGetValue(shopId.Value, out var oCnt) ? oCnt : 0;
-            var totRev = shopId.HasValue && revenueByShop.TryGetValue(shopId.Value, out var rev) ? rev : 0m;
-            var prodCnt = shopId.HasValue && realProductCountsByShop.TryGetValue(shopId.Value, out var pCnt) ? pCnt : (shop?.TotalProducts ?? 0);
-            // Platform rating = SuperAdmin-set Shop.Rating (authoritative).
-            // Fallback to review average only when admin has not set a rating yet.
-            decimal shopRating = 0m;
-            if (shop is not null && shop.Rating > 0)
-                shopRating = shop.Rating;
-            else if (shopId.HasValue && ratingByShop.TryGetValue(shopId.Value, out var rVal))
-                shopRating = rVal;
+            var query = _context.Shopkeepers.AsNoTracking().AsQueryable();
 
-            return new
+            if (status.HasValue)
+                query = query.Where(s => s.Status == status.Value);
+
+            var shopkeepers = await query
+                .OrderByDescending(s => s.CreatedAt)
+                .ToListAsync(cancellationToken);
+
+            if (!shopkeepers.Any())
+                return Ok(Array.Empty<object>());
+
+            var accountIds = shopkeepers.Select(s => s.AccountId).ToList();
+            var shopkeeperIds = shopkeepers.Select(s => s.Id).ToList();
+
+            var accounts = await _context.Accounts
+                .AsNoTracking()
+                .Where(a => accountIds.Contains(a.Id))
+                .ToDictionaryAsync(a => a.Id, cancellationToken);
+
+            // Include inactive (pending) shops; exclude soft-deleted so deleted stores leave the list
+            var shops = await _context.Shops
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(s => shopkeeperIds.Contains(s.ShopkeeperId) && s.DeletedAt == null)
+                .GroupBy(s => s.ShopkeeperId)
+                .Select(g => g.OrderByDescending(s => s.CreatedAt).First())
+                .ToDictionaryAsync(s => s.ShopkeeperId, cancellationToken);
+
+            var shopIds = shops.Values.Select(sh => sh.Id).ToList();
+
+            // Real product counts per shop
+            var realProductCountsByShop = shopIds.Count == 0
+                ? new Dictionary<Guid, int>()
+                : await _context.Products
+                    .AsNoTracking()
+                    .IgnoreQueryFilters()
+                    .Where(p => shopIds.Contains(p.ShopId) && p.DeletedAt == null)
+                    .GroupBy(p => p.ShopId)
+                    .Select(g => new { ShopId = g.Key, Count = g.Count() })
+                    .ToDictionaryAsync(x => x.ShopId, x => x.Count, cancellationToken);
+
+            // Real average ratings per shop from approved reviews
+            var shopProductMap = shopIds.Count == 0
+                ? new List<(Guid Id, Guid ShopId)>()
+                : (await _context.Products
+                    .AsNoTracking()
+                    .IgnoreQueryFilters()
+                    .Where(p => shopIds.Contains(p.ShopId) && p.DeletedAt == null)
+                    .Select(p => new { p.Id, p.ShopId })
+                    .ToListAsync(cancellationToken))
+                  .Select(p => (p.Id, p.ShopId))
+                  .ToList();
+
+            var prodToShop = shopProductMap.ToDictionary(p => p.Id, p => p.ShopId);
+            var prodIds = prodToShop.Keys.ToList();
+
+            var shopReviews = prodIds.Count == 0
+                ? new List<(Guid ProductId, int Rating)>()
+                : (await _context.Reviews
+                    .AsNoTracking()
+                    .Where(r => prodIds.Contains(r.ProductId) && r.IsApproved)
+                    .Select(r => new { r.ProductId, r.Rating })
+                    .ToListAsync(cancellationToken))
+                  .Select(r => (r.ProductId, r.Rating))
+                  .ToList();
+
+            var ratingByShop = shopReviews
+                .GroupBy(r => prodToShop[r.ProductId])
+                .ToDictionary(g => g.Key, g => Math.Round((decimal)g.Average(r => r.Rating), 1));
+
+            var sellerOrders = shopIds.Count == 0
+                ? new List<(Guid Id, Guid ShopId)>()
+                : (await _context.SellerOrders
+                    .AsNoTracking()
+                    .Where(so => shopIds.Contains(so.ShopId))
+                    .Select(so => new { so.Id, so.ShopId })
+                    .ToListAsync(cancellationToken))
+                  .Select(so => (so.Id, so.ShopId))
+                  .ToList();
+
+            var sellerOrderIds = sellerOrders.Select(so => so.Id).ToList();
+            var orderItems = sellerOrderIds.Count == 0
+                ? new List<(Guid SellerOrderId, decimal TotalPriceSnapshot)>()
+                : (await _context.OrderRequestItems
+                    .AsNoTracking()
+                    .Where(ori => sellerOrderIds.Contains(ori.SellerOrderId))
+                    .Select(ori => new { ori.SellerOrderId, ori.TotalPriceSnapshot })
+                    .ToListAsync(cancellationToken))
+                  .Select(ori => (ori.SellerOrderId, ori.TotalPriceSnapshot))
+                  .ToList();
+
+            var itemPricesBySellerOrder = orderItems.GroupBy(ori => ori.SellerOrderId).ToDictionary(g => g.Key, g => g.Sum(x => x.TotalPriceSnapshot));
+            var ordersCountByShop = sellerOrders.GroupBy(so => so.ShopId).ToDictionary(g => g.Key, g => g.Count());
+            var revenueByShop = sellerOrders.GroupBy(so => so.ShopId).ToDictionary(g => g.Key, g => g.Sum(so => itemPricesBySellerOrder.TryGetValue(so.Id, out var p) ? p : 0m));
+
+            var locationLogs = accountIds.Count == 0
+                ? new List<Domain.Entities.Identity.LocationLog>()
+                : await _context.LocationLogs
+                    .AsNoTracking()
+                    .Where(l => l.AccountId.HasValue && accountIds.Contains(l.AccountId.Value))
+                    .OrderByDescending(l => l.RecordedAt)
+                    .ToListAsync(cancellationToken);
+
+            var latestLogByAccount = locationLogs
+                .GroupBy(l => l.AccountId!.Value)
+                .ToDictionary(g => g.Key, g => g.First());
+
+            var result = shopkeepers.Select(s =>
             {
-                id = s.Id,
-                accountId = s.AccountId,
-                shopId = shop?.Id,
-                name = s.Name,
-                email = acc?.Email ?? string.Empty,
-                phone = s.Phone,
-                documentType = s.DocumentType ?? "CNIC / National ID",
-                documentNumber = s.DocumentNumber,
-                cnicFrontUrl = s.CnicFrontUrl,
-                cnicBackUrl = s.CnicBackUrl,
-                documentUrl = s.DocumentUrl,
-                storeName = shop?.Name ?? string.Empty,
-                storeUrl = shop?.Slug ?? string.Empty,
-                logoUrl = shop?.LogoUrl,
-                bannerUrl = shop?.BannerUrl,
-                city = shop?.City ?? string.Empty,
-                country = shop?.Country ?? string.Empty,
-                status = s.Status.ToString(),
-                approvedAt = s.ApprovedAt,
-                rejectionReason = s.RejectionReason,
-                createdAt = s.CreatedAt,
-                isActive = acc?.IsActive ?? true,
-                lastLoginAt = acc?.LastLoginAt,
-                lastLoginCity = loc?.City,
-                lastLoginCountry = loc?.Country,
-                lastLoginDevice = loc?.DeviceType,
-                latitude = loc?.Latitude,
-                longitude = loc?.Longitude,
-                totalProducts = prodCnt,
-                totalOrders = totOrders,
-                totalRevenue = totRev,
-                rating = shopRating
-            };
-        }).ToList();
+                var acc = accounts.GetValueOrDefault(s.AccountId);
+                var shop = shops.GetValueOrDefault(s.Id);
+                latestLogByAccount.TryGetValue(s.AccountId, out var loc);
+                var shopId = shop?.Id;
+                var totOrders = shopId.HasValue && ordersCountByShop.TryGetValue(shopId.Value, out var oCnt) ? oCnt : 0;
+                var totRev = shopId.HasValue && revenueByShop.TryGetValue(shopId.Value, out var rev) ? rev : 0m;
+                var prodCnt = shopId.HasValue && realProductCountsByShop.TryGetValue(shopId.Value, out var pCnt) ? pCnt : (shop?.TotalProducts ?? 0);
+                // Platform rating = SuperAdmin-set Shop.Rating (authoritative).
+                // Fallback to review average only when admin has not set a rating yet.
+                decimal shopRating = 0m;
+                if (shop is not null && shop.Rating > 0)
+                    shopRating = shop.Rating;
+                else if (shopId.HasValue && ratingByShop.TryGetValue(shopId.Value, out var rVal))
+                    shopRating = rVal;
 
-        return Ok(result);
+                return new
+                {
+                    id = s.Id,
+                    accountId = s.AccountId,
+                    shopId = shop?.Id,
+                    name = s.Name,
+                    email = acc?.Email ?? string.Empty,
+                    phone = s.Phone,
+                    documentType = s.DocumentType ?? "CNIC / National ID",
+                    documentNumber = s.DocumentNumber,
+                    cnicFrontUrl = s.CnicFrontUrl,
+                    cnicBackUrl = s.CnicBackUrl,
+                    documentUrl = s.DocumentUrl,
+                    storeName = shop?.Name ?? string.Empty,
+                    storeUrl = shop?.Slug ?? string.Empty,
+                    logoUrl = shop?.LogoUrl,
+                    bannerUrl = shop?.BannerUrl,
+                    city = shop?.City ?? string.Empty,
+                    country = shop?.Country ?? string.Empty,
+                    status = s.Status.ToString(),
+                    approvedAt = s.ApprovedAt,
+                    rejectionReason = s.RejectionReason,
+                    createdAt = s.CreatedAt,
+                    isActive = acc?.IsActive ?? true,
+                    lastLoginAt = acc?.LastLoginAt,
+                    lastLoginCity = loc?.City,
+                    lastLoginCountry = loc?.Country,
+                    lastLoginDevice = loc?.DeviceType,
+                    latitude = loc?.Latitude,
+                    longitude = loc?.Longitude,
+                    totalProducts = prodCnt,
+                    totalOrders = totOrders,
+                    totalRevenue = totRev,
+                    rating = shopRating
+                };
+            }).ToList();
+
+            return Ok(result);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            // Client navigated away / refresh aborted the request — not a fault
+            return NoContent();
+        }
     }
 
     /// <summary>

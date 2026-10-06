@@ -1,6 +1,5 @@
 ﻿using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
-using Eseller.Domain.Entities.Wallet;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -13,18 +12,15 @@ public class ApproveShopkeeperCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
-    private readonly ISignalRNotificationService _signalR;
 
     public ApproveShopkeeperCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
-        IDateTime dateTime,
-        ISignalRNotificationService signalR)
+        IDateTime dateTime)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
-        _signalR = signalR;
     }
 
     public async Task<Result> Handle(
@@ -59,31 +55,7 @@ public class ApproveShopkeeperCommandHandler
             shop.SetUpdatedAt(_dateTime.UtcNow);
         }
 
-        var now = _dateTime.UtcNow;
-        var notif = new Notification
-        {
-            AccountId = shopkeeper.AccountId,
-            Type = NotificationType.ShopApproved,
-            Title = "Store verified",
-            Message = shop is not null
-                ? $"Your store \"{shop.Name}\" has been approved. You can now list products and sell."
-                : "Your seller account has been approved. You can now list products and sell.",
-            IsRead = false
-        };
-        notif.SetCreatedAt(now);
-        notif.SetUpdatedAt(now);
-        _context.Notifications.Add(notif);
-
         await _context.SaveChangesAsync(cancellationToken);
-
-        await _signalR.SendNotificationToAccountAsync(
-            shopkeeper.AccountId,
-            notif.Id,
-            notif.Type,
-            notif.Title,
-            notif.Message,
-            cancellationToken);
-
         return Result.Success();
     }
 }

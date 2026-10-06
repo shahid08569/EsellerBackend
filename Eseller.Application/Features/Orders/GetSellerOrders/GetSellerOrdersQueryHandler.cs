@@ -94,6 +94,65 @@ public class GetSellerOrdersQueryHandler
 
         var itemsBySellerOrder = items.GroupBy(i => i.SellerOrderId).ToDictionary(g => g.Key, g => g.ToList());
 
+        var variantIds = items.Select(i => i.ProductVariantId).Distinct().ToList();
+        var variants = await _context.ProductVariants
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(v => variantIds.Contains(v.Id))
+            .Select(v => new { v.Id, v.ProductId, v.ImageUrl })
+            .ToListAsync(cancellationToken);
+        var productIdByVariant = variants.ToDictionary(v => v.Id, v => v.ProductId);
+        var variantImageById = variants
+            .Where(v => !string.IsNullOrWhiteSpace(v.ImageUrl))
+            .ToDictionary(v => v.Id, v => v.ImageUrl!);
+
+        var productIds = variants.Select(v => v.ProductId).Distinct().ToList();
+        var productRows = productIds.Count == 0
+            ? new List<(Guid Id, Guid? SourceProductId)>()
+            : (await _context.Products
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(p => productIds.Contains(p.Id))
+                .Select(p => new { p.Id, p.SourceProductId })
+                .ToListAsync(cancellationToken))
+              .Select(p => (p.Id, p.SourceProductId))
+              .ToList();
+
+        var imageLookupIds = productRows
+            .SelectMany(p => p.SourceProductId.HasValue
+                ? new[] { p.Id, p.SourceProductId.Value }
+                : new[] { p.Id })
+            .Distinct()
+            .ToList();
+
+        var coverByProduct = imageLookupIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : (await _context.ProductImages
+                .AsNoTracking()
+                .Where(pi => imageLookupIds.Contains(pi.ProductId))
+                .OrderByDescending(pi => pi.IsCover)
+                .ThenBy(pi => pi.SortOrder)
+                .Select(pi => new { pi.ProductId, pi.ImageUrl })
+                .ToListAsync(cancellationToken))
+              .GroupBy(pi => pi.ProductId)
+              .ToDictionary(g => g.Key, g => g.First().ImageUrl);
+
+        var sourceByProduct = productRows.ToDictionary(p => p.Id, p => p.SourceProductId);
+
+        string? ResolveImage(Guid variantId)
+        {
+            if (variantImageById.TryGetValue(variantId, out var vImg))
+                return vImg;
+            if (!productIdByVariant.TryGetValue(variantId, out var productId))
+                return null;
+            if (coverByProduct.TryGetValue(productId, out var img))
+                return img;
+            if (sourceByProduct.TryGetValue(productId, out var sourceId) && sourceId.HasValue
+                && coverByProduct.TryGetValue(sourceId.Value, out var srcImg))
+                return srcImg;
+            return null;
+        }
+
         var paymentRows = await _context.Payments
             .AsNoTracking()
             .Where(p => orderRequestIds.Contains(p.OrderRequestId))
@@ -138,7 +197,7 @@ public class GetSellerOrdersQueryHandler
                     i.Quantity,
                     i.UnitPriceSnapshot,
                     i.TotalPriceSnapshot,
-                    null)).ToList(),
+                    ResolveImage(i.ProductVariantId))).ToList(),
                 so.CreatedAt);
         }).ToList();
 

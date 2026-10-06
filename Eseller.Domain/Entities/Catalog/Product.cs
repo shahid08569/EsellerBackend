@@ -19,6 +19,12 @@ public class Product : AuditableEntity, ISoftDelete
     /// <summary>Curated homepage Hot Selling pin (Super Admin).</summary>
     public bool IsHotSelling { get; set; }
     public bool IsApproved { get; set; }
+    /// <summary>
+    /// Master Warehouse SKUs only: when true, product is visible on the customer website
+    /// under Platform Master Warehouse. Off by default — SuperAdmin opts in.
+    /// Seller shop listings ignore this flag (they use IsApproved + IsActive).
+    /// </summary>
+    public bool IsStorefrontLive { get; set; }
     public int ViewCount { get; set; }
     public decimal? AvgRating { get; set; }
     public string? SeoTitle { get; set; }

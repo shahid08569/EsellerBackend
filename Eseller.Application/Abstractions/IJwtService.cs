@@ -8,4 +8,6 @@ public interface IJwtService
     string GenerateRefreshToken();
     string HashToken(string token);
     Guid? ValidateAccessToken(string token);
+    /// <summary>Configured access-token lifetime (minutes). Used for client expiry clocks.</summary>
+    int AccessTokenExpirationMinutes { get; }
 }

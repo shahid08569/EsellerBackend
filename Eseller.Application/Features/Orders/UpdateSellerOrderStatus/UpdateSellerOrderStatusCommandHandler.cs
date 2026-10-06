@@ -14,15 +14,18 @@ public class UpdateSellerOrderStatusCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
+    private readonly IAppNotificationService _notifications;
 
     public UpdateSellerOrderStatusCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        IAppNotificationService notifications)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
+        _notifications = notifications;
     }
 
     public async Task<Result> Handle(
@@ -81,6 +84,8 @@ public class UpdateSellerOrderStatusCommandHandler
             var earning = await _context.SellerEarnings
                 .FirstOrDefaultAsync(se => se.SellerOrderId == sellerOrder.Id
                                         && se.Status == SellerEarningStatus.Pending, cancellationToken);
+            Guid? creditedAccountId = null;
+            decimal creditedAmount = 0;
             if (earning != null)
             {
                 earning.Status = SellerEarningStatus.Available;
@@ -125,17 +130,104 @@ public class UpdateSellerOrderStatusCommandHandler
                         Description = "Seller earning released for delivered order",
                         CreatedAt = now
                     });
+
+                    creditedAccountId = keeper.AccountId;
+                    creditedAmount = credit;
                 }
             }
+
+            // Keep parent OrderRequest in sync when this is the only shop,
+            // or when every sibling SellerOrder already matches the new status.
+            var otherSellerOrders = await _context.SellerOrders
+                .Where(so => so.OrderRequestId == sellerOrder.OrderRequestId && so.Id != sellerOrder.Id)
+                .ToListAsync(cancellationToken);
+
+            if (otherSellerOrders.Count == 0 || otherSellerOrders.All(so => so.Status == newStatus))
+            {
+                var mainOrder = await _context.OrderRequests
+                    .FirstOrDefaultAsync(o => o.Id == sellerOrder.OrderRequestId, cancellationToken);
+                if (mainOrder != null && mainOrder.Status != newStatus)
+                {
+                    mainOrder.Status = newStatus;
+                    mainOrder.SetUpdatedAt(now);
+                }
+            }
+
+            // Log status history (order-level)
+            _context.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                OrderRequestId = sellerOrder.OrderRequestId,
+                OldStatus = oldStatus,
+                NewStatus = newStatus,
+                ChangedByAccountId = _currentUserService.AccountId.Value,
+                ChangedByType = isAdmin
+                    ? (role == RoleType.SuperAdmin ? "SuperAdmin" : "Partner")
+                    : "Shopkeeper",
+                ChangedAt = now
+            });
+
+            await _context.SaveChangesAsync(cancellationToken);
+
+            var orderRef = sellerOrder.OrderRequestId.ToString()[..8].ToUpperInvariant();
+            var sellerAccount = await (
+                from s in _context.Shops.IgnoreQueryFilters().AsNoTracking()
+                join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
+                where s.Id == sellerOrder.ShopId
+                select sk.AccountId
+            ).FirstOrDefaultAsync(cancellationToken);
+
+            if (sellerAccount != Guid.Empty && oldStatus != OrderStatus.Delivered)
+            {
+                await _notifications.NotifyAsync(
+                    sellerAccount,
+                    RoleType.Shopkeeper,
+                    NotificationType.OrderDelivered,
+                    $"Order #{orderRef} delivered",
+                    "An order has been marked as delivered.",
+                    NotificationEntityType.Order,
+                    sellerOrder.OrderRequestId,
+                    "/orders",
+                    $"OrderDelivered:{sellerOrder.Id:N}:Seller:{sellerAccount:N}",
+                    cancellationToken);
+            }
+
+            if (creditedAccountId.HasValue && creditedAmount > 0)
+            {
+                await _notifications.NotifyAsync(
+                    creditedAccountId.Value,
+                    RoleType.Shopkeeper,
+                    NotificationType.PaymentCompleted,
+                    "Payment Completed",
+                    $"Payment for order #{orderRef} completed. Rs. {creditedAmount:N0} credited.",
+                    NotificationEntityType.Payment,
+                    sellerOrder.OrderRequestId,
+                    "/earnings",
+                    $"PaymentCompleted:{sellerOrder.Id:N}:Seller:{creditedAccountId.Value:N}",
+                    cancellationToken);
+
+                await _notifications.NotifyAsync(
+                    creditedAccountId.Value,
+                    RoleType.Shopkeeper,
+                    NotificationType.CommissionEarned,
+                    "Commission Earned",
+                    $"Congratulations! You earned Rs. {creditedAmount:N0} from order #{orderRef}.",
+                    NotificationEntityType.Earning,
+                    sellerOrder.OrderRequestId,
+                    "/earnings",
+                    $"CommissionEarned:{sellerOrder.Id:N}:Seller:{creditedAccountId.Value:N}",
+                    cancellationToken);
+            }
+
+            return Result.Success();
         }
 
         // Keep parent OrderRequest in sync when this is the only shop,
         // or when every sibling SellerOrder already matches the new status.
-        var otherSellerOrders = await _context.SellerOrders
+        var otherOrders = await _context.SellerOrders
             .Where(so => so.OrderRequestId == sellerOrder.OrderRequestId && so.Id != sellerOrder.Id)
             .ToListAsync(cancellationToken);
 
-        if (otherSellerOrders.Count == 0 || otherSellerOrders.All(so => so.Status == newStatus))
+        if (otherOrders.Count == 0 || otherOrders.All(so => so.Status == newStatus))
         {
             var mainOrder = await _context.OrderRequests
                 .FirstOrDefaultAsync(o => o.Id == sellerOrder.OrderRequestId, cancellationToken);

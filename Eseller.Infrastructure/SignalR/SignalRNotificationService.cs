@@ -20,34 +20,34 @@ public class SignalRNotificationService : ISignalRNotificationService
     }
 
     public async Task BroadcastChatMessageAsync(
-        Guid orderRequestId,
+        Guid conversationId,
         Guid messageId,
         Guid senderAccountId,
         string senderRole,
         string message,
         DateTime sentAt,
         CancellationToken cancellationToken,
-        IReadOnlyCollection<Guid>? notifyAccountIds = null)
+        IReadOnlyCollection<Guid>? notifyAccountIds = null,
+        string? attachmentUrl = null,
+        string? attachmentFileName = null,
+        string? attachmentContentType = null)
     {
-        // Always deliver into the open thread room.
         var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            $"order-{orderRequestId}"
+            $"conversation:{conversationId}",
+            $"order-{conversationId}" // legacy Angular JoinOrderRoom
         };
 
         var isAdminSender =
             senderRole.Equals(nameof(RoleType.SuperAdmin), StringComparison.OrdinalIgnoreCase) ||
             senderRole.Equals(nameof(RoleType.Partner), StringComparison.OrdinalIgnoreCase);
 
-        // Sellers/customers messaging → ping all online admins (even if not in the room).
-        // Admins already in the order room also receive this; clients dedupe by messageId.
         if (!isAdminSender)
         {
             groups.Add(nameof(RoleType.SuperAdmin));
             groups.Add(nameof(RoleType.Partner));
         }
 
-        // Admin → specific seller/customer account inbox (account-{guid} joined on ChatHub connect).
         if (notifyAccountIds is { Count: > 0 })
         {
             foreach (var accountId in notifyAccountIds.Distinct())
@@ -61,8 +61,36 @@ public class SignalRNotificationService : ISignalRNotificationService
         {
             await _chatHubContext.Clients
                 .Group(group)
-                .ReceiveMessage(messageId, orderRequestId, senderAccountId, senderRole, message, sentAt);
+                .ReceiveMessage(
+                    messageId,
+                    conversationId,
+                    senderAccountId,
+                    senderRole,
+                    message,
+                    sentAt,
+                    attachmentUrl,
+                    attachmentFileName,
+                    attachmentContentType);
         }
+    }
+
+    public async Task BroadcastUnreadCountChangedAsync(
+        Guid conversationId,
+        int conversationUnread,
+        IReadOnlyCollection<Guid> accountIds,
+        CancellationToken cancellationToken)
+    {
+        foreach (var accountId in accountIds.Distinct())
+        {
+            if (accountId == Guid.Empty) continue;
+            await _chatHubContext.Clients
+                .Group($"account-{accountId}")
+                .UnreadCountChanged(conversationId, conversationUnread);
+        }
+
+        await _chatHubContext.Clients
+            .Group($"conversation:{conversationId}")
+            .UnreadCountChanged(conversationId, conversationUnread);
     }
 
     public async Task SendNotificationToAccountAsync(
@@ -73,9 +101,23 @@ public class SignalRNotificationService : ISignalRNotificationService
         string message,
         CancellationToken cancellationToken)
     {
-        await _notificationHubContext.Clients
-            .Group($"account-{accountId}")
+        // Architecture: user:{UserId}; keep account-{id} for legacy clients
+        var clients = _notificationHubContext.Clients;
+        await clients.Group($"user:{accountId}")
             .ReceiveNotification(notificationId, (int)type, title, message, DateTime.UtcNow);
+        await clients.Group($"account-{accountId}")
+            .ReceiveNotification(notificationId, (int)type, title, message, DateTime.UtcNow);
+    }
+
+    public async Task SendUnreadCountChangedAsync(
+        Guid accountId,
+        int unreadCount,
+        CancellationToken cancellationToken)
+    {
+        await _notificationHubContext.Clients.Group($"user:{accountId}")
+            .UnreadCountChanged(unreadCount);
+        await _notificationHubContext.Clients.Group($"account-{accountId}")
+            .UnreadCountChanged(unreadCount);
     }
 
     public async Task BroadcastNewOrderAsync(

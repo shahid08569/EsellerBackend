@@ -5,7 +5,6 @@ using Eseller.Application.Common;
 using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Entities.Orders;
 using Eseller.Domain.Entities.Payment;
-using Eseller.Domain.Entities.Wallet;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -21,17 +20,20 @@ public class CreateOrderRequestCommandHandler
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
     private readonly ISignalRNotificationService _notificationService;
+    private readonly IAppNotificationService _notifications;
 
     public CreateOrderRequestCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
         IDateTime dateTime,
-        ISignalRNotificationService notificationService)
+        ISignalRNotificationService notificationService,
+        IAppNotificationService notifications)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
         _notificationService = notificationService;
+        _notifications = notifications;
     }
 
     public async Task<Result<Guid>> Handle(
@@ -202,6 +204,7 @@ public class CreateOrderRequestCommandHandler
         // ✅ AFFILIATE — Collect created items for commission (Part 4)
         // ═══════════════════════════════════════════════════════════
         var createdOrderItems = new List<(OrderRequestItem Item, decimal UnitPrice, int Quantity, Guid ProductId)>();
+        var outOfStockProducts = new Dictionary<Guid, string>();
 
         foreach (var shopGroup in itemsByShop)
         {
@@ -258,6 +261,9 @@ public class CreateOrderRequestCommandHandler
                     CreatedByAccountId = _currentUserService.AccountId.Value,
                     CreatedAt = now
                 });
+
+                if (previousQty > 0 && variant.StockQty <= 0)
+                    outOfStockProducts[product.Id] = product.Name;
             }
 
             // Calculate 20% Net Commission Seller Earning
@@ -383,61 +389,33 @@ public class CreateOrderRequestCommandHandler
         var orderTotal = orderItemsForMessage.Sum(i => i.TotalPriceSnapshot);
         var itemCount = orderItemsForMessage.Sum(i => i.Quantity);
         var shortRef = orderRequest.Id.ToString()[..8].ToUpperInvariant();
-        var notifTitle = $"New order #{shortRef}";
+        var notifTitle = $"New Order #{shortRef}";
         var notifBody = $"{orderRequest.CustomerName ?? "Customer"} placed an order ({itemCount} items, Rs. {orderTotal:N0}).";
-        var notifNow = _dateTime.UtcNow;
-        var createdNotifs = new List<(Guid AccountId, Notification Notif)>();
 
         foreach (var accountId in shopkeeperAccountIds)
         {
-            var notif = new Notification
-            {
-                AccountId = accountId,
-                Type = NotificationType.OrderPlaced,
-                Title = notifTitle,
-                Message = notifBody,
-                IsRead = false
-            };
-            notif.SetCreatedAt(notifNow);
-            notif.SetUpdatedAt(notifNow);
-            _context.Notifications.Add(notif);
-            createdNotifs.Add((accountId, notif));
+            await _notifications.NotifyAsync(
+                accountId,
+                RoleType.Shopkeeper,
+                NotificationType.NewOrder,
+                notifTitle,
+                notifBody,
+                NotificationEntityType.Order,
+                orderRequest.Id,
+                "/orders",
+                $"NewOrder:{orderRequest.Id:N}:Seller:{accountId:N}",
+                cancellationToken);
         }
 
-        // Also notify SuperAdmin group via dedicated event
-        var adminAccounts = await _context.Accounts
-            .AsNoTracking()
-            .Where(a => a.RoleType == RoleType.SuperAdmin || a.RoleType == RoleType.Partner)
-            .Select(a => a.Id)
-            .ToListAsync(cancellationToken);
-
-        foreach (var adminId in adminAccounts)
-        {
-            var notif = new Notification
-            {
-                AccountId = adminId,
-                Type = NotificationType.NewOrderForSuperAdmin,
-                Title = notifTitle,
-                Message = notifBody,
-                IsRead = false
-            };
-            notif.SetCreatedAt(notifNow);
-            notif.SetUpdatedAt(notifNow);
-            _context.Notifications.Add(notif);
-            createdNotifs.Add((adminId, notif));
-        }
-
-        await _context.SaveChangesAsync(cancellationToken);
-
-        foreach (var (accountId, notif) in createdNotifs)
-        {
-            try
-            {
-                await _notificationService.SendNotificationToAccountAsync(
-                    accountId, notif.Id, notif.Type, notif.Title, notif.Message, cancellationToken);
-            }
-            catch { /* best-effort */ }
-        }
+        await _notifications.NotifyAdminsAsync(
+            NotificationType.NewOrder,
+            notifTitle,
+            notifBody,
+            NotificationEntityType.Order,
+            orderRequest.Id,
+            "/orders",
+            $"NewOrder:{orderRequest.Id:N}",
+            cancellationToken);
 
         try
         {
@@ -449,6 +427,15 @@ public class CreateOrderRequestCommandHandler
                 cancellationToken);
         }
         catch { /* best-effort */ }
+
+        foreach (var (productId, productName) in outOfStockProducts)
+        {
+            try
+            {
+                await _notifications.NotifyProductOutOfStockOnceAsync(productId, productName, cancellationToken);
+            }
+            catch { /* best-effort */ }
+        }
 
         return Result.Success(orderRequest.Id);
     }

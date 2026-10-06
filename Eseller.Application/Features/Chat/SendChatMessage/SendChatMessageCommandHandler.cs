@@ -1,12 +1,9 @@
 using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
-using Eseller.Domain.Entities.Identity;
-using Eseller.Domain.Entities.Orders;
-using Eseller.Domain.Entities.Wallet;
+using Eseller.Domain.Entities.Chat;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
-using ChatMessageEntity = Eseller.Domain.Entities.Orders.ChatMessage;
 
 namespace Eseller.Application.Features.Chat.SendChatMessage;
 
@@ -17,17 +14,20 @@ public class SendChatMessageCommandHandler
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
     private readonly ISignalRNotificationService _notificationService;
+    private readonly IAppNotificationService _appNotifications;
 
     public SendChatMessageCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
         IDateTime dateTime,
-        ISignalRNotificationService notificationService)
+        ISignalRNotificationService notificationService,
+        IAppNotificationService appNotifications)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
         _notificationService = notificationService;
+        _appNotifications = appNotifications;
     }
 
     public async Task<Result<Guid>> Handle(
@@ -37,307 +37,188 @@ public class SendChatMessageCommandHandler
         if (_currentUserService.AccountId is null)
             return Result.Failure<Guid>("User is not authenticated.", "UNAUTHENTICATED");
 
-        var order = await _context.OrderRequests
-            .FirstOrDefaultAsync(o => o.Id == request.OrderRequestId, cancellationToken);
+        var conversation = await ResolveConversationAsync(request.ConversationId, cancellationToken);
+        if (conversation is null)
+            return Result.Failure<Guid>("Conversation not found.", "CONVERSATION_NOT_FOUND");
 
-        if (order is null)
-        {
-            // Shop support channel (admin ↔ seller) uses Shop.Id as the chat room key
-            order = await ShopSupportChannel.EnsureAsync(
-                _context,
-                request.OrderRequestId,
-                _dateTime.UtcNow,
-                cancellationToken);
-
-            if (order is null)
-                return Result.Failure<Guid>("Order or shop support channel not found.", "ORDER_NOT_FOUND");
-        }
-        else if (order.UserId == Guid.Empty)
-        {
-            var fixedOrder = await ShopSupportChannel.EnsureAsync(
-                _context,
-                request.OrderRequestId,
-                _dateTime.UtcNow,
-                cancellationToken);
-            if (fixedOrder is null)
-                return Result.Failure<Guid>("Support channel is missing a valid user.", "ORDER_INVALID");
-            order = fixedOrder;
-        }
-
-        var role = _currentUserService.RoleType;
-        var isAdmin = role == RoleType.SuperAdmin || role == RoleType.Partner;
-        var isCustomer = role == RoleType.User;
-        var isShopkeeper = role == RoleType.Shopkeeper;
-
-        ChatSenderRole senderRole;
-
-        if (isAdmin)
-        {
-            senderRole = role == RoleType.SuperAdmin
-                ? ChatSenderRole.SuperAdmin
-                : ChatSenderRole.Partner;
-        }
-        else if (isShopkeeper)
-        {
-            // Sellers may only message Super Admin on shop-support channels.
-            var allowed = await ShopkeeperCanAccessSupportAsync(order, cancellationToken);
-            if (!allowed)
-                return Result.Failure<Guid>(
-                    "You can only chat with Super Admin (shop support).",
-                    "FORBIDDEN");
-
-            senderRole = ChatSenderRole.Shopkeeper;
-        }
-        else if (isCustomer)
-        {
-            var user = await _context.Users
-                .FirstOrDefaultAsync(u => u.AccountId == _currentUserService.AccountId.Value,
-                    cancellationToken);
-
-            if (user is null)
-            {
-                var acc = await _context.Accounts.FirstOrDefaultAsync(a => a.Id == _currentUserService.AccountId.Value, cancellationToken);
-                user = new User
-                {
-                    AccountId = _currentUserService.AccountId.Value,
-                    Name = acc?.Username ?? "Customer"
-                };
-                user.SetCreatedAt(_dateTime.UtcNow);
-                _context.Users.Add(user);
-                await _context.SaveChangesAsync(cancellationToken);
-            }
-
-            // Customers may only message Super Admin on their support channel.
-            var supportMarker = $"CUSTOMER_SUPPORT_{user.Id}";
-            if (!string.Equals(order.ShippingAddress, supportMarker, StringComparison.OrdinalIgnoreCase))
-                return Result.Failure<Guid>(
-                    "You can only chat with Super Admin (platform support).",
-                    "FORBIDDEN");
-
-            if (order.UserId != user.Id)
-            {
-                if (order.UserId == Guid.Empty)
-                {
-                    order.UserId = user.Id;
-                    await _context.SaveChangesAsync(cancellationToken);
-                }
-                else
-                {
-                    return Result.Failure<Guid>("You do not have permission.", "FORBIDDEN");
-                }
-            }
-
-            senderRole = ChatSenderRole.User;
-        }
-        else
-        {
+        if (!await SupportConversationService.CanAccessAsync(
+                _context, _currentUserService, conversation, cancellationToken))
             return Result.Failure<Guid>("You do not have permission.", "FORBIDDEN");
-        }
 
+        // Role matrix: only Customer|Seller ↔ Super Admin
+        var role = _currentUserService.RoleType;
+        if (role is null || role is not (RoleType.SuperAdmin or RoleType.Partner or RoleType.Shopkeeper or RoleType.User))
+            return Result.Failure<Guid>("You do not have permission.", "FORBIDDEN");
+
+        if (role == RoleType.Shopkeeper && conversation.ParticipantType != ChatParticipantType.Seller)
+            return Result.Failure<Guid>("Sellers can only message Super Admin.", "FORBIDDEN");
+
+        if (role == RoleType.User && conversation.ParticipantType != ChatParticipantType.Customer)
+            return Result.Failure<Guid>("Customers can only message Super Admin.", "FORBIDDEN");
+
+        var senderRole = SupportConversationService.MapSenderRole(role.Value);
         var now = _dateTime.UtcNow;
+        var text = (request.Message ?? string.Empty).Trim();
 
-        var chatMessage = new ChatMessageEntity
+        var message = new Message
         {
-            OrderRequestId = order.Id,
-            SenderAccountId = _currentUserService.AccountId.Value,
+            ConversationId = conversation.Id,
+            SenderId = _currentUserService.AccountId.Value,
             SenderRole = senderRole,
-            Message = request.Message.Trim(),
+            Content = text,
             SentAt = now,
-            IsRead = false
+            IsRead = false,
+            AttachmentUrl = string.IsNullOrWhiteSpace(request.AttachmentUrl) ? null : request.AttachmentUrl.Trim(),
+            AttachmentFileName = string.IsNullOrWhiteSpace(request.AttachmentFileName) ? null : request.AttachmentFileName.Trim(),
+            AttachmentContentType = string.IsNullOrWhiteSpace(request.AttachmentContentType) ? null : request.AttachmentContentType.Trim(),
+            AttachmentSizeBytes = request.AttachmentSizeBytes
         };
 
-        _context.ChatMessages.Add(chatMessage);
+        _context.Messages.Add(message);
+        conversation.LastMessageAt = now;
+        conversation.SetUpdatedAt(now);
         await _context.SaveChangesAsync(cancellationToken);
 
         var notifyAccountIds = await ResolveNotifyAccountIdsAsync(
-            order,
-            _currentUserService.AccountId.Value,
-            isAdmin,
-            isShopkeeper,
-            isCustomer,
-            cancellationToken);
+            conversation, _currentUserService.AccountId.Value, senderRole, cancellationToken);
 
-        // Persist bell notifications (admin + seller + customer)
-        var preview = chatMessage.Message.Length > 120
-            ? chatMessage.Message[..117] + "..."
-            : chatMessage.Message;
-        var senderLabel = isAdmin ? "Admin" : isShopkeeper ? "Seller" : "Customer";
+        var preview = string.IsNullOrWhiteSpace(text)
+            ? (message.AttachmentFileName is not null ? $"📎 {message.AttachmentFileName}" : "Attachment")
+            : (text.Length > 120 ? text[..117] + "..." : text);
 
+        var senderLabel = SupportConversationService.IsAdminRole(senderRole) ? "Admin"
+            : senderRole == ChatSenderRole.Shopkeeper ? "Seller" : "Customer";
+
+        // Important: sellers never get customer↔admin message notifications (resolved above)
         foreach (var accountId in notifyAccountIds)
         {
-            var notif = new Notification
-            {
-                AccountId = accountId,
-                Type = NotificationType.NewChatMessage,
-                Title = $"New message from {senderLabel}",
-                Message = preview,
-                IsRead = false
-            };
-            notif.SetCreatedAt(now);
-            notif.SetUpdatedAt(now);
-            _context.Notifications.Add(notif);
+            var recipientRole = await _context.Accounts.AsNoTracking()
+                .Where(a => a.Id == accountId)
+                .Select(a => a.RoleType)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            // Customer recipients are out of scope for this notification system
+            if (recipientRole == RoleType.User) continue;
+
+            await _appNotifications.NotifyAsync(
+                accountId,
+                recipientRole,
+                NotificationType.NewMessage,
+                $"New message from {senderLabel}",
+                preview,
+                NotificationEntityType.Conversation,
+                conversation.Id,
+                $"/chat?c={conversation.Id}",
+                $"NewMessage:{message.Id:N}:Recipient:{accountId:N}",
+                cancellationToken);
         }
 
-        if (notifyAccountIds.Count > 0)
-            await _context.SaveChangesAsync(cancellationToken);
-
+        // DB saved first — then real-time broadcast
         await _notificationService.BroadcastChatMessageAsync(
-            order.Id,
-            chatMessage.Id,
-            _currentUserService.AccountId.Value,
+            conversation.Id,
+            message.Id,
+            message.SenderId,
             senderRole.ToString(),
-            chatMessage.Message,
+            string.IsNullOrWhiteSpace(text) ? preview : text,
             now,
             cancellationToken,
-            notifyAccountIds);
+            notifyAccountIds,
+            message.AttachmentUrl,
+            message.AttachmentFileName,
+            message.AttachmentContentType);
 
-        return Result.Success(chatMessage.Id);
+        return Result.Success(message.Id);
+    }
+
+    private async Task<Conversation?> ResolveConversationAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        var existing = await _context.Conversations
+            .FirstOrDefaultAsync(c => c.Id == conversationId, cancellationToken);
+        if (existing is not null)
+            return existing;
+
+        // Lazy ensure: shop id → seller conversation; user id → customer conversation
+        var shopExists = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
+            .AnyAsync(s => s.Id == conversationId && s.DeletedAt == null, cancellationToken);
+        if (shopExists)
+        {
+            return await SupportConversationService.GetOrCreateAsync(
+                _context, conversationId, ChatParticipantType.Seller, _dateTime.UtcNow, cancellationToken);
+        }
+
+        var userExists = await _context.Users.AsNoTracking()
+            .AnyAsync(u => u.Id == conversationId, cancellationToken);
+        if (userExists)
+        {
+            return await SupportConversationService.GetOrCreateAsync(
+                _context, conversationId, ChatParticipantType.Customer, _dateTime.UtcNow, cancellationToken);
+        }
+
+        // Legacy customer support OrderRequest id → map to User participant conversation
+        var legacy = await _context.OrderRequests.AsNoTracking()
+            .FirstOrDefaultAsync(o => o.Id == conversationId
+                && o.ShippingAddress != null
+                && (o.ShippingAddress.StartsWith("CUSTOMER_SUPPORT_")
+                    || o.ShippingAddress == "Live Support Inquiry"),
+                cancellationToken);
+
+        if (legacy is not null && legacy.UserId != Guid.Empty)
+        {
+            return await SupportConversationService.GetOrCreateAsync(
+                _context, legacy.UserId, ChatParticipantType.Customer, _dateTime.UtcNow, cancellationToken);
+        }
+
+        return null;
     }
 
     private async Task<IReadOnlyCollection<Guid>> ResolveNotifyAccountIdsAsync(
-        OrderRequest order,
+        Conversation conversation,
         Guid senderAccountId,
-        bool senderIsAdmin,
-        bool senderIsShopkeeper,
-        bool senderIsCustomer,
+        ChatSenderRole senderRole,
         CancellationToken cancellationToken)
     {
-        var recipients = new HashSet<Guid>();
+        var ids = new HashSet<Guid>();
 
-        Guid? shopkeeperAccountId = null;
-        Guid? customerAccountId = null;
-
-        // Shop ↔ admin support: OrderRequest.Id == Shop.Id
-        var shop = await _context.Shops
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(s => s.Id == order.Id && s.DeletedAt == null, cancellationToken);
-
-        if (shop is null
-            && !string.IsNullOrWhiteSpace(order.ShippingAddress)
-            && order.ShippingAddress.StartsWith("SHOP_SUPPORT_", StringComparison.OrdinalIgnoreCase)
-            && Guid.TryParse(order.ShippingAddress["SHOP_SUPPORT_".Length..], out var supportShopId))
+        if (SupportConversationService.IsAdminRole(senderRole))
         {
-            shop = await _context.Shops
-                .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(s => s.Id == supportShopId && s.DeletedAt == null, cancellationToken);
-        }
-
-        if (shop is not null)
-        {
-            var keeper = await _context.Shopkeepers
-                .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
-            if (keeper is not null)
-                shopkeeperAccountId = keeper.AccountId;
-        }
-
-        // Customer ↔ shop channel marker SHOP_CHAT_{shopId}_{userId}
-        if (!string.IsNullOrWhiteSpace(order.ShippingAddress)
-            && order.ShippingAddress.StartsWith("SHOP_CHAT_", StringComparison.OrdinalIgnoreCase))
-        {
-            var parts = order.ShippingAddress.Split('_', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 3 && Guid.TryParse(parts[2], out var chatShopId))
+            // Notify the participant
+            if (conversation.ParticipantType == ChatParticipantType.Customer)
             {
-                var chatShop = await _context.Shops
-                    .IgnoreQueryFilters()
-                    .FirstOrDefaultAsync(s => s.Id == chatShopId && s.DeletedAt == null, cancellationToken);
-                if (chatShop is not null)
-                {
-                    var keeper = await _context.Shopkeepers
-                        .FirstOrDefaultAsync(sk => sk.Id == chatShop.ShopkeeperId, cancellationToken);
-                    if (keeper is not null)
-                        shopkeeperAccountId = keeper.AccountId;
-                }
+                var accountId = await _context.Users.AsNoTracking()
+                    .Where(u => u.Id == conversation.ParticipantId)
+                    .Select(u => u.AccountId)
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (accountId != Guid.Empty && accountId != senderAccountId)
+                    ids.Add(accountId);
+            }
+            else
+            {
+                var accountId = await (
+                    from s in _context.Shops.IgnoreQueryFilters().AsNoTracking()
+                    join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
+                    where s.Id == conversation.ParticipantId && s.DeletedAt == null
+                    select sk.AccountId
+                ).FirstOrDefaultAsync(cancellationToken);
+                if (accountId != Guid.Empty && accountId != senderAccountId)
+                    ids.Add(accountId);
             }
         }
-
-        // Regular order / support channel customer
-        if (order.UserId != Guid.Empty)
+        else
         {
-            var customer = await _context.Users
-                .FirstOrDefaultAsync(u => u.Id == order.UserId, cancellationToken);
-            if (customer is not null)
-                customerAccountId = customer.AccountId;
-        }
-
-        // Regular marketplace order → seller via SellerOrders
-        if (!shopkeeperAccountId.HasValue)
-        {
-            var sellerShopId = await _context.SellerOrders
-                .Where(so => so.OrderRequestId == order.Id)
-                .Select(so => (Guid?)so.ShopId)
-                .FirstOrDefaultAsync(cancellationToken);
-            if (sellerShopId.HasValue)
-            {
-                var sellerShop = await _context.Shops
-                    .IgnoreQueryFilters()
-                    .FirstOrDefaultAsync(s => s.Id == sellerShopId.Value && s.DeletedAt == null, cancellationToken);
-                if (sellerShop is not null)
-                {
-                    var keeper = await _context.Shopkeepers
-                        .FirstOrDefaultAsync(sk => sk.Id == sellerShop.ShopkeeperId, cancellationToken);
-                    if (keeper is not null)
-                        shopkeeperAccountId = keeper.AccountId;
-                }
-            }
-        }
-
-        // SuperAdmin mediation only — never cross-notify seller ↔ customer.
-        if (senderIsAdmin)
-        {
-            var addr = order.ShippingAddress ?? string.Empty;
-            if (addr.StartsWith("CUSTOMER_SUPPORT_", StringComparison.OrdinalIgnoreCase)
-                || addr.Equals("Live Support Inquiry", StringComparison.OrdinalIgnoreCase))
-            {
-                if (customerAccountId.HasValue)
-                    recipients.Add(customerAccountId.Value);
-            }
-            else if (shopkeeperAccountId.HasValue)
-            {
-                recipients.Add(shopkeeperAccountId.Value);
-            }
-        }
-        else if (senderIsShopkeeper || senderIsCustomer)
-        {
-            var adminIds = await _context.Accounts
+            // Notify all SuperAdmins + Partners
+            var adminIds = await _context.Accounts.AsNoTracking()
                 .Where(a => a.RoleType == RoleType.SuperAdmin || a.RoleType == RoleType.Partner)
                 .Select(a => a.Id)
                 .ToListAsync(cancellationToken);
             foreach (var id in adminIds)
-                recipients.Add(id);
-        }
-
-        recipients.Remove(senderAccountId);
-        return recipients;
-    }
-
-    private async Task<bool> ShopkeeperCanAccessSupportAsync(
-        OrderRequest order,
-        CancellationToken cancellationToken)
-    {
-        var shopkeeper = await _context.Shopkeepers
-            .FirstOrDefaultAsync(sk => sk.AccountId == _currentUserService.AccountId!.Value, cancellationToken);
-        if (shopkeeper is null)
-            return false;
-
-        var shops = await _context.Shops
-            .IgnoreQueryFilters()
-            .Where(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null)
-            .Select(s => s.Id)
-            .ToListAsync(cancellationToken);
-
-        // Shop support channel: OrderRequest.Id == Shop.Id
-        if (shops.Contains(order.Id))
-            return true;
-
-        if (!string.IsNullOrWhiteSpace(order.ShippingAddress))
-        {
-            foreach (var shopId in shops)
             {
-                if (order.ShippingAddress.Equals($"SHOP_SUPPORT_{shopId}", StringComparison.OrdinalIgnoreCase))
-                    return true;
+                if (id != senderAccountId)
+                    ids.Add(id);
             }
         }
 
-        return false;
+        return ids.ToList();
     }
 }

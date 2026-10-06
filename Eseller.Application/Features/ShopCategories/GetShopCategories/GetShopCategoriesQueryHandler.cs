@@ -50,7 +50,8 @@ public class GetShopCategoriesQueryHandler
             shopCounts.GetValueOrDefault(c.Id, 0),
             c.CreatedAt,
             c.PriceUsd,
-            c.MaxProductListings > 0 ? c.MaxProductListings : 200)).ToList();
+            c.MaxProductListings > 0 ? c.MaxProductListings : 200,
+            c.IsRecommended)).ToList();
 
         return Result.Success<IReadOnlyList<ShopCategoryDto>>(result);
     }

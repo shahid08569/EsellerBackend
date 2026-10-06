@@ -88,6 +88,7 @@ public class CreateProductCommandHandler
             BasePrice = request.BasePrice,
             IsFeatured = false,
             IsApproved = true,
+            IsStorefrontLive = false,
             ViewCount = 0,
             SeoTitle = request.SeoTitle,
             SeoDescription = request.SeoDescription,

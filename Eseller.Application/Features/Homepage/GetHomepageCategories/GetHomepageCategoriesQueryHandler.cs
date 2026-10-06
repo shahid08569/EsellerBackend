@@ -101,6 +101,7 @@ public class GetHomepageCategoriesQueryHandler
                 p.Name,
                 p.Slug,
                 p.BasePrice,
+                p.Description,
                 p.SourceProductId,
                 PrimaryImageUrl = _context.ProductImages
                     .Where(pi => pi.ProductId == p.Id)
@@ -122,6 +123,20 @@ public class GetHomepageCategoriesQueryHandler
                 ShopSlug = _context.Shops
                     .Where(s => s.Id == p.ShopId).Select(s => s.Slug)
                     .FirstOrDefault() ?? string.Empty,
+                ShopBadgeText = (
+                    from s in _context.Shops
+                    where s.Id == p.ShopId
+                    join sc in _context.ShopCategories on s.ShopCategoryId equals sc.Id into scj
+                    from sc in scj.DefaultIfEmpty()
+                    select s.CustomBadgeText ?? sc.BadgeText ?? sc.Name ?? "Bronze"
+                ).FirstOrDefault(),
+                ShopBadgeColor = (
+                    from s in _context.Shops
+                    where s.Id == p.ShopId
+                    join sc in _context.ShopCategories on s.ShopCategoryId equals sc.Id into scj
+                    from sc in scj.DefaultIfEmpty()
+                    select sc.BadgeColor ?? "#94A3B8"
+                ).FirstOrDefault(),
                 CategoryName = _context.Categories
                     .Where(c => c.Id == p.CategoryId).Select(c => c.Name)
                     .FirstOrDefault() ?? string.Empty,
@@ -149,7 +164,8 @@ public class GetHomepageCategoriesQueryHandler
                 p.BasePrice,
                 p.PrimaryImageUrl,
                 p.ShopName,
-                p.ShopSlug,p.CategoryName,
+                p.ShopSlug,
+                p.CategoryName,
                 p.BrandName,
                 p.AvgRating,
                 p.IsFeatured,
@@ -157,6 +173,17 @@ public class GetHomepageCategoriesQueryHandler
                 p.IsApproved ? "Approved" : (p.RejectionReason == null ? "Pending" : "Rejected"),
                 p.RejectionReason,
                 p.CreatedAt,
-                badges.GetValueOrDefault(p.Id)));
+                badges.GetValueOrDefault(p.Id),
+                ShopBadgeText: p.ShopBadgeText,
+                ShopBadgeColor: p.ShopBadgeColor,
+                Description: TruncateDesc(p.Description)));
+    }
+
+    private static string? TruncateDesc(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description)) return null;
+        var clean = description.Replace("\r", " ").Replace("\n", " ").Trim();
+        while (clean.Contains("  ")) clean = clean.Replace("  ", " ");
+        return clean.Length <= 120 ? clean : clean[..117].TrimEnd() + "…";
     }
 }

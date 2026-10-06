@@ -41,7 +41,7 @@ public class AdminDashboardController : ControllerBase
 
             return Ok(result.Value);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
             // Client navigated away / aborted — not a server fault
             return NoContent();

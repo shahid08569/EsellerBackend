@@ -1,6 +1,9 @@
-﻿using Eseller.Application.Abstractions.SignalR;
+﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions.SignalR;
+using Eseller.Application.Features.Chat;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Security.Claims;
 
@@ -9,10 +12,17 @@ namespace Eseller.Infrastructure.SignalR.Hubs;
 [Authorize]
 public class ChatHub : Hub<IChatClient>
 {
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUser;
     private readonly ILogger<ChatHub> _logger;
 
-    public ChatHub(ILogger<ChatHub> logger)
+    public ChatHub(
+        IApplicationDbContext context,
+        ICurrentUserService currentUser,
+        ILogger<ChatHub> logger)
     {
+        _context = context;
+        _currentUser = currentUser;
         _logger = logger;
     }
 
@@ -28,8 +38,6 @@ public class ChatHub : Hub<IChatClient>
         if (!string.IsNullOrEmpty(role))
             await Groups.AddToGroupAsync(Context.ConnectionId, role);
 
-        // Per-account inbox so admin↔seller / admin↔customer alerts arrive
-        // even when the recipient has not joined the order room yet.
         if (accountId != Guid.Empty)
             await Groups.AddToGroupAsync(Context.ConnectionId, $"account-{accountId}");
 
@@ -45,19 +53,38 @@ public class ChatHub : Hub<IChatClient>
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task JoinOrderRoom(Guid orderRequestId)
+    /// <summary>Join conversation:{id} (and legacy order-{id}).</summary>
+    public async Task JoinConversation(Guid conversationId)
     {
-        await Groups.AddToGroupAsync(Context.ConnectionId, $"order-{orderRequestId}");
+        var conversation = await _context.Conversations.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == conversationId, Context.ConnectionAborted);
 
+        if (conversation is null)
+            throw new HubException("Conversation not found.");
+
+        var allowed = await SupportConversationService.CanAccessAsync(
+            _context, _currentUser, conversation, Context.ConnectionAborted);
+
+        if (!allowed)
+            throw new HubException("Access denied.");
+
+        await Groups.AddToGroupAsync(Context.ConnectionId, $"conversation:{conversationId}");
+        await Groups.AddToGroupAsync(Context.ConnectionId, $"order-{conversationId}");
         _logger.LogInformation(
-            "ConnectionId {ConnectionId} joined order-{OrderRequestId}",
-            Context.ConnectionId, orderRequestId);
+            "ConnectionId {ConnectionId} joined conversation:{ConversationId}",
+            Context.ConnectionId, conversationId);
     }
 
-    public async Task LeaveOrderRoom(Guid orderRequestId)
+    public async Task LeaveConversation(Guid conversationId)
     {
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"order-{orderRequestId}");
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"conversation:{conversationId}");
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"order-{conversationId}");
     }
+
+    /// <summary>Legacy alias used by existing Angular clients.</summary>
+    public Task JoinOrderRoom(Guid orderRequestId) => JoinConversation(orderRequestId);
+
+    public Task LeaveOrderRoom(Guid orderRequestId) => LeaveConversation(orderRequestId);
 
     private Guid GetAccountId()
     {

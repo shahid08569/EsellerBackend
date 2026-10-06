@@ -82,6 +82,7 @@ public class GetCatalogProductsQueryHandler
                 p.AvgRating,
                 p.IsFeatured,
                 p.IsApproved,
+                p.IsStorefrontLive,
                 p.RejectionReason,
                 p.CreatedAt
             })
@@ -96,14 +97,14 @@ public class GetCatalogProductsQueryHandler
             p.Slug,
             p.BasePrice,
             p.PrimaryImageUrl,
-            p.ShopName,
-            p.ShopSlug,
+            "Warehouse",
+            masterShop.Slug,
             p.CategoryName,
             p.BrandName,
             p.AvgRating,
             p.IsFeatured,
             p.IsApproved,
-            "Approved",
+            p.IsStorefrontLive ? "Warehouse · Live" : "Warehouse",
             p.RejectionReason,
             p.CreatedAt,
             badges.GetValueOrDefault(p.Id),
@@ -111,7 +112,9 @@ public class GetCatalogProductsQueryHandler
             p.BrandId,
             p.SourceProductId,
             p.ShopId,
-            p.ShopRating)).ToList();
+            p.ShopRating,
+            Description: null,
+            IsStorefrontLive: p.IsStorefrontLive)).ToList();
 
         return Result.Success(new PagedList<ProductListDto>(
             productDtos,

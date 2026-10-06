@@ -53,7 +53,7 @@ public class GetApprovedSellerProductsQueryHandler
                 p.AvgRating,
                 p.IsFeatured,
                 p.IsApproved,
-                "Approved",
+                _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Name).FirstOrDefault() ?? "Shop",
                 p.RejectionReason,
                 p.CreatedAt,
                 null,

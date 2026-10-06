@@ -9,6 +9,8 @@ public interface INotificationClient
         string message,
         DateTime createdAt);
 
+    Task UnreadCountChanged(int unreadCount);
+
     Task ReceiveOrderNotification(
         Guid orderRequestId,
         string customerName,

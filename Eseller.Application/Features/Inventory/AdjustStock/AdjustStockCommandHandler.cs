@@ -13,15 +13,18 @@ public class AdjustStockCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
+    private readonly IAppNotificationService _notifications;
 
     public AdjustStockCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        IAppNotificationService notifications)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
+        _notifications = notifications;
     }
 
     public async Task<Result> Handle(
@@ -92,6 +95,16 @@ public class AdjustStockCommandHandler
         _context.InventoryTransactions.Add(transaction);
 
         await _context.SaveChangesAsync(cancellationToken);
+
+        if (previousQuantity > 0 && request.NewQuantity <= 0)
+        {
+            await _notifications.NotifyProductOutOfStockOnceAsync(
+                product.Id, product.Name, cancellationToken);
+        }
+        else if (previousQuantity <= 0 && request.NewQuantity > 0)
+        {
+            await _notifications.ResolveProductStockAlertAsync(product.Id, cancellationToken);
+        }
 
         return Result.Success();
     }

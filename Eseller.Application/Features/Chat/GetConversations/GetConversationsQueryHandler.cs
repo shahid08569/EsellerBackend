@@ -1,5 +1,7 @@
 using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
+using Eseller.Application.Features.Products;
+using Eseller.Domain.Entities.Identity;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -34,42 +36,110 @@ public class GetConversationsQueryHandler
             return Result.Failure<PagedList<ConversationDto>>(
                 "Only admins can view conversations.", "FORBIDDEN");
 
+        try
+        {
+            return await BuildAsync(request, cancellationToken);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            return Result.Success(new PagedList<ConversationDto>(
+                Array.Empty<ConversationDto>(), 0, request.PageNumber, request.PageSize));
+        }
+        catch (OperationCanceledException)
+        {
+            return Result.Success(new PagedList<ConversationDto>(
+                Array.Empty<ConversationDto>(), 0, request.PageNumber, request.PageSize));
+        }
+    }
+
+    private async Task<Result<PagedList<ConversationDto>>> BuildAsync(
+        GetConversationsQuery request,
+        CancellationToken cancellationToken)
+    {
         var conversations = new List<ConversationDto>();
 
-        // ── 1) Every seller shop = WhatsApp-style thread with Super Admin ──
+        // Seller directory: Shop.Id is the conversation room key (created lazily on first message)
+        // Skip Platform Master Warehouse — not a real merchant chat target
         var shops = await _context.Shops
+            .AsNoTracking()
             .IgnoreQueryFilters()
-            .Where(s => s.DeletedAt == null)
-            .OrderBy(s => s.Name)
+            .Where(s => s.DeletedAt == null
+                        && s.Slug != MasterCatalog.ShopSlug
+                        && s.Name != MasterCatalog.ShopName)
             .ToListAsync(cancellationToken);
 
-        var shopIds = shops.Select(s => s.Id).ToList();
-        var shopkeepers = await _context.Shopkeepers
-            .Where(sk => shops.Select(s => s.ShopkeeperId).Contains(sk.Id))
-            .ToDictionaryAsync(sk => sk.Id, cancellationToken);
-
-        var shopkeeperAccountIds = shopkeepers.Values.Select(sk => sk.AccountId).Distinct().ToList();
-        var shopAccounts = await _context.Accounts
-            .Where(a => shopkeeperAccountIds.Contains(a.Id))
-            .ToDictionaryAsync(a => a.Id, cancellationToken);
-
-        var supportMessages = shopIds.Count == 0
-            ? new List<Domain.Entities.Orders.ChatMessage>()
-            : await _context.ChatMessages
-                .Where(cm => shopIds.Contains(cm.OrderRequestId))
-                .OrderByDescending(cm => cm.SentAt)
-                .ToListAsync(cancellationToken);
-
-        var supportByShop = supportMessages
-            .GroupBy(m => m.OrderRequestId)
-            .ToDictionary(g => g.Key, g => g.ToList());
-
-        var supportOrders = shopIds.Count == 0
-            ? new Dictionary<Guid, Domain.Entities.Orders.OrderRequest>()
-            : await _context.OrderRequests
+        var keeperIds = shops.Select(s => s.ShopkeeperId).Distinct().ToList();
+        var shopkeepers = keeperIds.Count == 0
+            ? new Dictionary<Guid, Shopkeeper>()
+            : await _context.Shopkeepers
                 .AsNoTracking()
-                .Where(o => shopIds.Contains(o.Id))
-                .ToDictionaryAsync(o => o.Id, cancellationToken);
+                .Where(sk => keeperIds.Contains(sk.Id))
+                .ToDictionaryAsync(sk => sk.Id, cancellationToken);
+
+        var shopIds = shops.Select(s => s.Id).ToList();
+
+        var customerConvoIds = await _context.Conversations.AsNoTracking()
+            .Where(c => c.ParticipantType == ChatParticipantType.Customer)
+            .Select(c => new CustomerRoom(c.Id, c.ParticipantId, c.CreatedAt))
+            .ToListAsync(cancellationToken);
+
+        // Legacy customer support orders → room key = User.Id
+        var legacyUserIds = await _context.OrderRequests.AsNoTracking()
+            .Where(o => o.ShippingAddress != null
+                        && (o.ShippingAddress.StartsWith("CUSTOMER_SUPPORT_")
+                            || o.ShippingAddress == "Live Support Inquiry")
+                        && o.UserId != Guid.Empty)
+            .Select(o => o.UserId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        foreach (var uid in legacyUserIds)
+        {
+            if (customerConvoIds.All(c => c.ParticipantId != uid))
+                customerConvoIds.Add(new CustomerRoom(uid, uid, DateTime.UtcNow));
+        }
+
+        var roomIds = shopIds
+            .Concat(customerConvoIds.Select(c => c.Id))
+            .Distinct()
+            .ToList();
+
+        var recentMessages = await _context.Messages.AsNoTracking()
+            .Where(m => roomIds.Contains(m.ConversationId))
+            .OrderByDescending(m => m.SentAt)
+            .Take(Math.Max(roomIds.Count * 3, 200))
+            .ToListAsync(cancellationToken);
+
+        var lastByConvo = recentMessages
+            .GroupBy(m => m.ConversationId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        // Also pull last message for rooms missing from the capped sample
+        var missingLast = roomIds.Where(id => !lastByConvo.ContainsKey(id)).ToList();
+        if (missingLast.Count > 0 && missingLast.Count <= 100)
+        {
+            var extras = await _context.Messages.AsNoTracking()
+                .Where(m => missingLast.Contains(m.ConversationId))
+                .GroupBy(m => m.ConversationId)
+                .Select(g => g.OrderByDescending(x => x.SentAt).First())
+                .ToListAsync(cancellationToken);
+            foreach (var m in extras)
+                lastByConvo[m.ConversationId] = m;
+        }
+
+        var unreadByConvo = await _context.Messages.AsNoTracking()
+            .Where(m => roomIds.Contains(m.ConversationId)
+                        && !m.IsRead
+                        && (m.SenderRole == ChatSenderRole.Shopkeeper
+                            || m.SenderRole == ChatSenderRole.User))
+            .GroupBy(m => m.ConversationId)
+            .Select(g => new { ConversationId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.ConversationId, x => x.Count, cancellationToken);
+
+        var shopAccountIds = shopkeepers.Values.Select(sk => sk.AccountId).Distinct().ToList();
+        var shopAccounts = await _context.Accounts.AsNoTracking()
+            .Where(a => shopAccountIds.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, cancellationToken);
 
         foreach (var shop in shops)
         {
@@ -77,10 +147,8 @@ public class GetConversationsQueryHandler
             if (keeper is not null && keeper.Status == ShopkeeperApprovalStatus.Rejected)
                 continue;
 
-            var messages = supportByShop.GetValueOrDefault(shop.Id, []);
-            var last = messages.FirstOrDefault();
-            var unread = messages.Count(m =>
-                !m.IsRead && m.SenderRole == ChatSenderRole.Shopkeeper);
+            lastByConvo.TryGetValue(shop.Id, out var last);
+            unreadByConvo.TryGetValue(shop.Id, out var unread);
 
             var statusLabel = keeper is null
                 ? "Merchant Support"
@@ -92,16 +160,11 @@ public class GetConversationsQueryHandler
                 ? acc.Email
                 : string.Empty;
 
-            string? ctxId = null, ctxName = null, ctxImg = null;
-            decimal? ctxPrice = null;
-            if (supportOrders.TryGetValue(shop.Id, out var supportOrder)
-                && ProductChatContext.TryParse(supportOrder.OrderNotes, out var pid, out var pname, out var pprice, out var pimg))
-            {
-                ctxId = pid.ToString();
-                ctxName = pname;
-                ctxPrice = pprice;
-                ctxImg = pimg;
-            }
+            var preview = last is null
+                ? "Direct support channel"
+                : string.IsNullOrWhiteSpace(last.Content)
+                    ? (last.AttachmentFileName is not null ? $"📎 {last.AttachmentFileName}" : "Attachment")
+                    : last.Content;
 
             conversations.Add(new ConversationDto(
                 shop.Id,
@@ -111,105 +174,64 @@ public class GetConversationsQueryHandler
                 statusLabel,
                 0,
                 0,
-                last?.Message ?? "Direct support channel",
-                last?.SenderAccountId,
+                preview,
+                last?.SenderId,
                 last?.SentAt,
                 unread,
-                last?.SentAt ?? shop.CreatedAt,
-                ctxId,
-                ctxName,
-                ctxImg,
-                ctxPrice));
+                last?.SentAt ?? shop.CreatedAt));
         }
 
-        // ── 2) Customer ↔ Super Admin support channels only (no seller/customer shop chat) ──
-        var orderIdsWithChat = await _context.ChatMessages
-            .Select(cm => cm.OrderRequestId)
-            .Distinct()
-            .ToListAsync(cancellationToken);
+        var userIds = customerConvoIds.Select(c => c.ParticipantId).Distinct().ToList();
+        var users = await _context.Users.AsNoTracking()
+            .Where(u => userIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, cancellationToken);
+        var userAccountIds = users.Values.Select(u => u.AccountId).Distinct().ToList();
+        var userAccounts = await _context.Accounts.AsNoTracking()
+            .Where(a => userAccountIds.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, cancellationToken);
 
-        // Drop ones already represented as shop support threads
-        var shopIdSet = shopIds.ToHashSet();
-        orderIdsWithChat = orderIdsWithChat.Where(id => !shopIdSet.Contains(id)).ToList();
-
-        if (orderIdsWithChat.Count > 0)
+        foreach (var convo in customerConvoIds)
         {
-            var orders = await _context.OrderRequests
-                .Where(o => orderIdsWithChat.Contains(o.Id))
-                .ToListAsync(cancellationToken);
+            lastByConvo.TryGetValue(convo.Id, out var last);
+            unreadByConvo.TryGetValue(convo.Id, out var unread);
+            if (last is null && unread == 0)
+                continue;
 
-            // Only CUSTOMER_SUPPORT_* (and legacy live-support marker)
-            orders = orders
-                .Where(o => !string.IsNullOrWhiteSpace(o.ShippingAddress)
-                    && (o.ShippingAddress.StartsWith("CUSTOMER_SUPPORT_", StringComparison.OrdinalIgnoreCase)
-                        || o.ShippingAddress.Equals("Live Support Inquiry", StringComparison.OrdinalIgnoreCase)))
-                .ToList();
+            users.TryGetValue(convo.ParticipantId, out var user);
+            var account = user is null ? null : userAccounts.GetValueOrDefault(user.AccountId);
+            var preview = last is null
+                ? null
+                : string.IsNullOrWhiteSpace(last.Content)
+                    ? (last.AttachmentFileName is not null ? $"📎 {last.AttachmentFileName}" : "Attachment")
+                    : last.Content;
 
-            var userIds = orders.Select(o => o.UserId).Distinct().ToList();
-            var users = await _context.Users
-                .Where(u => userIds.Contains(u.Id))
-                .ToDictionaryAsync(u => u.Id, cancellationToken);
-
-            var accountIds = users.Values.Select(u => u.AccountId).Distinct().ToList();
-            var accounts = await _context.Accounts
-                .Where(a => accountIds.Contains(a.Id))
-                .ToDictionaryAsync(a => a.Id, cancellationToken);
-
-            var orderIdList = orders.Select(o => o.Id).ToList();
-            var allItems = await _context.OrderRequestItems
-                .Where(i => orderIdList.Contains(i.OrderRequestId))
-                .ToListAsync(cancellationToken);
-            var itemsByOrder = allItems.GroupBy(i => i.OrderRequestId)
-                .ToDictionary(g => g.Key, g => g.ToList());
-
-            var customerMessages = await _context.ChatMessages
-                .Where(cm => orderIdList.Contains(cm.OrderRequestId))
-                .OrderByDescending(cm => cm.SentAt)
-                .ToListAsync(cancellationToken);
-            var messagesByOrder = customerMessages.GroupBy(cm => cm.OrderRequestId)
-                .ToDictionary(g => g.Key, g => g.ToList());
-
-            foreach (var order in orders)
-            {
-                var user = users.GetValueOrDefault(order.UserId);
-                var account = user is null ? null : accounts.GetValueOrDefault(user.AccountId);
-                var orderItems = itemsByOrder.GetValueOrDefault(order.Id, []);
-                var messages = messagesByOrder.GetValueOrDefault(order.Id, []);
-                var lastMessage = messages.FirstOrDefault();
-                var unreadCount = messages.Count(m =>
-                    !m.IsRead && m.SenderRole == ChatSenderRole.User);
-
-                var displayName = !string.IsNullOrWhiteSpace(user?.Name)
-                    ? user.Name
-                    : (!string.IsNullOrWhiteSpace(order.CustomerName) ? order.CustomerName : "Customer");
-
-                conversations.Add(new ConversationDto(
-                    order.Id,
-                    order.UserId,
-                    displayName,
-                    account?.Email ?? string.Empty,
-                    order.Status.ToString(),
-                    orderItems.Sum(i => i.TotalPriceSnapshot),
-                    orderItems.Sum(i => i.Quantity),
-                    lastMessage?.Message,
-                    lastMessage?.SenderAccountId,
-                    lastMessage?.SentAt,
-                    unreadCount,
-                    lastMessage?.SentAt ?? order.CreatedAt));
-            }
+            conversations.Add(new ConversationDto(
+                convo.Id,
+                convo.ParticipantId,
+                !string.IsNullOrWhiteSpace(user?.Name) ? user!.Name : "Customer",
+                account?.Email ?? string.Empty,
+                "Customer Support",
+                0,
+                0,
+                preview,
+                last?.SenderId,
+                last?.SentAt,
+                unread,
+                last?.SentAt ?? convo.CreatedAt));
         }
 
         var sorted = conversations
             .OrderByDescending(c => c.LastMessageAt ?? c.OrderCreatedAt)
             .ToList();
 
-        var totalCount = sorted.Count;
         var page = sorted
             .Skip((request.PageNumber - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToList();
 
         return Result.Success(new PagedList<ConversationDto>(
-            page, totalCount, request.PageNumber, request.PageSize));
+            page, sorted.Count, request.PageNumber, request.PageSize));
     }
+
+    private sealed record CustomerRoom(Guid Id, Guid ParticipantId, DateTime CreatedAt);
 }

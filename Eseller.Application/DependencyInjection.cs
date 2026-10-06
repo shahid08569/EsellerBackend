@@ -1,5 +1,7 @@
-﻿using Eseller.Application.Common.Behaviors;
+using Eseller.Application.Abstractions;
+using Eseller.Application.Common.Behaviors;
 using Eseller.Application.Features.Products;
+using Eseller.Application.Services;
 using FluentValidation;
 using Mapster;
 using MapsterMapper;
@@ -19,6 +21,7 @@ public static class DependencyInjection
         services.AddMediatR(config =>
         {
             config.RegisterServicesFromAssembly(assembly);
+            config.AddOpenBehavior(typeof(CancellationBehavior<,>));
             config.AddOpenBehavior(typeof(LoggingBehavior<,>));
             config.AddOpenBehavior(typeof(ValidationBehavior<,>));
             config.AddOpenBehavior(typeof(PerformanceBehavior<,>));
@@ -33,6 +36,7 @@ public static class DependencyInjection
         services.AddSingleton(config);
         services.AddScoped<IMapper, ServiceMapper>();
         services.AddScoped<IProductBadgeService, ProductBadgeService>();
+        services.AddScoped<IAppNotificationService, AppNotificationService>();
 
         return services;
     }

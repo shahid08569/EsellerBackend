@@ -375,6 +375,11 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
 
+                    b.Property<bool>("IsStorefrontLive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(250)
@@ -424,6 +429,8 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.HasIndex("IsFeatured");
 
                     b.HasIndex("IsHotSelling");
+
+                    b.HasIndex("IsStorefrontLive");
 
                     b.HasIndex("ShopId");
 
@@ -644,6 +651,9 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("IsRecommended")
+                        .HasColumnType("bit");
+
                     b.Property<int>("MaxProductListings")
                         .HasColumnType("int");
 
@@ -788,6 +798,97 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("VariantAttributeValues", (string)null);
+                });
+
+            modelBuilder.Entity("Eseller.Domain.Entities.Chat.Conversation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastMessageAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("ParticipantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ParticipantType")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LastMessageAt");
+
+                    b.HasIndex("ParticipantId", "ParticipantType")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Conversations_Participant");
+
+                    b.ToTable("Conversations", (string)null);
+                });
+
+            modelBuilder.Entity("Eseller.Domain.Entities.Chat.Message", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AttachmentContentType")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("AttachmentFileName")
+                        .HasMaxLength(260)
+                        .HasColumnType("nvarchar(260)");
+
+                    b.Property<long?>("AttachmentSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("AttachmentUrl")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsRead")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime?>("ReadAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("SenderId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("SenderRole")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("SentAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConversationId");
+
+                    b.HasIndex("SenderId");
+
+                    b.HasIndex("SentAt");
+
+                    b.HasIndex("ConversationId", "IsRead");
+
+                    b.ToTable("Messages", (string)null);
                 });
 
             modelBuilder.Entity("Eseller.Domain.Entities.Content.BlogCategory", b =>
@@ -1754,6 +1855,105 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.HasIndex("AccountId", "Purpose");
 
                     b.ToTable("VerificationTokens", (string)null);
+                });
+
+            modelBuilder.Entity("Eseller.Domain.Entities.Notifications.Notification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("EntityId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("EntityType")
+                        .HasColumnType("int");
+
+                    b.Property<string>("EventKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<bool>("IsRead")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("NavigationUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("ReadAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("RecipientRole")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("RecipientUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("EventKey")
+                        .IsUnique();
+
+                    b.HasIndex("RecipientUserId");
+
+                    b.HasIndex("RecipientUserId", "IsRead");
+
+                    b.HasIndex("Type", "EntityId", "RecipientUserId");
+
+                    b.ToTable("Notifications", (string)null);
+                });
+
+            modelBuilder.Entity("Eseller.Domain.Entities.Notifications.ProductStockAlert", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AlertType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("TriggeredAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductId");
+
+                    b.HasIndex("ProductId", "AlertType", "ResolvedAt");
+
+                    b.ToTable("ProductStockAlerts", (string)null);
                 });
 
             modelBuilder.Entity("Eseller.Domain.Entities.Orders.Cart", b =>
@@ -2735,50 +2935,6 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.ToTable("ShippingZones", (string)null);
                 });
 
-            modelBuilder.Entity("Eseller.Domain.Entities.Wallet.Notification", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("AccountId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<bool>("IsRead")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
-
-                    b.Property<string>("Message")
-                        .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("AccountId");
-
-                    b.HasIndex("CreatedAt");
-
-                    b.HasIndex("AccountId", "IsRead");
-
-                    b.ToTable("Notifications", (string)null);
-                });
-
             modelBuilder.Entity("Eseller.Domain.Entities.Wallet.Wallet", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2992,6 +3148,23 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Eseller.Domain.Entities.Chat.Message", b =>
+                {
+                    b.HasOne("Eseller.Domain.Entities.Chat.Conversation", "Conversation")
+                        .WithMany("Messages")
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Eseller.Domain.Entities.Identity.Account", null)
+                        .WithMany()
+                        .HasForeignKey("SenderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Conversation");
+                });
+
             modelBuilder.Entity("Eseller.Domain.Entities.Content.BlogPost", b =>
                 {
                     b.HasOne("Eseller.Domain.Entities.Content.BlogCategory", null)
@@ -3175,6 +3348,15 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.HasOne("Eseller.Domain.Entities.Identity.Account", null)
                         .WithMany()
                         .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Eseller.Domain.Entities.Notifications.Notification", b =>
+                {
+                    b.HasOne("Eseller.Domain.Entities.Identity.Account", null)
+                        .WithMany()
+                        .HasForeignKey("RecipientUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
@@ -3508,15 +3690,6 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("Eseller.Domain.Entities.Wallet.Notification", b =>
-                {
-                    b.HasOne("Eseller.Domain.Entities.Identity.Account", null)
-                        .WithMany()
-                        .HasForeignKey("AccountId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("Eseller.Domain.Entities.Wallet.Wallet", b =>
                 {
                     b.HasOne("Eseller.Domain.Entities.Identity.Account", null)
@@ -3533,6 +3706,11 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                         .HasForeignKey("WalletId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Eseller.Domain.Entities.Chat.Conversation", b =>
+                {
+                    b.Navigation("Messages");
                 });
 #pragma warning restore 612, 618
         }

@@ -38,6 +38,17 @@ public class DeleteProductCommandHandler
         if (product is null)
             return Result.Failure("Product not found.", "PRODUCT_NOT_FOUND");
 
+        // Platform Master Warehouse catalog products cannot be deleted (edit only)
+        var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
+        if (masterShopId.HasValue
+            && product.ShopId == masterShopId.Value
+            && product.SourceProductId == null)
+        {
+            return Result.Failure(
+                "Platform Master Warehouse products cannot be deleted. You can edit them instead.",
+                "MASTER_PRODUCT_DELETE_FORBIDDEN");
+        }
+
         var role = _currentUserService.RoleType;
         var isAdmin = role == RoleType.SuperAdmin || role == RoleType.Partner;
 

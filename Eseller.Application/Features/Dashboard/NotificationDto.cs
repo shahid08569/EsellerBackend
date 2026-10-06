@@ -6,4 +6,10 @@ public record NotificationDto(
     string Title,
     string Message,
     bool IsRead,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? NavigationUrl = null,
+    Guid? EntityId = null,
+    string? EntityType = null,
+    // Backward-compatible aliases for existing Angular clients
+    string? LinkPath = null,
+    Guid? RelatedEntityId = null);

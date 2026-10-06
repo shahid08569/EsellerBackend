@@ -26,7 +26,10 @@ public class NotificationHub : Hub<INotificationClient>
             accountId, role);
 
         if (accountId != Guid.Empty)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"user:{accountId}");
             await Groups.AddToGroupAsync(Context.ConnectionId, $"account-{accountId}");
+        }
 
         if (!string.IsNullOrEmpty(role))
             await Groups.AddToGroupAsync(Context.ConnectionId, role);

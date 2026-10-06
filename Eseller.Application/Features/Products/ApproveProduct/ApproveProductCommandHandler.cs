@@ -1,6 +1,5 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
-using Eseller.Domain.Entities.Wallet;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -12,13 +11,16 @@ public class ApproveProductCommandHandler
 {
     private readonly IApplicationDbContext _context;
     private readonly IDateTime _dateTime;
+    private readonly IAppNotificationService _notifications;
 
     public ApproveProductCommandHandler(
         IApplicationDbContext context,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        IAppNotificationService notifications)
     {
         _context = context;
         _dateTime = dateTime;
+        _notifications = notifications;
     }
 
     public async Task<Result> Handle(
@@ -36,6 +38,7 @@ public class ApproveProductCommandHandler
 
         product.Approve();
         product.SetUpdatedAt(_dateTime.UtcNow);
+        await _context.SaveChangesAsync(cancellationToken);
 
         var shopkeeperAccountId = await _context.Shops
             .Where(s => s.Id == product.ShopId)
@@ -44,19 +47,18 @@ public class ApproveProductCommandHandler
 
         if (shopkeeperAccountId != Guid.Empty)
         {
-            var notif = new Notification
-            {
-                AccountId = shopkeeperAccountId,
-                Type = NotificationType.ProductApproved,
-                Title = "Product approved",
-                Message = $"Your product \"{product.Name}\" was approved and is now live.",
-                IsRead = false
-            };
-            notif.SetCreatedAt(_dateTime.UtcNow);
-            _context.Notifications.Add(notif);
+            await _notifications.NotifyAsync(
+                shopkeeperAccountId,
+                RoleType.Shopkeeper,
+                NotificationType.ProductListingRequestUpdated,
+                "Product Listing Request Updated",
+                $"Your product \"{product.Name}\" was approved and is now live.",
+                NotificationEntityType.Product,
+                product.Id,
+                "/products",
+                $"ProductListingRequestUpdated:{product.Id:N}:Approved:Seller:{shopkeeperAccountId:N}",
+                cancellationToken);
         }
-
-        await _context.SaveChangesAsync(cancellationToken);
 
         return Result.Success();
     }

@@ -2,6 +2,7 @@ using Eseller.Application.Abstractions;
 using Eseller.Domain.Common;
 using Eseller.Domain.Entities.Affiliate;
 using Eseller.Domain.Entities.Catalog;
+using Eseller.Domain.Entities.Chat;
 using Eseller.Domain.Entities.Content;
 using Eseller.Domain.Entities.Engagement;
 using Eseller.Domain.Entities.Identity;
@@ -10,6 +11,7 @@ using Eseller.Domain.Entities.Payment;
 using Eseller.Domain.Entities.Promotions;
 using Eseller.Domain.Entities.Shipping;
 using Eseller.Domain.Entities.ShippingConfig;
+using Eseller.Domain.Entities.Notifications;
 using Eseller.Domain.Entities.Wallet;
 using Microsoft.EntityFrameworkCore;
 
@@ -59,6 +61,8 @@ public class EsellerDbContext : DbContext,IApplicationDbContext
     public DbSet<OrderRequestItem> OrderRequestItems => Set<OrderRequestItem>();
     public DbSet<OrderStatusHistory> OrderStatusHistories => Set<OrderStatusHistory>();
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
+    public DbSet<Conversation> Conversations => Set<Conversation>();
+    public DbSet<Message> Messages => Set<Message>();
 
     // Returns & Shipping
     public DbSet<Shipment> Shipments => Set<Shipment>();
@@ -90,6 +94,7 @@ public class EsellerDbContext : DbContext,IApplicationDbContext
     public DbSet<Wallet> Wallets => Set<Wallet>();
     public DbSet<WalletTransaction> WalletTransactions => Set<WalletTransaction>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<ProductStockAlert> ProductStockAlerts => Set<ProductStockAlert>();
 
     // Content & Settings
     public DbSet<BlogCategory> BlogCategories => Set<BlogCategory>();

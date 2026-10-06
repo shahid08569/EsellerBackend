@@ -66,7 +66,7 @@ public class GetDashboardSummaryQueryHandler
 
         // Notifications
         var unreadNotifications = await _context.Notifications
-            .CountAsync(n => n.AccountId == _currentUserService.AccountId.Value && !n.IsRead,
+            .CountAsync(n => n.RecipientUserId == _currentUserService.AccountId.Value && !n.IsRead,
                 cancellationToken);
 
         // Chat messages
