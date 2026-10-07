@@ -196,10 +196,10 @@ public class ProductsController : ControllerBase
     }
 
     /// <summary>
-    /// Create a Super Admin master catalog product (not for sellers).
+    /// Create product — SuperAdmin → master warehouse; Shopkeeper → own shop (pending approval).
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "SuperAdmin,Partner")]
+    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
     public async Task<IActionResult> Create(
         [FromBody] CreateProductRequest request,
         CancellationToken cancellationToken)
@@ -216,18 +216,24 @@ public class ProductsController : ControllerBase
             return result.ErrorCode switch
             {
                 "SHOP_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
+                "SHOPKEEPER_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
                 "CATEGORY_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
                 "BRAND_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
+                "SHOP_NOT_VERIFIED" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
+                "PRODUCT_LIMIT_REACHED" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
                 "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
                 _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
             };
         }
 
+        var isSeller = User.IsInRole("Shopkeeper");
         return Ok(new
         {
             productId = result.Value,
-            isPendingApproval = false,
-            message = "Catalog product created successfully."
+            isPendingApproval = isSeller,
+            message = isSeller
+                ? "Product submitted for Super Admin approval."
+                : "Catalog product created successfully."
         });
     }
 
@@ -336,10 +342,10 @@ public class ProductsController : ControllerBase
     }
 
     /// <summary>
-    /// Upload a product image (Super Admin catalog).
+    /// Upload a product image (admin catalog or seller own product).
     /// </summary>
     [HttpPost("{id:guid}/images")]
-    [Authorize(Roles = "SuperAdmin,Partner")]
+    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
     [RequestSizeLimit(5 * 1024 * 1024)]
     public async Task<IActionResult> UploadImage(
         Guid id,
@@ -375,10 +381,10 @@ public class ProductsController : ControllerBase
     }
 
     /// <summary>
-    /// Upload multiple product images at once (bulk — Super Admin catalog).
+    /// Upload multiple product images at once (admin catalog or seller own product).
     /// </summary>
     [HttpPost("{id:guid}/images/bulk")]
-    [Authorize(Roles = "SuperAdmin,Partner")]
+    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
     [RequestSizeLimit(50 * 1024 * 1024)]   // 50 MB total
     public async Task<IActionResult> UploadMultipleImages(
         Guid id,

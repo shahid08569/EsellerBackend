@@ -1,5 +1,6 @@
 ﻿using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
+using Eseller.Application.Features.Products;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,7 +20,9 @@ public class GetPendingProductsQueryHandler
         GetPendingProductsQuery request,
         CancellationToken cancellationToken)
     {
-        // Pending seller listing requests (cloned from Super Admin catalog)
+        // Pending seller listings: warehouse clones OR seller-created originals (not master warehouse)
+        var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
+
         var query = _context.Products
             .IgnoreQueryFilters()
             .Where(p =>
@@ -27,7 +30,7 @@ public class GetPendingProductsQueryHandler
                 && p.IsActive
                 && p.DeletedAt == null
                 && p.RejectionReason == null
-                && p.SourceProductId != null)
+                && (!masterShopId.HasValue || p.ShopId != masterShopId.Value))
             .OrderByDescending(p => p.CreatedAt);
 
         var totalCount = await query.CountAsync(cancellationToken);

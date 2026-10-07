@@ -130,13 +130,19 @@ public class AdminBannersController : ControllerBase
     {
         try
         {
+            file ??= Request.Form.Files.GetFile("file")
+                  ?? Request.Form.Files.GetFile("image")
+                  ?? Request.Form.Files.FirstOrDefault();
+
             if (file is null || file.Length == 0)
                 return BadRequest(new { error = "No file provided", errorCode = "NO_FILE" });
 
-            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
+            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp", ".svg", ".gif" };
             var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(ext))
+                ext = ".png";
             if (!allowedExtensions.Contains(ext))
-                return BadRequest(new { error = "Invalid file type. Only JPG, PNG, and WEBP images are allowed.", errorCode = "INVALID_FILE_TYPE" });
+                return BadRequest(new { error = "Invalid file type. Only JPG, PNG, WEBP, GIF, and SVG are allowed.", errorCode = "INVALID_FILE_TYPE" });
 
             await using var stream = file.OpenReadStream();
             var uniqueFileName = $"banners/banner-{Guid.NewGuid()}{ext}";

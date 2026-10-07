@@ -19,21 +19,29 @@ public class GetActivePaymentLogosQueryHandler
         GetActivePaymentLogosQuery request,
         CancellationToken cancellationToken)
     {
-        var logos = await _context.PaymentShowcaseLogos
-            .AsNoTracking()
-            .Where(x => x.IsActive)
-            .OrderBy(x => x.SortOrder)
-            .ThenByDescending(x => x.CreatedAt)
-            .Select(x => new PaymentShowcaseLogoDto(
-                x.Id,
-                x.Name,
-                x.ImageUrl,
-                x.SortOrder,
-                x.IsActive,
-                x.CreatedAt,
-                x.UpdatedAt))
-            .ToListAsync(cancellationToken);
+        try
+        {
+            var logos = await _context.PaymentShowcaseLogos
+                .AsNoTracking()
+                .Where(x => x.IsActive)
+                .OrderBy(x => x.SortOrder)
+                .ThenByDescending(x => x.CreatedAt)
+                .Select(x => new PaymentShowcaseLogoDto(
+                    x.Id,
+                    x.Name,
+                    x.ImageUrl,
+                    x.SortOrder,
+                    x.IsActive,
+                    x.CreatedAt,
+                    x.UpdatedAt))
+                .ToListAsync(cancellationToken);
 
-        return Result.Success(logos);
+            return Result.Success(logos);
+        }
+        catch
+        {
+            // Table may not exist yet on a lagging deploy — never break homepage
+            return Result.Success(new List<PaymentShowcaseLogoDto>());
+        }
     }
 }

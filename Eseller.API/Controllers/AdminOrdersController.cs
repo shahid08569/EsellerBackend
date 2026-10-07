@@ -1,3 +1,4 @@
+using Eseller.Application.Features.Orders.AdminPlaceOrder;
 using Eseller.Application.Features.Orders.DeleteOrder;
 using Eseller.Application.Features.Orders.GetAdminOrders;
 using Eseller.Application.Features.Orders.GetOrderStatusHistory;
@@ -52,6 +53,46 @@ public class AdminOrdersController : ControllerBase
         }
 
         return Ok(result.Value);
+    }
+
+    /// <summary>
+    /// Super Admin places an order to any seller (or live warehouse) product variant.
+    /// Appears in the normal platform order list for that shop.
+    /// </summary>
+    [HttpPost("place")]
+    public async Task<IActionResult> PlaceOrder(
+        [FromBody] AdminPlaceOrderRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sender.Send(
+            new AdminPlaceOrderCommand(
+                request.ProductVariantId,
+                request.Quantity,
+                request.CustomerName,
+                request.CustomerPhone,
+                request.ShippingAddress,
+                request.City,
+                request.State,
+                request.Country,
+                request.OrderNotes),
+            cancellationToken);
+
+        if (!result.IsSuccess)
+        {
+            return result.ErrorCode switch
+            {
+                "UNAUTHENTICATED" => Unauthorized(new { error = result.Error, errorCode = result.ErrorCode }),
+                "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
+                "VARIANT_NOT_AVAILABLE" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
+                "PRODUCT_NOT_AVAILABLE" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
+                "PRODUCT_NOT_LIVE" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
+                "SHOP_NOT_AVAILABLE" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
+                "INSUFFICIENT_STOCK" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
+                _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
+            };
+        }
+
+        return Ok(new { orderId = result.Value, message = "Order placed successfully." });
     }
 
     /// <summary>
@@ -161,3 +202,14 @@ public class AdminOrdersController : ControllerBase
 public record UpdateOrderStatusRequest(OrderStatus NewStatus);
 
 public record UpdateOrderPaymentStatusRequest(PaymentStatus NewStatus);
+
+public record AdminPlaceOrderRequest(
+    Guid ProductVariantId,
+    int Quantity,
+    string? CustomerName = null,
+    string? CustomerPhone = null,
+    string? ShippingAddress = null,
+    string? City = null,
+    string? State = null,
+    string? Country = null,
+    string? OrderNotes = null);

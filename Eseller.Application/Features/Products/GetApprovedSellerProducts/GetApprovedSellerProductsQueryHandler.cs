@@ -1,5 +1,6 @@
 using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
+using Eseller.Application.Features.Products;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,13 +20,15 @@ public class GetApprovedSellerProductsQueryHandler
         GetApprovedSellerProductsQuery request,
         CancellationToken cancellationToken)
     {
-        // Approved seller store listings (cloned from Super Admin catalog)
+        // Approved seller store listings (clones + seller-created originals; exclude master warehouse)
+        var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
+
         var query = _context.Products
             .IgnoreQueryFilters()
             .Where(p =>
                 p.IsApproved
                 && p.DeletedAt == null
-                && p.SourceProductId != null)
+                && (!masterShopId.HasValue || p.ShopId != masterShopId.Value))
             .OrderByDescending(p => p.UpdatedAt);
 
         var totalCount = await query.CountAsync(cancellationToken);

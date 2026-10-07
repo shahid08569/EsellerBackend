@@ -13,15 +13,18 @@ public class CreateProductCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
+    private readonly IAppNotificationService _notifications;
 
     public CreateProductCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        IAppNotificationService notifications)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
+        _notifications = notifications;
     }
 
     public async Task<Result<Guid>> Handle(
@@ -31,29 +34,14 @@ public class CreateProductCommandHandler
         if (_currentUserService.AccountId is null)
             return Result.Failure<Guid>("User is not authenticated.", "UNAUTHENTICATED");
 
-        var isSuperAdminOrPartner = _currentUserService.RoleType == RoleType.SuperAdmin ||
-                                    _currentUserService.RoleType == RoleType.Partner;
+        var role = _currentUserService.RoleType;
+        var isAdmin = role == RoleType.SuperAdmin || role == RoleType.Partner;
+        var isSeller = role == RoleType.Shopkeeper;
 
-        if (!isSuperAdminOrPartner)
+        if (!isAdmin && !isSeller)
             return Result.Failure<Guid>(
-                "Only Super Admin can create catalog products. Sellers must use Add to Store from the marketplace catalog.",
+                "Only Super Admin or sellers can create products.",
                 "FORBIDDEN");
-
-        // Admin catalog products always belong to the global Platform Master Warehouse.
-        // Never assign to a seller shop — sellers clone from the marketplace catalog.
-        Shop masterShop;
-        try
-        {
-            masterShop = await MasterCatalog.GetOrCreateMasterShopAsync(_context, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            return Result.Failure<Guid>(
-                $"Master warehouse is not ready: {ex.Message}",
-                "MASTER_WAREHOUSE_ERROR");
-        }
-
-        var targetShopId = masterShop.Id;
 
         var categoryExists = await _context.Categories
             .AnyAsync(c => c.Id == request.CategoryId && c.IsActive, cancellationToken);
@@ -72,13 +60,75 @@ public class CreateProductCommandHandler
                 return Result.Failure<Guid>("Brand not found.", "BRAND_NOT_FOUND");
         }
 
+        Shop targetShop;
+        bool isPendingApproval;
+
+        if (isAdmin)
+        {
+            // SuperAdmin / Partner → Platform Master Warehouse (approved, not live until opted-in)
+            try
+            {
+                targetShop = await MasterCatalog.GetOrCreateMasterShopAsync(_context, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                return Result.Failure<Guid>(
+                    $"Master warehouse is not ready: {ex.Message}",
+                    "MASTER_WAREHOUSE_ERROR");
+            }
+
+            isPendingApproval = false;
+        }
+        else
+        {
+            // Seller → own shop listing, pending SuperAdmin approval
+            var shopkeeper = await _context.Shopkeepers
+                .FirstOrDefaultAsync(sk => sk.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+
+            if (shopkeeper is null)
+                return Result.Failure<Guid>("Shopkeeper profile not found.", "SHOPKEEPER_NOT_FOUND");
+
+            if (shopkeeper.Status != ShopkeeperApprovalStatus.Approved)
+                return Result.Failure<Guid>(
+                    "Your store must be verified by Super Admin before you can add products.",
+                    "SHOP_NOT_VERIFIED");
+
+            var shop = await _context.Shops
+                .FirstOrDefaultAsync(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null, cancellationToken);
+
+            if (shop is null)
+                return Result.Failure<Guid>("Store not found.", "SHOP_NOT_FOUND");
+
+            if (!shop.IsActive)
+                return Result.Failure<Guid>(
+                    "Your store is inactive. Contact Super Admin.",
+                    "SHOP_INACTIVE");
+
+            var limit = await MasterCatalog.ResolveProductLimitAsync(_context, shop, cancellationToken);
+            var usedSlots = await _context.Products
+                .IgnoreQueryFilters()
+                .CountAsync(p =>
+                    p.ShopId == shop.Id
+                    && p.DeletedAt == null
+                    && p.RejectionReason == null, cancellationToken);
+
+            if (usedSlots >= limit)
+                return Result.Failure<Guid>(
+                    $"Package capacity reached. Your current plan allows a maximum of {limit} products. Please upgrade your package.",
+                    "PRODUCT_LIMIT_REACHED");
+
+            targetShop = shop;
+            isPendingApproval = true;
+        }
+
+        var slugPrefix = isAdmin ? null : targetShop.Slug;
         var slug = await ProductSlug.GenerateUniqueAsync(
-            _context, request.Name, prefix: null, cancellationToken);
+            _context, request.Name, prefix: slugPrefix, cancellationToken);
         var now = _dateTime.UtcNow;
 
         var product = new Product
         {
-            ShopId = targetShopId,
+            ShopId = targetShop.Id,
             SourceProductId = null,
             CategoryId = request.CategoryId,
             BrandId = request.BrandId,
@@ -87,7 +137,7 @@ public class CreateProductCommandHandler
             Description = request.Description,
             BasePrice = request.BasePrice,
             IsFeatured = false,
-            IsApproved = true,
+            IsApproved = !isPendingApproval,
             IsStorefrontLive = false,
             ViewCount = 0,
             SeoTitle = request.SeoTitle,
@@ -99,24 +149,49 @@ public class CreateProductCommandHandler
 
         _context.Products.Add(product);
 
-        masterShop.TotalProducts = await _context.Products
-            .IgnoreQueryFilters()
-            .CountAsync(p =>
-                p.ShopId == masterShop.Id
-                && p.DeletedAt == null
-                && p.SourceProductId == null, cancellationToken) + 1;
-        masterShop.SetUpdatedAt(now);
-
         try
         {
             await _context.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateException ex) when (ProductSlug.IsUniqueSlugViolation(ex))
         {
-            // Race: another request claimed the same slug between check and insert.
-            product.Slug = ProductSlug.WithUniqueSuffix(ProductSlug.Normalize(request.Name));
+            product.Slug = ProductSlug.WithUniqueSuffix(
+                ProductSlug.Normalize(isAdmin ? request.Name : $"{targetShop.Slug}-{request.Name}"));
             product.SetUpdatedAt(_dateTime.UtcNow);
             await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        targetShop.TotalProducts = await _context.Products
+            .IgnoreQueryFilters()
+            .CountAsync(p =>
+                p.ShopId == targetShop.Id
+                && p.DeletedAt == null, cancellationToken);
+        targetShop.SetUpdatedAt(now);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        if (isPendingApproval)
+        {
+            await _notifications.NotifyAdminsAsync(
+                NotificationType.ProductListingRequest,
+                "Seller Product Submitted",
+                $"{targetShop.Name} submitted \"{product.Name}\" for approval.",
+                NotificationEntityType.Product,
+                product.Id,
+                "/products?status=pending",
+                $"ProductListingRequest:{product.Id:N}",
+                cancellationToken);
+
+            await _notifications.NotifyAsync(
+                _currentUserService.AccountId.Value,
+                RoleType.Shopkeeper,
+                NotificationType.NewProduct,
+                "Product Submitted",
+                $"\"{product.Name}\" was submitted and is pending Super Admin approval.",
+                NotificationEntityType.Product,
+                product.Id,
+                "/products",
+                $"NewProduct:{product.Id:N}:Seller:{_currentUserService.AccountId.Value:N}",
+                cancellationToken);
         }
 
         return Result.Success(product.Id);
