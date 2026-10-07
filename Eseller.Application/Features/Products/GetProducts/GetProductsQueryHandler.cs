@@ -135,8 +135,10 @@ public class GetProductsQueryHandler
                 request.PageSize));
         }
 
-        // Public marketplace — approved seller listings + Platform Master Warehouse catalog
-        var query = MasterCatalog.StorefrontListings(_context, masterShopId);
+        // Global marketplace vs single-shop page (seller-own products only on shop page)
+        var query = request.ShopId.HasValue
+            ? MasterCatalog.ShopListings(_context, request.ShopId.Value, masterShopId)
+            : MasterCatalog.StorefrontListings(_context, masterShopId);
 
         // Filters
         if (request.CategoryId.HasValue)
@@ -144,9 +146,6 @@ public class GetProductsQueryHandler
 
         if (request.BrandId.HasValue)
             query = query.Where(p => p.BrandId == request.BrandId.Value);
-
-        if (request.ShopId.HasValue)
-            query = query.Where(p => p.ShopId == request.ShopId.Value);
 
         if (request.MinPrice.HasValue)
             query = query.Where(p => p.BasePrice >= request.MinPrice.Value);

@@ -20,7 +20,7 @@ public class GetPendingProductsQueryHandler
         GetPendingProductsQuery request,
         CancellationToken cancellationToken)
     {
-        // Pending seller listings: warehouse clones OR seller-created originals (not master warehouse)
+        // Pending seller listings only (never master warehouse catalog SKUs)
         var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
 
         var query = _context.Products
@@ -30,8 +30,15 @@ public class GetPendingProductsQueryHandler
                 && p.IsActive
                 && p.DeletedAt == null
                 && p.RejectionReason == null
-                && (!masterShopId.HasValue || p.ShopId != masterShopId.Value))
-            .OrderByDescending(p => p.CreatedAt);
+                && (!masterShopId.HasValue || p.ShopId != masterShopId.Value));
+
+        var kind = request.Kind?.Trim().ToLowerInvariant();
+        if (kind is "global" or "warehouse" or "listing")
+            query = query.Where(p => p.SourceProductId != null);
+        else if (kind is "own" or "seller" or "new")
+            query = query.Where(p => p.SourceProductId == null);
+
+        query = query.OrderByDescending(p => p.CreatedAt);
 
         var totalCount = await query.CountAsync(cancellationToken);
 

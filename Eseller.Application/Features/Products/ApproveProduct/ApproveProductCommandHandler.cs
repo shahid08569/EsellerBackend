@@ -47,12 +47,17 @@ public class ApproveProductCommandHandler
 
         if (shopkeeperAccountId != Guid.Empty)
         {
+            var isSellerOwn = product.SourceProductId is null;
+            var body = isSellerOwn
+                ? $"Your product \"{product.Name}\" was approved and is now in My Own Products (not added to global warehouse)."
+                : $"Your warehouse listing \"{product.Name}\" was approved and is now live in your shop.";
+
             await _notifications.NotifyAsync(
                 shopkeeperAccountId,
                 RoleType.Shopkeeper,
                 NotificationType.ProductListingRequestUpdated,
                 "Product Listing Request Updated",
-                $"Your product \"{product.Name}\" was approved and is now live.",
+                body,
                 NotificationEntityType.Product,
                 product.Id,
                 "/products",

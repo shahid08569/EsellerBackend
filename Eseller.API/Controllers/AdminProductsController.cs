@@ -33,9 +33,11 @@ public class AdminProductsController : ControllerBase
     public async Task<IActionResult> GetPending(
         [FromQuery] int pageNumber = 1,
         [FromQuery] int pageSize = 20,
+        /// <summary>global|warehouse = warehouse listing requests; own|seller = seller-created products.</summary>
+        [FromQuery] string? kind = null,
         CancellationToken cancellationToken = default)
     {
-        var query = new GetPendingProductsQuery(pageNumber, pageSize);
+        var query = new GetPendingProductsQuery(pageNumber, pageSize, kind);
         var result = await _sender.Send(query, cancellationToken);
 
         if (!result.IsSuccess)

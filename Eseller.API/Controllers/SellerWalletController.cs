@@ -1,4 +1,5 @@
 using Eseller.Application.Abstractions;
+using Eseller.Application.Common;
 using Eseller.Domain.Entities.Payment;
 using Eseller.Domain.Entities.Wallet;
 using Eseller.Domain.Enums;
@@ -84,6 +85,17 @@ public class SellerWalletController : ControllerBase
             minimumWithdrawal,
             merchantSharePercent = 20
         });
+    }
+
+    /// <summary>Platform-managed payout methods for seller withdrawal UI.</summary>
+    [HttpGet("payment-methods")]
+    public async Task<IActionResult> GetPaymentMethods(CancellationToken cancellationToken)
+    {
+        var methods = await SellerWithdrawalPaymentMethodsStore.LoadAllAsync(
+            _context, _dateTime, seedIfEmpty: true, cancellationToken);
+
+        var active = methods.Where(m => m.IsActive).ToList();
+        return Ok(new { items = active });
     }
 
     [HttpGet("withdrawals")]

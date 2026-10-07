@@ -403,8 +403,11 @@ public static class MasterCatalog
     }
 
     /// <summary>
-    /// Public website products: approved seller shop listings +
-    /// Master Warehouse catalog SKUs that SuperAdmin explicitly marked live.
+    /// Global customer marketplace:
+    /// - Master Warehouse SKUs SuperAdmin marked live
+    /// - Seller listings cloned from warehouse (SourceProductId set)
+    /// Seller-created originals (SourceProductId null on a seller shop) are NOT global —
+    /// they stay on that seller only (see ShopListings).
     /// </summary>
     public static IQueryable<Product> StorefrontListings(
         IApplicationDbContext context,
@@ -415,12 +418,32 @@ public static class MasterCatalog
                 && p.IsApproved
                 && p.DeletedAt == null
                 && (
-                    !masterShopId.HasValue
-                        ? true
-                        : p.ShopId != masterShopId.Value
-                          || (p.ShopId == masterShopId.Value
-                              && p.SourceProductId == null
-                              && p.IsStorefrontLive)
+                    // Warehouse clones listed by sellers → visible globally under that seller
+                    p.SourceProductId != null
+                    // Master warehouse live SKUs
+                    || (masterShopId.HasValue
+                        && p.ShopId == masterShopId.Value
+                        && p.SourceProductId == null
+                        && p.IsStorefrontLive)
+                ));
+
+    /// <summary>
+    /// Products visible on a specific seller shop page: warehouse clones + seller-own approved.
+    /// </summary>
+    public static IQueryable<Product> ShopListings(
+        IApplicationDbContext context,
+        Guid shopId,
+        Guid? masterShopId) =>
+        context.Products
+            .Where(p =>
+                p.ShopId == shopId
+                && p.IsActive
+                && p.IsApproved
+                && p.DeletedAt == null
+                && (
+                    p.SourceProductId != null
+                    || !masterShopId.HasValue
+                    || p.ShopId != masterShopId.Value
                 ));
 
     /// <summary>

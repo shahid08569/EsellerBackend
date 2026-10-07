@@ -31,8 +31,8 @@ public class GetShopBySlugQueryHandler
         if (shop.Slug == MasterCatalog.ShopSlug || shop.Name == MasterCatalog.ShopName)
             return Result.Failure<ShopDetailDto>("Shop not found.", "SHOP_NOT_FOUND");
 
-        var listedCount = await MasterCatalog.StorefrontListings(_context, masterShopId: null)
-            .Where(p => p.ShopId == shop.Id)
+        var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
+        var listedCount = await MasterCatalog.ShopListings(_context, shop.Id, masterShopId)
             .CountAsync(cancellationToken);
 
         if (listedCount == 0)
