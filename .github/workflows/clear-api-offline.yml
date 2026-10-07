@@ -1,0 +1,39 @@
+# Emergency: delete stuck app_offline.htm so IIS stops returning
+# "Updating Eseller API…" (503 → browser false CORS errors).
+name: Clear API Offline Banner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  clear_offline:
+    runs-on: windows-latest
+    steps:
+      - name: Delete app_offline.htm via FTP
+        shell: pwsh
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:FTP_SERVER)) { throw "Missing FTP_SERVER secret" }
+          $dir = $env:FTP_SERVER_DIR.TrimEnd('/')
+          $url = "ftp://$($env:FTP_SERVER)$dir/app_offline.htm"
+          $removed = $false
+          foreach ($enableSsl in @($true, $false)) {
+            try {
+              $req = [System.Net.FtpWebRequest]::Create($url)
+              $req.Method = [System.Net.WebRequestMethods+Ftp]::DeleteFile
+              $req.Credentials = New-Object System.Net.NetworkCredential($env:FTP_USERNAME, $env:FTP_PASSWORD)
+              $req.UsePassive = $true
+              $req.EnableSsl = $enableSsl
+              $resp = $req.GetResponse(); $resp.Close()
+              Write-Host "Removed app_offline.htm (ssl=$enableSsl)"
+              $removed = $true
+              break
+            } catch {
+              Write-Host "delete attempt ssl=$enableSsl : $($_.Exception.Message)"
+            }
+          }
+          if (-not $removed) { throw "Could not delete app_offline.htm — check FTP secrets / path" }

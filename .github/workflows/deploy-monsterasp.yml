@@ -22,7 +22,9 @@ on:
 
 concurrency:
   group: deploy-api-monsterasp
-  cancel-in-progress: true
+  # Never cancel mid-deploy: cancelling after app_offline.htm upload leaves the API
+  # stuck on "Updating Eseller API…" (IIS 503 → browsers report false CORS errors).
+  cancel-in-progress: false
 
 jobs:
   build_and_deploy:
