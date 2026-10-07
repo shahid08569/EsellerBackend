@@ -94,6 +94,7 @@ public interface IApplicationDbContext
     DbSet<CmsPage> CmsPages { get; }
     DbSet<Setting> Settings { get; }
     DbSet<HomepageBanner> HomepageBanners { get; }
+    DbSet<PaymentShowcaseLogo> PaymentShowcaseLogos { get; }
 
     // Shipping Config
     DbSet<ShippingZone> ShippingZones { get; }

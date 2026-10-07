@@ -178,6 +178,22 @@ if (shouldMigrate || shouldSeed)
                 ALTER TABLE [HomepageBanners] ADD [TextColor] nvarchar(50) NULL;
             IF COL_LENGTH('HomepageBanners', 'AvailableSizes') IS NULL
                 ALTER TABLE [HomepageBanners] ADD [AvailableSizes] nvarchar(100) NULL;
+
+            IF OBJECT_ID(N'[PaymentShowcaseLogos]', N'U') IS NULL
+            BEGIN
+                CREATE TABLE [PaymentShowcaseLogos] (
+                    [Id] uniqueidentifier NOT NULL,
+                    [Name] nvarchar(120) NOT NULL,
+                    [ImageUrl] nvarchar(500) NOT NULL,
+                    [SortOrder] int NOT NULL CONSTRAINT [DF_PaymentShowcaseLogos_SortOrder] DEFAULT 0,
+                    [IsActive] bit NOT NULL CONSTRAINT [DF_PaymentShowcaseLogos_IsActive] DEFAULT 1,
+                    [CreatedAt] datetime2 NOT NULL,
+                    [UpdatedAt] datetime2 NOT NULL,
+                    CONSTRAINT [PK_PaymentShowcaseLogos] PRIMARY KEY ([Id])
+                );
+                CREATE NONCLUSTERED INDEX [IX_PaymentShowcaseLogos_IsActive] ON [PaymentShowcaseLogos]([IsActive]);
+                CREATE NONCLUSTERED INDEX [IX_PaymentShowcaseLogos_SortOrder] ON [PaymentShowcaseLogos]([SortOrder]);
+            END
             """);
 
         if (shouldSeed)

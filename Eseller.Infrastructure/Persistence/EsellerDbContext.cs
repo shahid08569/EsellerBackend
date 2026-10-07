@@ -102,6 +102,7 @@ public class EsellerDbContext : DbContext,IApplicationDbContext
     public DbSet<CmsPage> CmsPages => Set<CmsPage>();
     public DbSet<Setting> Settings => Set<Setting>();
     public DbSet<HomepageBanner> HomepageBanners => Set<HomepageBanner>();
+    public DbSet<PaymentShowcaseLogo> PaymentShowcaseLogos => Set<PaymentShowcaseLogo>();
 
     // Shipping Config
     public DbSet<ShippingZone> ShippingZones => Set<ShippingZone>();
