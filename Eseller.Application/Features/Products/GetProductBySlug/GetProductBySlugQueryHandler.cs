@@ -60,16 +60,25 @@ public class GetProductBySlugQueryHandler
         if (product is null)
             return Result.Failure<ProductDto>("Product not found.", "PRODUCT_NOT_FOUND");
 
-        // Increment view count
-        var tracked = await _context.Products
-            .FirstOrDefaultAsync(p => p.Id == product.Id, cancellationToken);
-
-        if (tracked is not null)
-        {
-            tracked.ViewCount++;
-            await _context.SaveChangesAsync(cancellationToken);
-        }
+        // Fire-and-forget view count — never block the product page on MonsterASP DB write.
+        _ = IncrementViewCountAsync(product.Id);
 
         return Result.Success(product);
+    }
+
+    private async Task IncrementViewCountAsync(Guid productId)
+    {
+        try
+        {
+            var tracked = await _context.Products
+                .FirstOrDefaultAsync(p => p.Id == productId);
+            if (tracked is null) return;
+            tracked.ViewCount++;
+            await _context.SaveChangesAsync(CancellationToken.None);
+        }
+        catch
+        {
+            // Non-critical metric
+        }
     }
 }
