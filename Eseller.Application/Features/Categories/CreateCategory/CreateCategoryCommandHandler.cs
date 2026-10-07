@@ -39,14 +39,28 @@ public class CreateCategoryCommandHandler
         // 2. Generate slug
         var slug = GenerateSlug(request.Name);
 
-        // 3. Check slug uniqueness
-        var slugExists = await _context.Categories
-            .AnyAsync(c => c.Slug == slug, cancellationToken);
+        // 3. Reuse soft-deleted category with same slug, else enforce uniqueness
+        var existing = await _context.Categories
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.Slug == slug, cancellationToken);
 
-        if (slugExists)
-            return Result.Failure<Guid>(
-                "A category with this name already exists.",
-                "CATEGORY_NAME_TAKEN");
+        if (existing is not null)
+        {
+            if (existing.DeletedAt is null)
+                return Result.Failure<Guid>(
+                    "A category with this name already exists.",
+                    "CATEGORY_NAME_TAKEN");
+
+            existing.ParentCategoryId = request.ParentCategoryId;
+            existing.Name = request.Name.Trim();
+            existing.SeoTitle = request.SeoTitle;
+            existing.SeoDescription = request.SeoDescription;
+            existing.IsActive = true;
+            existing.DeletedAt = null;
+            existing.SetUpdatedAt(_dateTime.UtcNow);
+            await _context.SaveChangesAsync(cancellationToken);
+            return Result.Success(existing.Id);
+        }
 
         // 4. Create category
         var category = new Category

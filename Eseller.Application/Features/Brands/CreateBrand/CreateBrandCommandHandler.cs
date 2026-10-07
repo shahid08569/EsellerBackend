@@ -27,14 +27,26 @@ public class CreateBrandCommandHandler
         // 1. Generate slug
         var slug = GenerateSlug(request.Name);
 
-        // 2. Check slug uniqueness
-        var slugExists = await _context.Brands
-            .AnyAsync(b => b.Slug == slug, cancellationToken);
+        // 2. Reuse soft-deleted brand with same slug, else enforce uniqueness
+        var existing = await _context.Brands
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(b => b.Slug == slug, cancellationToken);
 
-        if (slugExists)
-            return Result.Failure<Guid>(
-                "A brand with this name already exists.",
-                "BRAND_NAME_TAKEN");
+        if (existing is not null)
+        {
+            if (existing.DeletedAt is null)
+                return Result.Failure<Guid>(
+                    "A brand with this name already exists.",
+                    "BRAND_NAME_TAKEN");
+
+            existing.Name = request.Name.Trim();
+            existing.LogoUrl = string.IsNullOrWhiteSpace(request.LogoUrl) ? existing.LogoUrl : request.LogoUrl.Trim();
+            existing.IsActive = request.IsActive;
+            existing.DeletedAt = null;
+            existing.SetUpdatedAt(_dateTime.UtcNow);
+            await _context.SaveChangesAsync(cancellationToken);
+            return Result.Success(existing.Id);
+        }
 
         // 3. Create brand
         var brand = new Brand
