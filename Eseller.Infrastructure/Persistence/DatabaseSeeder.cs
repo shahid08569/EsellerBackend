@@ -36,6 +36,7 @@ public class DatabaseSeeder
         await SeedSuperAdminAsync(cancellationToken);
         await SeedStandardTiersAsync(cancellationToken);
         await SeedCatalogCategoriesAndBrandsAsync(cancellationToken);
+        await EnsureCatalogMediaAsync(cancellationToken);
     }
 
     /// <summary>
@@ -49,16 +50,16 @@ public class DatabaseSeeder
 
         var categories = new[]
         {
-            new { Name = "Electronics", Slug = "electronics", Order = 1 },
-            new { Name = "Mobiles & Tablets", Slug = "mobiles-tablets", Order = 2 },
-            new { Name = "Computers & Laptops", Slug = "computers-laptops", Order = 3 },
-            new { Name = "Fashion", Slug = "fashion", Order = 4 },
-            new { Name = "Home & Living", Slug = "home-living", Order = 5 },
-            new { Name = "Beauty & Personal Care", Slug = "beauty-personal-care", Order = 6 },
-            new { Name = "Sports & Outdoors", Slug = "sports-outdoors", Order = 7 },
-            new { Name = "Groceries", Slug = "groceries", Order = 8 },
-            new { Name = "Toys & Kids", Slug = "toys-kids", Order = 9 },
-            new { Name = "Automotive", Slug = "automotive", Order = 10 }
+            new { Name = "Electronics", Slug = "electronics", Order = 1, Image = CatalogMedia.CategoryImage("electronics") },
+            new { Name = "Mobiles & Tablets", Slug = "mobiles-tablets", Order = 2, Image = CatalogMedia.CategoryImage("mobiles-tablets") },
+            new { Name = "Computers & Laptops", Slug = "computers-laptops", Order = 3, Image = CatalogMedia.CategoryImage("computers-laptops") },
+            new { Name = "Fashion", Slug = "fashion", Order = 4, Image = CatalogMedia.CategoryImage("fashion") },
+            new { Name = "Home & Living", Slug = "home-living", Order = 5, Image = CatalogMedia.CategoryImage("home-living") },
+            new { Name = "Beauty & Personal Care", Slug = "beauty-personal-care", Order = 6, Image = CatalogMedia.CategoryImage("beauty-personal-care") },
+            new { Name = "Sports & Outdoors", Slug = "sports-outdoors", Order = 7, Image = CatalogMedia.CategoryImage("sports-outdoors") },
+            new { Name = "Groceries", Slug = "groceries", Order = 8, Image = CatalogMedia.CategoryImage("groceries") },
+            new { Name = "Toys & Kids", Slug = "toys-kids", Order = 9, Image = CatalogMedia.CategoryImage("toys-kids") },
+            new { Name = "Automotive", Slug = "automotive", Order = 10, Image = CatalogMedia.CategoryImage("automotive") }
         };
 
         foreach (var spec in categories)
@@ -72,6 +73,7 @@ public class DatabaseSeeder
             {
                 Name = spec.Name,
                 Slug = spec.Slug,
+                ImageUrl = spec.Image,
                 IsActive = true,
                 IsFeaturedOnHomepage = spec.Order <= 4,
                 HomepageDisplayOrder = spec.Order
@@ -84,14 +86,14 @@ public class DatabaseSeeder
 
         var brands = new[]
         {
-            new { Name = "Samsung", Slug = "samsung" },
-            new { Name = "Apple", Slug = "apple" },
-            new { Name = "Xiaomi", Slug = "xiaomi" },
-            new { Name = "Sony", Slug = "sony" },
-            new { Name = "Huawei", Slug = "huawei" },
-            new { Name = "Nike", Slug = "nike" },
-            new { Name = "Adidas", Slug = "adidas" },
-            new { Name = "Generic / Unbranded", Slug = "generic-unbranded" }
+            new { Name = "Samsung", Slug = "samsung", Logo = CatalogMedia.BrandLogo("samsung") },
+            new { Name = "Apple", Slug = "apple", Logo = CatalogMedia.BrandLogo("apple") },
+            new { Name = "Xiaomi", Slug = "xiaomi", Logo = CatalogMedia.BrandLogo("xiaomi") },
+            new { Name = "Sony", Slug = "sony", Logo = CatalogMedia.BrandLogo("sony") },
+            new { Name = "Huawei", Slug = "huawei", Logo = CatalogMedia.BrandLogo("huawei") },
+            new { Name = "Nike", Slug = "nike", Logo = CatalogMedia.BrandLogo("nike") },
+            new { Name = "Adidas", Slug = "adidas", Logo = CatalogMedia.BrandLogo("adidas") },
+            new { Name = "Generic / Unbranded", Slug = "generic-unbranded", Logo = CatalogMedia.BrandLogo("generic-unbranded") }
         };
 
         foreach (var spec in brands)
@@ -105,6 +107,7 @@ public class DatabaseSeeder
             {
                 Name = spec.Name,
                 Slug = spec.Slug,
+                LogoUrl = spec.Logo,
                 IsActive = true
             };
             brand.SetCreatedAt(now);
@@ -119,6 +122,57 @@ public class DatabaseSeeder
         _logger.LogInformation(
             "Catalog seed: {Cats} categories, {Brands} brands created.",
             createdCats, createdBrands);
+    }
+
+    /// <summary>
+    /// Backfill missing category images / brand logos for existing rows (idempotent).
+    /// </summary>
+    private async Task EnsureCatalogMediaAsync(CancellationToken cancellationToken)
+    {
+        var now = _dateTime.UtcNow;
+        var updated = 0;
+
+        var categories = await _context.Categories
+            .IgnoreQueryFilters()
+            .Where(c => c.DeletedAt == null && (c.ImageUrl == null || c.ImageUrl == ""))
+            .ToListAsync(cancellationToken);
+
+        foreach (var cat in categories)
+        {
+            var url = CatalogMedia.CategoryImage(cat.Slug);
+            if (string.IsNullOrWhiteSpace(url)) continue;
+            cat.ImageUrl = url;
+            cat.SetUpdatedAt(now);
+            updated++;
+        }
+
+        // Fill missing brand logos; also replace stale local /uploads logos for known brands
+        var brands = await _context.Brands
+            .IgnoreQueryFilters()
+            .Where(b => b.DeletedAt == null)
+            .ToListAsync(cancellationToken);
+
+        foreach (var brand in brands)
+        {
+            var url = CatalogMedia.BrandLogo(brand.Slug);
+            if (string.IsNullOrWhiteSpace(url)) continue;
+
+            var current = brand.LogoUrl?.Trim() ?? "";
+            var needsFill = string.IsNullOrWhiteSpace(current)
+                || current.StartsWith("/uploads/", StringComparison.OrdinalIgnoreCase)
+                || current.StartsWith("uploads/", StringComparison.OrdinalIgnoreCase);
+            if (!needsFill) continue;
+
+            brand.LogoUrl = url;
+            brand.SetUpdatedAt(now);
+            updated++;
+        }
+
+        if (updated > 0)
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Catalog media backfill: {Count} rows updated.", updated);
+        }
     }
 
     private async Task SeedSuperAdminAsync(CancellationToken cancellationToken)
