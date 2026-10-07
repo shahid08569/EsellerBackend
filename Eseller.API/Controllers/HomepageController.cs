@@ -9,6 +9,7 @@ using Eseller.Application.Features.Homepage.GetOutOfStockProducts;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Eseller.API.Controllers;
 
@@ -17,26 +18,41 @@ namespace Eseller.API.Controllers;
 [AllowAnonymous]
 public class HomepageController : ControllerBase
 {
-    private readonly ISender _sender;
+    private static readonly TimeSpan SectionsCacheTtl = TimeSpan.FromSeconds(60);
 
-    public HomepageController(ISender sender)
+    private readonly ISender _sender;
+    private readonly IMemoryCache _cache;
+
+    public HomepageController(ISender sender, IMemoryCache cache)
     {
         _sender = sender;
+        _cache = cache;
     }
 
     // ═══════════════════════════════════════════════════════════
-    // ALL SECTIONS (Ek call mein sab)
+    // ALL SECTIONS (Ek call mein sab) — cached for MonsterASP speed
     // ═══════════════════════════════════════════════════════════
     [HttpGet("sections")]
     public async Task<IActionResult> GetSections(
         [FromQuery] int limit = 8,
         CancellationToken cancellationToken = default)
     {
-        var query = new GetHomepageSectionsQuery(limit);
+        var safeLimit = limit > 20 ? 20 : (limit < 1 ? 8 : limit);
+        var cacheKey = $"homepage:sections:v1:{safeLimit}";
+
+        if (_cache.TryGetValue(cacheKey, out HomepageSectionsDto? cached) && cached is not null)
+            return Ok(cached);
+
+        var query = new GetHomepageSectionsQuery(safeLimit);
         var result = await _sender.Send(query, cancellationToken);
 
         if (!result.IsSuccess)
             return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
+
+        _cache.Set(cacheKey, result.Value, new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = SectionsCacheTtl
+        });
 
         return Ok(result.Value);
     }

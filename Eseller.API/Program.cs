@@ -35,6 +35,7 @@ builder.Services.AddControllers(options =>
 {
     options.Filters.Add<RequestAbortedExceptionFilter>();
 });
+builder.Services.AddMemoryCache();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
 
