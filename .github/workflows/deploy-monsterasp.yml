@@ -5,6 +5,9 @@
 #
 # CRITICAL: Never use FTP-Deploy-Action with a tiny local folder (e.g. only app_offline.htm).
 # That action MIRRORS and deletes everything else on the server (DLLs + uploads).
+#
+# Common failure: FTPError 550 GetHandle — IIS still locking DLLs. Mitigated by longer
+# app_offline wait + up to 3 FTP deploy retries. Image upload runs AFTER site is online.
 
 name: Deploy API → MonsterASP
 
@@ -29,6 +32,7 @@ concurrency:
 jobs:
   build_and_deploy:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,9 +110,12 @@ jobs:
           }
           Write-Host "Uploaded app_offline.htm only (no directory sync)."
 
-      - name: Wait for IIS unlock
+      - name: Wait for IIS to release DLL locks
         shell: pwsh
-        run: Start-Sleep -Seconds 8
+        run: |
+          # MonsterASP often still locks Eseller.API.dll / BCrypt*.dll for 20–40s after offline.
+          Write-Host "Waiting 55s for worker process unload..."
+          Start-Sleep -Seconds 55
 
       - name: Invalidate FTP sync state (force full binary re-upload)
         shell: pwsh
@@ -118,7 +125,6 @@ jobs:
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
           FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
         run: |
-          # After a bad mirror wipe, sync-state still thinks DLLs exist → skips restore.
           $dir = $env:FTP_SERVER_DIR.TrimEnd('/')
           $url = "ftp://$($env:FTP_SERVER)$dir/.ftp-deploy-sync-state.json"
           foreach ($enableSsl in @($true, $false)) {
@@ -138,7 +144,10 @@ jobs:
           Write-Host "No sync-state file (ok)."
           exit 0
 
-      - name: Deploy publish folder (exclude uploads — never mirror-delete images)
+      # Retry wrapper: FTP 550 GetHandle is intermittent while IIS holds DLLs.
+      - name: Deploy publish folder (attempt 1)
+        id: ftp1
+        continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
@@ -154,12 +163,116 @@ jobs:
             **/appsettings.Production.json
             **/logs/**
             **/wwwroot/uploads/**
+            wwwroot/uploads/**
+            **/*.pdb
+
+      - name: Wait before FTP retry 2
+        if: steps.ftp1.outcome == 'failure'
+        shell: pwsh
+        run: |
+          Write-Host "FTP attempt 1 failed (likely 550 lock). Waiting 45s..."
+          Start-Sleep -Seconds 45
+
+      - name: Deploy publish folder (attempt 2)
+        id: ftp2
+        if: steps.ftp1.outcome == 'failure'
+        continue-on-error: true
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
+          local-dir: ./publish/
+          server-dir: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/appsettings.Production.json
+            **/logs/**
             **/wwwroot/uploads/**
             wwwroot/uploads/**
             **/*.pdb
 
-      # Additive only — curl --ftp-create-dirs; never deletes remote files.
+      - name: Wait before FTP retry 3
+        if: steps.ftp1.outcome == 'failure' && steps.ftp2.outcome == 'failure'
+        shell: pwsh
+        run: |
+          Write-Host "FTP attempt 2 failed. Waiting 60s for final retry..."
+          Start-Sleep -Seconds 60
+
+      - name: Deploy publish folder (attempt 3)
+        id: ftp3
+        if: steps.ftp1.outcome == 'failure' && steps.ftp2.outcome == 'failure'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
+          local-dir: ./publish/
+          server-dir: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/appsettings.Production.json
+            **/logs/**
+            **/wwwroot/uploads/**
+            wwwroot/uploads/**
+            **/*.pdb
+
+      - name: Confirm FTP deploy succeeded
+        shell: pwsh
+        run: |
+          $ok = ('${{ steps.ftp1.outcome }}' -eq 'success') -or ('${{ steps.ftp2.outcome }}' -eq 'success') -or ('${{ steps.ftp3.outcome }}' -eq 'success')
+          if (-not $ok) {
+            throw "All FTP deploy attempts failed (FTP 550 file lock). Recycle App Pool in MonsterASP and re-run workflow."
+          }
+          Write-Host "FTP deploy OK."
+
+      # Bring API online BEFORE long image sync so site is not stuck offline for 10+ minutes.
+      - name: Remove app_offline.htm
+        if: always()
+        shell: pwsh
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+        run: |
+          $dir = $env:FTP_SERVER_DIR.TrimEnd('/')
+          $url = "ftp://$($env:FTP_SERVER)$dir/app_offline.htm"
+          $removed = $false
+          for ($i = 1; $i -le 3; $i++) {
+            foreach ($enableSsl in @($true, $false)) {
+              try {
+                $req = [System.Net.FtpWebRequest]::Create($url)
+                $req.Method = [System.Net.WebRequestMethods+Ftp]::DeleteFile
+                $req.Credentials = New-Object System.Net.NetworkCredential($env:FTP_USERNAME, $env:FTP_PASSWORD)
+                $req.UsePassive = $true
+                $req.EnableSsl = $enableSsl
+                $resp = $req.GetResponse(); $resp.Close()
+                Write-Host "Removed app_offline.htm (ssl=$enableSsl, try=$i)"
+                $removed = $true
+                break
+              } catch {
+                Write-Host "delete attempt ssl=$enableSsl try=$i : $($_.Exception.Message)"
+              }
+            }
+            if ($removed) { break }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $removed) {
+            Write-Host "::warning::Could not delete app_offline.htm — run Clear API Offline Banner workflow."
+          }
+          exit 0
+
+      # Additive only — never deletes remote files. Non-fatal if some images fail.
       - name: Upload product/banner images (additive, no delete)
+        if: success()
+        continue-on-error: true
         shell: pwsh
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
@@ -171,35 +284,18 @@ jobs:
         run: |
           ./deploy/monsterasp/upload-uploads-additive.ps1
 
-      - name: Remove app_offline.htm
-        if: always()
+      - name: Verify API health
+        if: success()
         shell: pwsh
-        env:
-          FTP_SERVER: ${{ secrets.FTP_SERVER }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-          FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
-          FTP_PROTOCOL: ${{ secrets.FTP_PROTOCOL || 'ftps' }}
         run: |
-          $dir = $env:FTP_SERVER_DIR.TrimEnd('/')
-          $url = "ftp://$($env:FTP_SERVER)$dir/app_offline.htm"
-          $removed = $false
-          foreach ($enableSsl in @($true, $false)) {
-            try {
-              $req = [System.Net.FtpWebRequest]::Create($url)
-              $req.Method = [System.Net.WebRequestMethods+Ftp]::DeleteFile
-              $req.Credentials = New-Object System.Net.NetworkCredential($env:FTP_USERNAME, $env:FTP_PASSWORD)
-              $req.UsePassive = $true
-              $req.EnableSsl = $enableSsl
-              $resp = $req.GetResponse(); $resp.Close()
-              Write-Host "Removed app_offline.htm (ssl=$enableSsl)"
-              $removed = $true
-              break
-            } catch {
-              Write-Host "delete attempt ssl=$enableSsl : $($_.Exception.Message)"
+          Start-Sleep -Seconds 8
+          try {
+            $r = Invoke-WebRequest -Uri "https://api.esellerglobal.com/health" -UseBasicParsing -TimeoutSec 30
+            Write-Host "Health status: $($r.StatusCode)"
+            Write-Host $r.Content.Substring(0, [Math]::Min(200, $r.Content.Length))
+            if ($r.Content -match 'Updating Eseller API') {
+              Write-Host "::warning::Health still shows offline banner — run Clear API Offline Banner."
             }
+          } catch {
+            Write-Host "::warning::Health check failed: $($_.Exception.Message)"
           }
-          if (-not $removed) {
-            Write-Host "app_offline.htm already absent or could not delete (non-fatal)."
-          }
-          exit 0
