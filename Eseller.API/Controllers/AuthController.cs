@@ -6,15 +6,18 @@ using Eseller.Application.Features.Auth.Logout;
 using Eseller.Application.Features.Auth.RefreshToken;
 using Eseller.Application.Features.Auth.RegisterCustomer;
 using Eseller.Application.Features.Auth.RegisterSeller;
+using Eseller.Application.Features.Auth.RegisterSuperAdmin;
 using Eseller.Application.Features.Auth.ResendVerificationEmail;
 using Eseller.Application.Features.Auth.ResetPassword;
 using Eseller.Application.Features.Auth.SendPhoneOtp;
 using Eseller.Application.Features.Auth.VerifyEmail;
 using Eseller.Application.Features.Auth.VerifyPhoneOtp;
+using Eseller.Domain.Enums;
 using Eseller.Infrastructure.Settings;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace Eseller.API.Controllers;
@@ -65,6 +68,35 @@ public class AuthController : ControllerBase
         if (!result.IsSuccess)
             return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
         return Ok(result.Value);
+    }
+
+    /// <summary>
+    /// Bootstrap SuperAdmin signup — only when no SuperAdmin exists yet.
+    /// </summary>
+    [HttpPost("register/superadmin")]
+    [AllowAnonymous]
+    public async Task<IActionResult> RegisterSuperAdmin(
+        [FromBody] RegisterSuperAdminCommand command,
+        CancellationToken ct)
+    {
+        var result = await _sender.Send(command, ct);
+        if (!result.IsSuccess)
+            return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
+        return Ok(result.Value);
+    }
+
+    /// <summary>
+    /// Whether public SuperAdmin bootstrap signup is still open.
+    /// </summary>
+    [HttpGet("superadmin-signup-available")]
+    [AllowAnonymous]
+    public async Task<IActionResult> SuperAdminSignupAvailable(
+        [FromServices] Eseller.Application.Abstractions.IApplicationDbContext db,
+        CancellationToken ct)
+    {
+        var exists = await db.Accounts
+            .AnyAsync(a => a.RoleType == RoleType.SuperAdmin, ct);
+        return Ok(new { available = !exists });
     }
 
     // ═══════════════════════════════════════════════════════════
