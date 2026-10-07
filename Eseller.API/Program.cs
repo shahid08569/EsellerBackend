@@ -55,10 +55,23 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("FrontendPolicy", policy =>
     {
-        policy.WithOrigins(corsOrigins)
+        // Normalize trailing slashes / case so www vs apex never silently fail.
+        var allowed = new HashSet<string>(
+            corsOrigins
+                .Where(o => !string.IsNullOrWhiteSpace(o))
+                .Select(o => o.Trim().TrimEnd('/')),
+            StringComparer.OrdinalIgnoreCase);
+
+        policy
+            .SetIsOriginAllowed(origin =>
+            {
+                if (string.IsNullOrWhiteSpace(origin)) return false;
+                return allowed.Contains(origin.Trim().TrimEnd('/'));
+            })
             .AllowAnyHeader()
             .AllowAnyMethod()
-            .AllowCredentials();
+            .AllowCredentials()
+            .SetPreflightMaxAge(TimeSpan.FromMinutes(10));
     });
 });
 
@@ -204,8 +217,10 @@ if (shouldMigrate || shouldSeed)
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Database migrate/seed failed. Check SQL Server and connection string.");
-        throw;
+        // Never crash the host on seed/migrate hiccups. If the process fails to start,
+        // MonsterASP/IIS returns bare 503 HTML with no CORS headers — browsers then
+        // report misleading "blocked by CORS policy" errors on www.esellerglobal.com.
+        logger.LogError(ex, "Database migrate/seed failed. API will still start; check SQL Server and connection string.");
     }
 }
 
@@ -214,6 +229,9 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
     app.MapScalarApiReference();
 }
+
+// CORS must run early so preflight + error responses still get Access-Control-* headers.
+app.UseCors("FrontendPolicy");
 
 app.UseStaticFiles();
 
@@ -252,7 +270,6 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
-app.UseCors("FrontendPolicy");
 app.UseRateLimiter();
 
 app.UseHttpsRedirection();
