@@ -262,8 +262,8 @@ public class UpdateSellerOrderStatusCommandHandler
         {
             (OrderStatus.Pending, OrderStatus.Confirmed) => true,
             (OrderStatus.Confirmed, OrderStatus.Processing) => true,
-            (OrderStatus.Processing, OrderStatus.Packed) => true,
-            (OrderStatus.Packed, OrderStatus.Shipped) => true,
+            (OrderStatus.Processing, OrderStatus.OnTheWay) => true,
+            (OrderStatus.OnTheWay, OrderStatus.Shipped) => true,
             (OrderStatus.Shipped, OrderStatus.OutForDelivery) => true,
             (OrderStatus.OutForDelivery, OrderStatus.Delivered) => true,
             (OrderStatus.Pending, OrderStatus.Cancelled) => true,

@@ -1,5 +1,6 @@
 using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
+using Eseller.Domain.Entities.Payment;
 using Eseller.Domain.Entities.Wallet;
 using Eseller.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
@@ -135,6 +136,184 @@ public class AdminSellerWalletsController : ControllerBase
         return Ok(details);
     }
 
+    /// <summary>
+    /// Super Admin adjusts seller Pending / Available earning totals (persists on SellerEarnings rows).
+    /// Available delta also adjusts wallet balance so seller wallet stays consistent.
+    /// </summary>
+    [HttpPut("{accountId:guid}/earnings")]
+    public async Task<IActionResult> SetEarnings(
+        Guid accountId,
+        [FromBody] SetSellerEarningsRequest body,
+        CancellationToken cancellationToken)
+    {
+        if (body.PendingEarnings < 0 || body.AvailableEarnings < 0)
+            return BadRequest(new { error = "Earnings cannot be negative.", errorCode = "INVALID_EARNINGS" });
+
+        var shopkeeper = await _context.Shopkeepers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(sk => sk.AccountId == accountId, cancellationToken);
+
+        if (shopkeeper is null)
+            return NotFound(new { error = "Shopkeeper not found for this account.", errorCode = "SHOPKEEPER_NOT_FOUND" });
+
+        var shopIds = await _context.Shops
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(s => s.DeletedAt == null && s.ShopkeeperId == shopkeeper.Id)
+            .Select(s => s.Id)
+            .ToListAsync(cancellationToken);
+
+        var sellerOrders = shopIds.Count == 0
+            ? []
+            : await _context.SellerOrders
+                .Where(so => shopIds.Contains(so.ShopId))
+                .OrderByDescending(so => so.Id)
+                .Select(so => new { so.Id })
+                .ToListAsync(cancellationToken);
+
+        var sellerOrderIds = sellerOrders.Select(o => o.Id).ToList();
+        var fallbackSellerOrderId = sellerOrderIds.FirstOrDefault();
+
+        var earnings = sellerOrderIds.Count == 0
+            ? new List<SellerEarning>()
+            : await _context.SellerEarnings
+                .Where(se => sellerOrderIds.Contains(se.SellerOrderId)
+                          && (se.Status == SellerEarningStatus.Pending
+                              || se.Status == SellerEarningStatus.Available))
+                .ToListAsync(cancellationToken);
+
+        var pending = earnings.Where(e => e.Status == SellerEarningStatus.Pending).ToList();
+        var available = earnings.Where(e => e.Status == SellerEarningStatus.Available).ToList();
+
+        static decimal AmountOf(SellerEarning e) =>
+            e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount;
+
+        var previousPending = pending.Sum(AmountOf);
+        var previousAvailable = available.Sum(AmountOf);
+
+        var adjustError = AdjustEarningsGroup(
+            pending,
+            body.PendingEarnings,
+            SellerEarningStatus.Pending,
+            fallbackSellerOrderId);
+        if (adjustError is not null)
+            return BadRequest(new { error = adjustError, errorCode = "EARNINGS_ADJUST_FAILED" });
+
+        adjustError = AdjustEarningsGroup(
+            available,
+            body.AvailableEarnings,
+            SellerEarningStatus.Available,
+            fallbackSellerOrderId);
+        if (adjustError is not null)
+            return BadRequest(new { error = adjustError, errorCode = "EARNINGS_ADJUST_FAILED" });
+
+        var now = _dateTime.UtcNow;
+        var availableDelta = body.AvailableEarnings - previousAvailable;
+
+        if (availableDelta != 0)
+        {
+            var wallet = await _context.Wallets
+                .FirstOrDefaultAsync(w => w.AccountId == accountId, cancellationToken);
+
+            if (wallet is null)
+            {
+                wallet = new Wallet { AccountId = accountId, Balance = 0 };
+                wallet.SetCreatedAt(now);
+                wallet.SetUpdatedAt(now);
+                _context.Wallets.Add(wallet);
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+
+            var previousBalance = wallet.Balance;
+            var newBalance = Math.Max(0m, previousBalance + availableDelta);
+            wallet.Balance = newBalance;
+            wallet.SetUpdatedAt(now);
+
+            _context.WalletTransactions.Add(new WalletTransaction
+            {
+                WalletId = wallet.Id,
+                Direction = availableDelta > 0 ? WalletDirection.Credit : WalletDirection.Debit,
+                TransactionType = WalletTransactionType.ManualAdjustment,
+                Amount = Math.Abs(previousBalance - newBalance),
+                ReferenceType = "AdminEarningsAdjustment",
+                ReferenceId = null,
+                Description =
+                    $"Super Admin available earnings adjustment ({previousAvailable:N2} → {body.AvailableEarnings:N2})",
+                CreatedAt = now
+            });
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            accountId,
+            pendingEarnings = body.PendingEarnings,
+            availableEarnings = body.AvailableEarnings,
+            previousPending,
+            previousAvailable,
+            message = "Seller earnings updated."
+        });
+    }
+
+    private string? AdjustEarningsGroup(
+        List<SellerEarning> rows,
+        decimal target,
+        SellerEarningStatus status,
+        Guid fallbackSellerOrderId)
+    {
+        static decimal AmountOf(SellerEarning e) =>
+            e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount;
+
+        if (rows.Count == 0)
+        {
+            if (target == 0) return null;
+            if (fallbackSellerOrderId == Guid.Empty)
+                return "No seller orders found to attach earnings adjustment.";
+
+            var created = new SellerEarning
+            {
+                SellerOrderId = fallbackSellerOrderId,
+                GrossAmount = target * 5m, // imply 20% share of gross
+                CommissionAmount = target,
+                NetAmount = target,
+                Status = status
+            };
+            _context.SellerEarnings.Add(created);
+            rows.Add(created);
+            return null;
+        }
+
+        var current = rows.Sum(AmountOf);
+        if (current <= 0)
+        {
+            rows[0].NetAmount = target;
+            rows[0].CommissionAmount = target;
+            if (rows[0].GrossAmount <= 0)
+                rows[0].GrossAmount = target * 5m;
+            for (var i = 1; i < rows.Count; i++)
+            {
+                rows[i].NetAmount = 0;
+                rows[i].CommissionAmount = 0;
+            }
+            return null;
+        }
+
+        var allocated = 0m;
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var share = i == rows.Count - 1
+                ? target - allocated
+                : Math.Round(AmountOf(rows[i]) / current * target, 2);
+            if (share < 0) share = 0;
+            allocated += share;
+            rows[i].NetAmount = share;
+            rows[i].CommissionAmount = share;
+        }
+
+        return null;
+    }
+
     /// <summary>Set wallet balance for a seller account (creates wallet if missing).</summary>
     [HttpPut("{accountId:guid}/balance")]
     public async Task<IActionResult> SetBalance(
@@ -199,3 +378,5 @@ public class AdminSellerWalletsController : ControllerBase
 }
 
 public record SetSellerWalletBalanceRequest(decimal Balance);
+
+public record SetSellerEarningsRequest(decimal PendingEarnings, decimal AvailableEarnings);
