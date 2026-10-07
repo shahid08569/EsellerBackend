@@ -28,8 +28,15 @@ public class GetApprovedSellerProductsQueryHandler
             .Where(p =>
                 p.IsApproved
                 && p.DeletedAt == null
-                && (!masterShopId.HasValue || p.ShopId != masterShopId.Value))
-            .OrderByDescending(p => p.UpdatedAt);
+                && (!masterShopId.HasValue || p.ShopId != masterShopId.Value));
+
+        var kind = request.Kind?.Trim().ToLowerInvariant();
+        if (kind is "global" or "warehouse" or "listing")
+            query = query.Where(p => p.SourceProductId != null);
+        else if (kind is "own" or "seller" or "new")
+            query = query.Where(p => p.SourceProductId == null);
+
+        query = query.OrderByDescending(p => p.UpdatedAt);
 
         var totalCount = await query.CountAsync(cancellationToken);
 

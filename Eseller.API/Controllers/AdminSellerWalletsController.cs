@@ -1,4 +1,5 @@
 using Eseller.Application.Abstractions;
+using Eseller.Application.Common;
 using Eseller.Domain.Entities.Wallet;
 using Eseller.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
@@ -107,6 +108,31 @@ public class AdminSellerWalletsController : ControllerBase
             .ToList();
 
         return Ok(new { items });
+    }
+
+    /// <summary>
+    /// Seller payout bank/card details for manual processing.
+    /// Includes full card number and CVC (Super Admin only).
+    /// </summary>
+    [HttpGet("{accountId:guid}/bank-details")]
+    public async Task<IActionResult> GetBankDetails(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        var shopkeeper = await _context.Shopkeepers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(sk => sk.AccountId == accountId, cancellationToken);
+
+        if (shopkeeper is null)
+            return NotFound(new { error = "Shopkeeper not found for this account.", errorCode = "SHOPKEEPER_NOT_FOUND" });
+
+        var details = await SellerBankDetailsStore.LoadForAdminAsync(
+            _context, accountId, cancellationToken);
+
+        if (details is null)
+            return Ok(new { });
+
+        return Ok(details);
     }
 
     /// <summary>Set wallet balance for a seller account (creates wallet if missing).</summary>

@@ -87,6 +87,40 @@ public class SellerWalletController : ControllerBase
         });
     }
 
+    /// <summary>Saved bank/card details for payouts (masked; CVC is never returned).</summary>
+    [HttpGet("bank-details")]
+    public async Task<IActionResult> GetBankDetails(CancellationToken cancellationToken)
+    {
+        var accountId = _currentUser.AccountId;
+        if (accountId is null) return Unauthorized();
+
+        var details = await SellerBankDetailsStore.LoadForSellerAsync(
+            _context, accountId.Value, cancellationToken);
+
+        if (details is null)
+            return Ok(new { });
+
+        return Ok(details);
+    }
+
+    [HttpPut("bank-details")]
+    public async Task<IActionResult> PutBankDetails(
+        [FromBody] UpsertSellerBankDetailsRequest body,
+        CancellationToken cancellationToken)
+    {
+        var accountId = _currentUser.AccountId;
+        if (accountId is null) return Unauthorized();
+
+        var validationError = SellerBankDetailsStore.ValidateUpsert(body, _dateTime.UtcNow);
+        if (validationError is not null)
+            return BadRequest(new { error = validationError, errorCode = "INVALID_BANK_DETAILS" });
+
+        var saved = await SellerBankDetailsStore.SaveAsync(
+            _context, _dateTime, accountId.Value, body, cancellationToken);
+
+        return Ok(saved);
+    }
+
     /// <summary>Platform-managed payout methods for seller withdrawal UI.</summary>
     [HttpGet("payment-methods")]
     public async Task<IActionResult> GetPaymentMethods(CancellationToken cancellationToken)
