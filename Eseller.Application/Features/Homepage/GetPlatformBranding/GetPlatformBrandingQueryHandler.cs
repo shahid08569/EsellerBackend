@@ -12,8 +12,8 @@ public class GetPlatformBrandingQueryHandler
     public const string FooterLogoKey = "Branding.FooterLogoUrl";
     public const string TaglineKey = "Branding.Tagline";
 
-    public const string DefaultNavLogo = "/brand/eseller-global-nav.png";
-    public const string DefaultFooterLogo = "/brand/eseller-global-logo.png";
+    public const string DefaultNavLogo = "/brand/eseller-global-nav.png?v=orange3";
+    public const string DefaultFooterLogo = "/brand/eseller-global-logo.png?v=orange3";
     public const string DefaultTagline = "Shop Without Borders";
 
     private readonly IApplicationDbContext _context;
