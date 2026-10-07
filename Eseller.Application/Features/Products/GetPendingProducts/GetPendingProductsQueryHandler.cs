@@ -52,7 +52,8 @@ public class GetPendingProductsQueryHandler
                 p.BasePrice,
                 _context.ProductImages
                     .Where(pi => pi.ProductId == p.Id)
-                    .OrderBy(pi => pi.SortOrder)
+                    .OrderByDescending(pi => pi.IsCover)
+                    .ThenBy(pi => pi.SortOrder)
                     .Select(pi => pi.ImageUrl)
                     .FirstOrDefault(),
                 _context.Shops.Where(s => s.Id == p.ShopId).Select(s => s.Name).FirstOrDefault() ?? string.Empty,

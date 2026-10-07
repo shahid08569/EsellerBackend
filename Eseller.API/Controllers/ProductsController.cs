@@ -317,10 +317,10 @@ public class ProductsController : ControllerBase
     }
 
     /// <summary>
-    /// Set cover image for a catalog product (Super Admin).
+    /// Set cover image (Super Admin any product; Shopkeeper own shop products).
     /// </summary>
     [HttpPut("{id:guid}/images/{imageId:guid}/cover")]
-    [Authorize(Roles = "SuperAdmin,Partner")]
+    [Authorize(Roles = "Shopkeeper,SuperAdmin,Partner")]
     public async Task<IActionResult> SetCoverImage(
         Guid id,
         Guid imageId,

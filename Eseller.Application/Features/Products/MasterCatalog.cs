@@ -136,20 +136,33 @@ public static class MasterCatalog
     }
 
     /// <summary>
-    /// Move legacy admin catalog products (often stuck on deleted/inactive shops) onto master warehouse.
-    /// Seller "Add to Store" clones (description starts with Warehouse listing for...) stay on seller shops.
+    /// Move ONLY orphaned legacy admin catalog SKUs onto master warehouse.
+    /// Never touches products on active seller shops — seller-own creations stay with that seller.
+    /// Eligible: SourceProductId null, not already on master, and shop is deleted or inactive.
     /// </summary>
     private static async Task MigrateLegacyCatalogProductsAsync(
         IApplicationDbContext context,
         Shop masterShop,
         CancellationToken cancellationToken)
     {
+        var orphanedShopIds = await context.Shops
+            .IgnoreQueryFilters()
+            .Where(s =>
+                s.Id != masterShop.Id
+                && (s.DeletedAt != null || !s.IsActive))
+            .Select(s => s.Id)
+            .ToListAsync(cancellationToken);
+
+        if (orphanedShopIds.Count == 0)
+            return;
+
         var candidates = await context.Products
             .IgnoreQueryFilters()
             .Where(p =>
                 p.DeletedAt == null
                 && p.SourceProductId == null
                 && p.ShopId != masterShop.Id
+                && orphanedShopIds.Contains(p.ShopId)
                 && (p.Description == null
                     || !p.Description.StartsWith(SellerListingDescriptionPrefix)))
             .ToListAsync(cancellationToken);
@@ -178,7 +191,9 @@ public static class MasterCatalog
     }
 
     /// <summary>
-    /// Link old seller listings to catalog by name and copy missing images/variants from source.
+    /// Repair warehouse clones only: copy missing images/variants when SourceProductId is already set
+    /// or description marks an Add-to-Store listing. Never assigns SourceProductId to seller-own originals
+    /// (would move them out of My Own into From Warehouse).
     /// </summary>
     private static async Task RepairSellerListingLinksAndImagesAsync(
         IApplicationDbContext context,
@@ -202,12 +217,13 @@ public static class MasterCatalog
             .GroupBy(p => p.Name.Trim().ToLowerInvariant())
             .ToDictionary(g => g.Key, g => g.First().Id);
 
+        // Only warehouse clones / Add-to-Store listings — never pure seller-own (SourceProductId null without prefix)
         var orphanListings = await context.Products
             .IgnoreQueryFilters()
             .Where(p =>
                 p.DeletedAt == null
                 && p.ShopId != masterShopId
-                && (p.SourceProductId == null
+                && (p.SourceProductId != null
                     || (p.Description != null && p.Description.StartsWith(SellerListingDescriptionPrefix))))
             .ToListAsync(cancellationToken);
 
@@ -216,19 +232,27 @@ public static class MasterCatalog
 
         foreach (var listing in orphanListings)
         {
-            var key = listing.Name.Trim().ToLowerInvariant();
-            if (!catalogByName.TryGetValue(key, out var sourceId))
-                continue;
-
-            if (listing.Id == sourceId)
-                continue;
-
-            if (listing.SourceProductId != sourceId)
+            Guid sourceId;
+            if (listing.SourceProductId is Guid existingSource)
             {
+                sourceId = existingSource;
+            }
+            else
+            {
+                var key = listing.Name.Trim().ToLowerInvariant();
+                if (!catalogByName.TryGetValue(key, out sourceId))
+                    continue;
+
+                if (listing.Id == sourceId)
+                    continue;
+
                 listing.SourceProductId = sourceId;
                 listing.SetUpdatedAt(now);
                 changed = true;
             }
+
+            if (listing.Id == sourceId)
+                continue;
 
             var hasImages = await context.ProductImages
                 .AnyAsync(pi => pi.ProductId == listing.Id, cancellationToken);

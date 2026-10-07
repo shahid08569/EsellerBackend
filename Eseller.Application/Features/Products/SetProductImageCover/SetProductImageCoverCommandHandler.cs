@@ -28,8 +28,9 @@ public class SetProductImageCoverCommandHandler
             return Result.Failure("User is not authenticated.", "UNAUTHENTICATED");
 
         var role = _currentUserService.RoleType;
-        if (role != RoleType.SuperAdmin && role != RoleType.Partner)
-            return Result.Failure("Only Super Admin can set cover images.", "FORBIDDEN");
+        var isAdmin = role is RoleType.SuperAdmin or RoleType.Partner;
+        if (!isAdmin && role != RoleType.Shopkeeper)
+            return Result.Failure("Not allowed to set cover images.", "FORBIDDEN");
 
         var product = await _context.Products
             .IgnoreQueryFilters()
@@ -37,6 +38,22 @@ public class SetProductImageCoverCommandHandler
 
         if (product is null)
             return Result.Failure("Product not found.", "PRODUCT_NOT_FOUND");
+
+        if (!isAdmin)
+        {
+            var ownsShop = await _context.Shops
+                .IgnoreQueryFilters()
+                .AnyAsync(s =>
+                    s.Id == product.ShopId
+                    && s.DeletedAt == null
+                    && _context.Shopkeepers.Any(sk =>
+                        sk.Id == s.ShopkeeperId
+                        && sk.AccountId == _currentUserService.AccountId.Value),
+                    cancellationToken);
+
+            if (!ownsShop)
+                return Result.Failure("You can only set cover on your own products.", "FORBIDDEN");
+        }
 
         var images = await _context.ProductImages
             .Where(pi => pi.ProductId == request.ProductId)
