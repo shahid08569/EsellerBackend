@@ -6,6 +6,7 @@ using Eseller.Application.Features.Homepage.GetHotSellingProducts;
 using Eseller.Application.Features.Homepage.GetLowStockProducts;
 using Eseller.Application.Features.Homepage.GetNewArrivals;
 using Eseller.Application.Features.Homepage.GetOutOfStockProducts;
+using Eseller.Application.Features.Homepage.GetPlatformBranding;
 using Eseller.Application.Features.PaymentShowcase.GetActivePaymentLogos;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
@@ -177,6 +178,28 @@ public class HomepageController : ControllerBase
         _cache.Set(cacheKey, result.Value, new MemoryCacheEntryOptions
         {
             AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60)
+        });
+
+        return Ok(result.Value);
+    }
+
+    /// <summary>
+    /// Storefront nav / footer branding (SuperAdmin-editable via Settings keys).
+    /// </summary>
+    [HttpGet("branding")]
+    public async Task<IActionResult> GetBranding(CancellationToken cancellationToken = default)
+    {
+        const string cacheKey = "homepage:branding:v1";
+        if (_cache.TryGetValue(cacheKey, out object? cached) && cached is not null)
+            return Ok(cached);
+
+        var result = await _sender.Send(new GetPlatformBrandingQuery(), cancellationToken);
+        if (!result.IsSuccess)
+            return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
+
+        _cache.Set(cacheKey, result.Value, new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30)
         });
 
         return Ok(result.Value);
