@@ -1,4 +1,4 @@
-﻿namespace Eseller.Application.Features.Chat;
+namespace Eseller.Application.Features.Chat;
 
 public record ConversationDto(
     Guid OrderRequestId,
@@ -18,4 +18,5 @@ public record ConversationDto(
     string? ContextProductImageUrl = null,
     decimal? ContextProductPrice = null,
     /// <summary>"Seller" (shop support) or "Customer" (buyer support).</summary>
-    string? ParticipantType = null);
+    string? ParticipantType = null,
+    string? LogoUrl = null);

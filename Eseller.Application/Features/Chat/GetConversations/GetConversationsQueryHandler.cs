@@ -179,7 +179,8 @@ public class GetConversationsQueryHandler
                 last?.SentAt,
                 unread,
                 last?.SentAt ?? shop.CreatedAt,
-                ParticipantType: "Seller"));
+                ParticipantType: "Seller",
+                LogoUrl: shop.LogoUrl));
         }
 
         var userIds = customerConvoIds.Select(c => c.ParticipantId).Distinct().ToList();
