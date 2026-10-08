@@ -28,4 +28,5 @@ public record RegisterSellerCommand(
     // Location
     decimal Latitude,
     decimal Longitude,
-    string DeviceType) : IRequest<Result<RegisterSellerResponse>>;
+    string DeviceType,
+    string? ReferralCode = null) : IRequest<Result<RegisterSellerResponse>>;

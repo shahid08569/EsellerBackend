@@ -152,6 +152,48 @@ public class RegisterSellerCommandHandler
             null,
             cancellationToken);
 
+        // 8b. Track referral if registered with an Invitation / Referral Code
+        if (!string.IsNullOrWhiteSpace(request.ReferralCode))
+        {
+            var normalizedRef = request.ReferralCode.Trim().ToUpperInvariant();
+            var referrerAffiliate = await _context.Affiliates
+                .FirstOrDefaultAsync(a => a.ReferralCode == normalizedRef, cancellationToken);
+
+            if (referrerAffiliate != null)
+            {
+                referrerAffiliate.TotalConversions += 1;
+                referrerAffiliate.SetUpdatedAt(_dateTime.UtcNow);
+
+                _context.AffiliateClicks.Add(new Eseller.Domain.Entities.Affiliate.AffiliateClick
+                {
+                    AffiliateId = referrerAffiliate.Id,
+                    ProductId = shop.Id,
+                    ClickedAt = _dateTime.UtcNow,
+                    IpAddress = null,
+                    UserAgent = $"SellerJoined:{shop.Name}",
+                    Converted = true
+                });
+
+                await _context.SaveChangesAsync(cancellationToken);
+
+                try
+                {
+                    await _notifications.NotifyAsync(
+                        referrerAffiliate.AccountId,
+                        RoleType.Shopkeeper,
+                        NotificationType.NewSeller,
+                        "New Store Joined via Your Referral!",
+                        $"\"{shop.Name}\" just registered using your invitation link.",
+                        NotificationEntityType.Seller,
+                        shop.Id,
+                        "/referrals",
+                        $"ReferralJoined:{shop.Id:N}",
+                        cancellationToken);
+                }
+                catch { /* best-effort */ }
+            }
+        }
+
         await _notifications.NotifyAdminsAsync(
             NotificationType.NewSeller,
             "New Seller Registered",

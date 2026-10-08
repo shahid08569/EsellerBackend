@@ -142,6 +142,27 @@ public class AdminController : ControllerBase
                 .GroupBy(l => l.AccountId!.Value)
                 .ToDictionary(g => g.Key, g => g.First());
 
+            // Referrals lookup
+            var affiliates = await _context.Affiliates
+                .AsNoTracking()
+                .ToListAsync(cancellationToken);
+            var affiliateByAccount = affiliates.ToDictionary(a => a.AccountId);
+            var affiliateById = affiliates.ToDictionary(a => a.Id);
+
+            var referralClicks = await _context.AffiliateClicks
+                .AsNoTracking()
+                .Where(c => c.Converted && c.ProductId != null)
+                .ToListAsync(cancellationToken);
+
+            var referralCountByAffiliate = referralClicks
+                .GroupBy(c => c.AffiliateId)
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            var referredByShop = referralClicks
+                .Where(c => c.ProductId.HasValue)
+                .GroupBy(c => c.ProductId!.Value)
+                .ToDictionary(g => g.Key, g => g.First());
+
             var result = shopkeepers.Select(s =>
             {
                 var acc = accounts.GetValueOrDefault(s.AccountId);
@@ -151,6 +172,23 @@ public class AdminController : ControllerBase
                 var totOrders = shopId.HasValue && ordersCountByShop.TryGetValue(shopId.Value, out var oCnt) ? oCnt : 0;
                 var totRev = shopId.HasValue && revenueByShop.TryGetValue(shopId.Value, out var rev) ? rev : 0m;
                 var prodCnt = shopId.HasValue && realProductCountsByShop.TryGetValue(shopId.Value, out var pCnt) ? pCnt : (shop?.TotalProducts ?? 0);
+
+                affiliateByAccount.TryGetValue(s.AccountId, out var myAffiliate);
+                var myRefCode = myAffiliate?.ReferralCode;
+                var myRefCount = myAffiliate != null && referralCountByAffiliate.TryGetValue(myAffiliate.Id, out var rCnt) ? rCnt : 0;
+
+                string? refByCode = null;
+                string? refByName = null;
+                if (shopId.HasValue && referredByShop.TryGetValue(shopId.Value, out var whoReferredMe))
+                {
+                    if (affiliateById.TryGetValue(whoReferredMe.AffiliateId, out var parentAffiliate))
+                    {
+                        refByCode = parentAffiliate.ReferralCode;
+                        accounts.TryGetValue(parentAffiliate.AccountId, out var parentAcc);
+                        refByName = parentAcc?.Username ?? "Affiliate";
+                    }
+                }
+
                 // Platform rating = SuperAdmin-set Shop.Rating (authoritative).
                 // Fallback to review average only when admin has not set a rating yet.
                 decimal shopRating = 0m;
@@ -192,7 +230,11 @@ public class AdminController : ControllerBase
                     totalProducts = prodCnt,
                     totalOrders = totOrders,
                     totalRevenue = totRev,
-                    rating = shopRating
+                    rating = shopRating,
+                    referralCode = myRefCode,
+                    referralsCount = myRefCount,
+                    referredByCode = refByCode,
+                    referredByName = refByName
                 };
             }).ToList();
 
