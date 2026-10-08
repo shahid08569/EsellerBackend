@@ -3,6 +3,7 @@ using Eseller.Application.Features.AdminCategories.UpdateCategoryHomepage;
 using Eseller.Application.Features.Categories.CreateCategory;
 using Eseller.Application.Features.Categories.DeleteCategory;
 using Eseller.Application.Features.Categories.DeleteCategoryImage;
+using Eseller.Application.Features.Categories.MirrorExternalCategoryImages;
 using Eseller.Application.Features.Categories.UpdateCategory;
 using Eseller.Application.Features.Categories.UploadCategoryImage;
 using MediatR;
@@ -19,11 +20,16 @@ public class AdminCategoriesController : ControllerBase
 {
     private readonly ISender _sender;
     private readonly IApplicationDbContext _context;
+    private readonly IRemoteImageIngestService _imageIngest;
 
-    public AdminCategoriesController(ISender sender, IApplicationDbContext context)
+    public AdminCategoriesController(
+        ISender sender,
+        IApplicationDbContext context,
+        IRemoteImageIngestService imageIngest)
     {
         _sender = sender;
         _context = context;
+        _imageIngest = imageIngest;
     }
 
     /// <summary>
@@ -104,7 +110,18 @@ public class AdminCategoriesController : ControllerBase
             }
 
             if (!string.IsNullOrWhiteSpace(request.ImageUrl))
-                cat.ImageUrl = request.ImageUrl.Trim();
+            {
+                var imageUrl = request.ImageUrl.Trim();
+                try
+                {
+                    var mirrored = await _imageIngest.IngestCategoryImageAsync(cat.Id, imageUrl, cancellationToken);
+                    cat.ImageUrl = mirrored ?? imageUrl;
+                }
+                catch
+                {
+                    cat.ImageUrl = imageUrl;
+                }
+            }
 
             if (request.IsActive.HasValue)
                 cat.IsActive = request.IsActive.Value;
@@ -149,8 +166,26 @@ public class AdminCategoriesController : ControllerBase
                 cat.IsFeaturedOnHomepage = request.IsFeaturedOnHomepage.Value;
             if (request.HomepageDisplayOrder.HasValue)
                 cat.HomepageDisplayOrder = request.HomepageDisplayOrder.Value;
-            // Admin form always sends imageUrl — null/empty clears the logo
-            cat.ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl.Trim();
+            // Admin form always sends imageUrl — null/empty clears the logo.
+            // External CDN URLs are mirrored into /uploads so logos always load.
+            if (string.IsNullOrWhiteSpace(request.ImageUrl))
+            {
+                cat.ImageUrl = null;
+            }
+            else
+            {
+                var imageUrl = request.ImageUrl.Trim();
+                try
+                {
+                    var mirrored = await _imageIngest.IngestCategoryImageAsync(cat.Id, imageUrl, cancellationToken);
+                    cat.ImageUrl = mirrored ?? imageUrl;
+                }
+                catch
+                {
+                    cat.ImageUrl = imageUrl;
+                }
+            }
+
             if (request.ParentCategoryId.HasValue)
                 cat.ParentCategoryId = request.ParentCategoryId;
 
@@ -158,6 +193,26 @@ public class AdminCategoriesController : ControllerBase
         }
 
         return Ok(new { message = "Category updated successfully." });
+    }
+
+    /// <summary>
+    /// One-time / on-demand: copy all external category logos into local /uploads.
+    /// </summary>
+    [HttpPost("mirror-external-images")]
+    public async Task<IActionResult> MirrorExternalImages(CancellationToken cancellationToken)
+    {
+        var result = await _sender.Send(new MirrorExternalCategoryImagesCommand(), cancellationToken);
+        if (!result.IsSuccess)
+            return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
+
+        return Ok(new
+        {
+            mirrored = result.Value!.Mirrored,
+            skipped = result.Value.Skipped,
+            failed = result.Value.Failed,
+            errors = result.Value.Errors,
+            message = $"Mirrored {result.Value.Mirrored} category logo(s) into local storage."
+        });
     }
 
     /// <summary>

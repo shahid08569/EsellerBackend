@@ -116,6 +116,14 @@ public static class DependencyInjection
             client.Timeout = TimeSpan.FromSeconds(15);
         });
 
+        // Download external category logos (Unsplash / estorebuy) into local /uploads
+        services.AddHttpClient("CategoryImageMirror", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("EsellerCategoryMirror/1.0");
+        });
+        services.AddScoped<IRemoteImageIngestService, RemoteImageIngestService>();
+
         // Services
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();

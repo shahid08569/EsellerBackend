@@ -55,6 +55,11 @@ public class LocalFileStorageService : IFileStorageService
         if (string.IsNullOrWhiteSpace(fileUrl))
             return Task.CompletedTask;
 
+        // Never try to delete absolute external CDN URLs from disk
+        if (fileUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || fileUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return Task.CompletedTask;
+
         try
         {
             var cleanPath = NormalizeRelativePath(fileUrl);
