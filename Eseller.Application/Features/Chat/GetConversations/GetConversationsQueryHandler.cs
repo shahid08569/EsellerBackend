@@ -178,7 +178,8 @@ public class GetConversationsQueryHandler
                 last?.SenderId,
                 last?.SentAt,
                 unread,
-                last?.SentAt ?? shop.CreatedAt));
+                last?.SentAt ?? shop.CreatedAt,
+                ParticipantType: "Seller"));
         }
 
         var userIds = customerConvoIds.Select(c => c.ParticipantId).Distinct().ToList();
@@ -217,7 +218,8 @@ public class GetConversationsQueryHandler
                 last?.SenderId,
                 last?.SentAt,
                 unread,
-                last?.SentAt ?? convo.CreatedAt));
+                last?.SentAt ?? convo.CreatedAt,
+                ParticipantType: "Customer"));
         }
 
         var sorted = conversations

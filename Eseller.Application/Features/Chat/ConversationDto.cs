@@ -16,4 +16,6 @@ public record ConversationDto(
     string? ContextProductId = null,
     string? ContextProductName = null,
     string? ContextProductImageUrl = null,
-    decimal? ContextProductPrice = null);
+    decimal? ContextProductPrice = null,
+    /// <summary>"Seller" (shop support) or "Customer" (buyer support).</summary>
+    string? ParticipantType = null);
