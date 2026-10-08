@@ -171,6 +171,15 @@ if (shouldMigrate || shouldSeed)
         if (shouldMigrate)
             await db.Database.MigrateAsync();
 
+        // Belt-and-suspenders: Product.ReviewCount (deploy race can ship code before migration applies).
+        await db.Database.ExecuteSqlRawAsync("""
+            IF COL_LENGTH(N'Products', N'ReviewCount') IS NULL
+            BEGIN
+                ALTER TABLE [Products] ADD [ReviewCount] int NOT NULL
+                    CONSTRAINT [DF_Products_ReviewCount] DEFAULT 0;
+            END
+            """);
+
         // Belt-and-suspenders: banner content columns (migration historically lacked [Migration] attr).
         await db.Database.ExecuteSqlRawAsync("""
             IF COL_LENGTH('HomepageBanners', 'Title') IS NULL
