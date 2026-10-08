@@ -59,12 +59,21 @@ public class GetMyProductsQueryHandler
                 p.Name,
                 p.Slug,
                 p.BasePrice,
+                // Prefer this product's cover; warehouse clones fall back to source master images
                 _context.ProductImages
                     .Where(pi => pi.ProductId == p.Id)
                     .OrderByDescending(pi => pi.IsCover)
                     .ThenBy(pi => pi.SortOrder)
                     .Select(pi => pi.ImageUrl)
-                    .FirstOrDefault(),
+                    .FirstOrDefault()
+                ?? (p.SourceProductId == null
+                    ? null
+                    : _context.ProductImages
+                        .Where(pi => pi.ProductId == p.SourceProductId)
+                        .OrderByDescending(pi => pi.IsCover)
+                        .ThenBy(pi => pi.SortOrder)
+                        .Select(pi => pi.ImageUrl)
+                        .FirstOrDefault()),
                 shop.Name,
                 shop.Slug,
                 _context.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault() ?? string.Empty,
