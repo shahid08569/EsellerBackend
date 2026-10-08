@@ -431,10 +431,8 @@ public static class MasterCatalog
 
     /// <summary>
     /// Global customer marketplace:
-    /// - Master Warehouse SKUs SuperAdmin marked live
-    /// - Seller listings cloned from warehouse (SourceProductId set)
-    /// Seller-created originals (SourceProductId null on a seller shop) are NOT global —
-    /// they stay on that seller only (see ShopListings).
+    /// - All approved, active seller products (both seller-created originals and warehouse listings)
+    /// - Master Warehouse SKUs only when SuperAdmin explicitly marked them live
     /// </summary>
     public static IQueryable<Product> StorefrontListings(
         IApplicationDbContext context,
@@ -445,8 +443,8 @@ public static class MasterCatalog
                 && p.IsApproved
                 && p.DeletedAt == null
                 && (
-                    // Warehouse clones listed by sellers → visible globally under that seller
-                    p.SourceProductId != null
+                    // Any approved seller shop product is visible globally on the marketplace
+                    (!masterShopId.HasValue || p.ShopId != masterShopId.Value)
                     // Master warehouse live SKUs
                     || (masterShopId.HasValue
                         && p.ShopId == masterShopId.Value

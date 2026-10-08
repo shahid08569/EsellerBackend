@@ -39,6 +39,18 @@ public class GetNewArrivalsQueryHandler
             .Select(p => p.Id)
             .ToListAsync(cancellationToken);
 
+        if (productIds.Count < limit)
+        {
+            var backfillIds = await MasterCatalog.StorefrontListings(_context, masterShopId)
+                .Where(p => !productIds.Contains(p.Id))
+                .OrderByDescending(p => p.CreatedAt)
+                .Take(limit - productIds.Count)
+                .Select(p => p.Id)
+                .ToListAsync(cancellationToken);
+
+            productIds.AddRange(backfillIds);
+        }
+
         var products = await LoadProducts(productIds, cancellationToken);
 
         return Result.Success(products);
