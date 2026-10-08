@@ -161,7 +161,7 @@ public class AdminPlaceOrderCommandHandler
             State = string.IsNullOrWhiteSpace(request.State) ? null : request.State.Trim(),
             Country = string.IsNullOrWhiteSpace(request.Country) ? null : request.Country.Trim(),
             OrderNotes = string.IsNullOrWhiteSpace(request.OrderNotes)
-                ? "Placed by Super Admin"
+                ? "Placed by Management"
                 : request.OrderNotes.Trim()
         };
 
@@ -294,7 +294,7 @@ public class AdminPlaceOrderCommandHandler
 
         var shortRef = orderRequest.Id.ToString()[..8].ToUpperInvariant();
         var notifTitle = $"New Order #{shortRef}";
-        var notifBody = $"{customerName} (Super Admin) placed an order ({request.Quantity} items, Rs. {grossTotal:N0}).";
+        var notifBody = $"{customerName} placed an order ({request.Quantity} items, ${grossTotal:N0}).";
 
         if (shopkeeperAccountId.HasValue)
         {
@@ -344,7 +344,7 @@ public class AdminPlaceOrderCommandHandler
     {
         var sb = new StringBuilder();
         sb.AppendLine($"🛒 New Order Request — #{orderId.ToString()[..8]}");
-        sb.AppendLine($"Placed by Super Admin · Buyer: {customerName}");
+        sb.AppendLine($"Placed by Customer Support · Buyer: {customerName}");
         sb.AppendLine();
 
         decimal totalAmount = 0;
@@ -356,14 +356,14 @@ public class AdminPlaceOrderCommandHandler
                 ? string.Empty
                 : $" ({item.VariantAttributesSnapshot})";
 
-            sb.AppendLine($"• {item.ProductNameSnapshot}{attributes} × {item.Quantity} — Rs {item.TotalPriceSnapshot:N0}");
+            sb.AppendLine($"• {item.ProductNameSnapshot}{attributes} × {item.Quantity} — ${item.TotalPriceSnapshot:N0}");
             totalAmount += item.TotalPriceSnapshot;
             totalItems += item.Quantity;
         }
 
         sb.AppendLine();
         sb.AppendLine($"📦 Total Items: {totalItems}");
-        sb.AppendLine($"💰 Total Amount: Rs {totalAmount:N0}");
+        sb.AppendLine($"💰 Total Amount: ${totalAmount:N0}");
         sb.AppendLine();
         sb.AppendLine("Please review and confirm this order.");
 

@@ -287,7 +287,7 @@ public class BuyNowCommandHandler
         var shortRef = orderRequest.Id.ToString()[..8].ToUpperInvariant();
         var customerLabel = orderRequest.CustomerName ?? user.Name ?? "Customer";
         var notifTitle = $"New Order #{shortRef}";
-        var notifBody = $"{customerLabel} placed an order ({request.Quantity} items, Rs. {grossTotal:N0}).";
+        var notifBody = $"{customerLabel} placed an order ({request.Quantity} items, ${grossTotal:N0}).";
 
         if (shopkeeperAccountId.HasValue)
         {
@@ -352,7 +352,7 @@ public class BuyNowCommandHandler
                 ? string.Empty
                 : $" ({item.VariantAttributesSnapshot})";
 
-            sb.AppendLine($"• {item.ProductNameSnapshot}{attributes} × {item.Quantity} — Rs {item.TotalPriceSnapshot:N0}");
+            sb.AppendLine($"• {item.ProductNameSnapshot}{attributes} × {item.Quantity} — ${item.TotalPriceSnapshot:N0}");
 
             totalAmount += item.TotalPriceSnapshot;
             totalItems += item.Quantity;
@@ -360,7 +360,7 @@ public class BuyNowCommandHandler
 
         sb.AppendLine();
         sb.AppendLine($"📦 Total Items: {totalItems}");
-        sb.AppendLine($"💰 Total Amount: Rs {totalAmount:N0}");
+        sb.AppendLine($"💰 Total Amount: ${totalAmount:N0}");
         sb.AppendLine();
         sb.AppendLine("Please review and confirm this order.");
 

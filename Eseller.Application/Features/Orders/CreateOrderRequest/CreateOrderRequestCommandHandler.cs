@@ -62,7 +62,7 @@ public class CreateOrderRequestCommandHandler
             return Result.Failure<Guid>(
                 user.Status == UserApprovalStatus.Rejected
                     ? "Your account was rejected. Contact support."
-                    : "Your account is pending Super Admin approval. You cannot place orders yet.",
+                    : "Your account is pending Management approval. You cannot place orders yet.",
                 "ACCOUNT_PENDING_APPROVAL");
 
         var cart = await _context.Carts
@@ -419,7 +419,7 @@ public class CreateOrderRequestCommandHandler
         var itemCount = orderItemsForMessage.Sum(i => i.Quantity);
         var shortRef = orderRequest.Id.ToString()[..8].ToUpperInvariant();
         var notifTitle = $"New Order #{shortRef}";
-        var notifBody = $"{orderRequest.CustomerName ?? "Customer"} placed an order ({itemCount} items, Rs. {orderTotal:N0}).";
+        var notifBody = $"{orderRequest.CustomerName ?? "Customer"} placed an order ({itemCount} items, ${orderTotal:N0}).";
 
         foreach (var accountId in shopkeeperAccountIds)
         {
@@ -488,7 +488,7 @@ public class CreateOrderRequestCommandHandler
                 ? string.Empty
                 : $" ({item.VariantAttributesSnapshot})";
 
-            sb.AppendLine($"• {item.ProductNameSnapshot}{attributes} × {item.Quantity} — Rs {item.TotalPriceSnapshot:N0}");
+            sb.AppendLine($"• {item.ProductNameSnapshot}{attributes} × {item.Quantity} — ${item.TotalPriceSnapshot:N0}");
 
             totalAmount += item.TotalPriceSnapshot;
             totalItems += item.Quantity;
@@ -496,7 +496,7 @@ public class CreateOrderRequestCommandHandler
 
         sb.AppendLine();
         sb.AppendLine($"📦 Total Items: {totalItems}");
-        sb.AppendLine($"💰 Total Amount: Rs {totalAmount:N0}");
+        sb.AppendLine($"💰 Total Amount: ${totalAmount:N0}");
         sb.AppendLine();
         sb.AppendLine("Please review and confirm this order.");
 
