@@ -197,6 +197,29 @@ if (shouldMigrate || shouldSeed)
             logger.LogError(reviewCountEx, "Failed to ensure Products.ReviewCount column.");
         }
 
+        // Always ensure Wallet Pending/Available earnings (Delivered status credit needs these).
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync("""
+                IF COL_LENGTH(N'Wallets', N'PendingEarnings') IS NULL
+                BEGIN
+                    ALTER TABLE [Wallets] ADD [PendingEarnings] decimal(18,2) NOT NULL
+                        CONSTRAINT [DF_Wallets_PendingEarnings] DEFAULT 0;
+                END
+
+                IF COL_LENGTH(N'Wallets', N'AvailableEarnings') IS NULL
+                BEGIN
+                    ALTER TABLE [Wallets] ADD [AvailableEarnings] decimal(18,2) NOT NULL
+                        CONSTRAINT [DF_Wallets_AvailableEarnings] DEFAULT 0;
+                END
+                """);
+            logger.LogInformation("Ensured Wallets.PendingEarnings / AvailableEarnings columns exist.");
+        }
+        catch (Exception walletColsEx)
+        {
+            logger.LogError(walletColsEx, "Failed to ensure Wallets earnings columns.");
+        }
+
         // Belt-and-suspenders: banner content columns (migration historically lacked [Migration] attr).
         await db.Database.ExecuteSqlRawAsync("""
             IF COL_LENGTH('HomepageBanners', 'Title') IS NULL
