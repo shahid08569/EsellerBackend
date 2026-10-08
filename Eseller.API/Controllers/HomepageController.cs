@@ -189,7 +189,7 @@ public class HomepageController : ControllerBase
     [HttpGet("branding")]
     public async Task<IActionResult> GetBranding(CancellationToken cancellationToken = default)
     {
-        const string cacheKey = "homepage:branding:v1";
+        const string cacheKey = "homepage:branding:v2";
         if (_cache.TryGetValue(cacheKey, out object? cached) && cached is not null)
             return Ok(cached);
 
