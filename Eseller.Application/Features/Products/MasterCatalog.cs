@@ -156,7 +156,8 @@ public static class MasterCatalog
         if (orphanedShopIds.Count == 0)
             return;
 
-        var candidates = await context.Products
+        // Project IDs only — avoids SELECT of newer columns (e.g. ReviewCount) during deploy races.
+        var candidateIds = await context.Products
             .IgnoreQueryFilters()
             .Where(p =>
                 p.DeletedAt == null
@@ -165,19 +166,21 @@ public static class MasterCatalog
                 && orphanedShopIds.Contains(p.ShopId)
                 && (p.Description == null
                     || !p.Description.StartsWith(SellerListingDescriptionPrefix)))
+            .Select(p => p.Id)
             .ToListAsync(cancellationToken);
 
-        if (candidates.Count == 0)
+        if (candidateIds.Count == 0)
             return;
 
         var now = DateTime.UtcNow;
-        foreach (var product in candidates)
-        {
-            product.ShopId = masterShop.Id;
-            product.IsApproved = true;
-            product.IsActive = true;
-            product.SetUpdatedAt(now);
-        }
+        await context.Products
+            .IgnoreQueryFilters()
+            .Where(p => candidateIds.Contains(p.Id))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(p => p.ShopId, masterShop.Id)
+                .SetProperty(p => p.IsApproved, true)
+                .SetProperty(p => p.IsActive, true)
+                .SetProperty(p => p.UpdatedAt, now), cancellationToken);
 
         masterShop.TotalProducts = await context.Products
             .IgnoreQueryFilters()
