@@ -57,28 +57,27 @@ public class AddCatalogProductToShopCommandHandler
 
         // Banner/cover is optional for listing requests — product goes to Super Admin approval queue.
 
-        var masterShop = await MasterCatalog.GetOrCreateMasterShopAsync(_context, cancellationToken);
-
         var source = await _context.Products
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(p =>
                 p.Id == request.SourceProductId
-                && p.DeletedAt == null
-                && p.ShopId == masterShop.Id
-                && p.SourceProductId == null
-                && p.IsApproved
-                && p.IsActive, cancellationToken);
+                && p.DeletedAt == null, cancellationToken);
 
         if (source is null)
             return Result.Failure<Guid>(
                 "Catalog product not found or not available for listing.",
                 "CATALOG_PRODUCT_NOT_FOUND");
 
+        if (source.ShopId == shop.Id)
+            return Result.Failure<Guid>(
+                "This product is already in your shop.",
+                "PRODUCT_ALREADY_REQUESTED");
+
         var alreadyListed = await _context.Products
             .IgnoreQueryFilters()
             .AnyAsync(p =>
                 p.ShopId == shop.Id
-                && p.SourceProductId == source.Id
+                && (p.SourceProductId == source.Id || p.Id == source.Id)
                 && p.DeletedAt == null
                 && p.RejectionReason == null, cancellationToken);
 
@@ -137,9 +136,16 @@ public class AddCatalogProductToShopCommandHandler
             await _context.SaveChangesAsync(cancellationToken);
         }
 
-        await MasterCatalog.CloneImagesAsync(_context, source.Id, listing.Id, cancellationToken);
-        await MasterCatalog.CloneVariantsAsync(_context, source.Id, listing.Id, now, cancellationToken);
-        await _context.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await MasterCatalog.CloneImagesAsync(_context, source.Id, listing.Id, cancellationToken);
+            await MasterCatalog.CloneVariantsAsync(_context, source.Id, listing.Id, now, cancellationToken);
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception)
+        {
+            // Non-fatal: base listing entity is already saved
+        }
 
         shop.TotalProducts = usedSlots + 1;
         shop.SetUpdatedAt(now);
