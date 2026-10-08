@@ -60,6 +60,7 @@ public class DeleteReviewCommandHandler
                 .Select(r => r.Rating)
                 .ToListAsync(cancellationToken);
             product.AvgRating = approved.Count == 0 ? null : (decimal)approved.Average();
+            product.ReviewCount = approved.Count;
             product.SetUpdatedAt(DateTime.UtcNow);
             await _context.SaveChangesAsync(cancellationToken);
         }

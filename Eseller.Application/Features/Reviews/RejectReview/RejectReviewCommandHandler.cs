@@ -67,6 +67,7 @@ public class RejectReviewCommandHandler
         product.AvgRating = approvedReviews.Count == 0
             ? null
             : (decimal)approvedReviews.Average();
+        product.ReviewCount = approvedReviews.Count;
         product.SetUpdatedAt(_dateTime.UtcNow);
         await _context.SaveChangesAsync(cancellationToken);
     }

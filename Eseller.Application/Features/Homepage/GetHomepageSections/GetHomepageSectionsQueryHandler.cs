@@ -279,6 +279,7 @@ public class GetHomepageSectionsQueryHandler
                         .Where(b => b.Id == p.BrandId).Select(b => b.Name)
                         .FirstOrDefault(),
                 p.AvgRating,
+                p.ReviewCount,
                 p.IsFeatured,
                 p.IsApproved,
                 p.RejectionReason,
@@ -309,7 +310,8 @@ public class GetHomepageSectionsQueryHandler
                 badges.GetValueOrDefault(p.Id),
                 ShopRating: p.ShopRating,
                 ShopBadgeText: p.ShopBadgeText,
-                ShopBadgeColor: p.ShopBadgeColor));
+                ShopBadgeColor: p.ShopBadgeColor,
+                ReviewCount: p.ReviewCount));
     }
 
     private static List<ProductListDto> FilterProducts(

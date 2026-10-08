@@ -96,6 +96,7 @@ public class GetBestSellingProductsQueryHandler
                     ? null
                     : _context.Brands.Where(b => b.Id == p.BrandId).Select(b => b.Name).FirstOrDefault(),
                 p.AvgRating,
+                p.ReviewCount,
                 p.IsFeatured,
                 p.IsApproved,
                 p.RejectionReason,
@@ -123,7 +124,7 @@ public class GetBestSellingProductsQueryHandler
                 p.IsApproved ? "Approved" : (p.RejectionReason == null ? "Pending" : "Rejected"),
                 p.RejectionReason,
                 p.CreatedAt,
-                badges.GetValueOrDefault(p.Id), ShopRating: p.ShopRating))
+                badges.GetValueOrDefault(p.Id), ShopRating: p.ShopRating, ReviewCount: p.ReviewCount))
             .ToList();
     }
 }

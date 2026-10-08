@@ -88,6 +88,7 @@ public class GetProductsQueryHandler
                         ? null
                         : _context.Brands.Where(b => b.Id == p.BrandId).Select(b => b.Name).FirstOrDefault(),
                     p.AvgRating,
+                    p.ReviewCount,
                     p.IsFeatured,
                     p.IsApproved,
                     p.RejectionReason,
@@ -126,7 +127,8 @@ public class GetProductsQueryHandler
                 p.ShopId,
                 p.ShopRating,
                 p.ShopBadgeText,
-                p.ShopBadgeColor)).ToList();
+                p.ShopBadgeColor,
+                ReviewCount: p.ReviewCount)).ToList();
 
             return Result.Success(new PagedList<ProductListDto>(
                 curatedDtos,
@@ -228,6 +230,7 @@ public class GetProductsQueryHandler
                     ? null
                     : _context.Brands.Where(b => b.Id == p.BrandId).Select(b => b.Name).FirstOrDefault(),
                 p.AvgRating,
+                p.ReviewCount,
                 p.IsFeatured,
                 p.IsApproved,
                 p.RejectionReason,
@@ -266,7 +269,8 @@ public class GetProductsQueryHandler
             p.ShopId,
             p.ShopRating,
             p.ShopBadgeText,
-            p.ShopBadgeColor)).ToList();
+            p.ShopBadgeColor,
+            ReviewCount: p.ReviewCount)).ToList();
 
         var pagedList = new PagedList<ProductListDto>(
             productDtos,

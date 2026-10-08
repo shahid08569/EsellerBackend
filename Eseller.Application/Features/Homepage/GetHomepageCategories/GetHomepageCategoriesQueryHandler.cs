@@ -146,6 +146,7 @@ public class GetHomepageCategoriesQueryHandler
                         .Where(b => b.Id == p.BrandId).Select(b => b.Name)
                         .FirstOrDefault(),
                 p.AvgRating,
+                p.ReviewCount,
                 p.IsFeatured,
                 p.IsApproved,
                 p.RejectionReason,
@@ -176,7 +177,7 @@ public class GetHomepageCategoriesQueryHandler
                 badges.GetValueOrDefault(p.Id),
                 ShopBadgeText: p.ShopBadgeText,
                 ShopBadgeColor: p.ShopBadgeColor,
-                Description: TruncateDesc(p.Description)));
+                Description: TruncateDesc(p.Description), ReviewCount: p.ReviewCount));
     }
 
     private static string? TruncateDesc(string? description)

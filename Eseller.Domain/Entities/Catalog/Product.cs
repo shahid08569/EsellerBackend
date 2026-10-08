@@ -27,6 +27,8 @@ public class Product : AuditableEntity, ISoftDelete
     public bool IsStorefrontLive { get; set; }
     public int ViewCount { get; set; }
     public decimal? AvgRating { get; set; }
+    /// <summary>Approved review count (denormalized; kept in sync with AvgRating).</summary>
+    public int ReviewCount { get; set; }
     public string? SeoTitle { get; set; }
     public string? SeoDescription { get; set; }
     public string? RejectionReason { get; private set; }

@@ -139,6 +139,7 @@ public class CreateReviewCommandHandler
         product.AvgRating = approved.Count == 0
             ? null
             : (decimal)approved.Average();
+        product.ReviewCount = approved.Count;
         product.SetUpdatedAt(_dateTime.UtcNow);
 
         if (product.SourceProductId.HasValue)
@@ -148,6 +149,7 @@ public class CreateReviewCommandHandler
             if (catalog is not null)
             {
                 catalog.AvgRating = product.AvgRating;
+                catalog.ReviewCount = product.ReviewCount;
                 catalog.SetUpdatedAt(_dateTime.UtcNow);
             }
         }
@@ -159,6 +161,7 @@ public class CreateReviewCommandHandler
             foreach (var listing in listings)
             {
                 listing.AvgRating = product.AvgRating;
+                listing.ReviewCount = product.ReviewCount;
                 listing.SetUpdatedAt(_dateTime.UtcNow);
             }
         }

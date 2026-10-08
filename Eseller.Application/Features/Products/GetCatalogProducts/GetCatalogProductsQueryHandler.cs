@@ -80,6 +80,7 @@ public class GetCatalogProductsQueryHandler
                     ? null
                     : _context.Brands.Where(b => b.Id == p.BrandId).Select(b => b.Name).FirstOrDefault(),
                 p.AvgRating,
+                p.ReviewCount,
                 p.IsFeatured,
                 p.IsApproved,
                 p.IsStorefrontLive,
@@ -114,7 +115,8 @@ public class GetCatalogProductsQueryHandler
             p.ShopId,
             p.ShopRating,
             Description: null,
-            IsStorefrontLive: p.IsStorefrontLive)).ToList();
+            IsStorefrontLive: p.IsStorefrontLive,
+            ReviewCount: p.ReviewCount)).ToList();
 
         return Result.Success(new PagedList<ProductListDto>(
             productDtos,

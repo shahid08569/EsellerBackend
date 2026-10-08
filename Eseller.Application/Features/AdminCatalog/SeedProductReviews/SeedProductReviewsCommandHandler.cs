@@ -94,6 +94,7 @@ public class SeedProductReviewsCommandHandler
             product.AvgRating = approved.Count == 0
                 ? null
                 : (decimal)approved.Average();
+            product.ReviewCount = approved.Count;
             product.SetUpdatedAt(now);
             await _context.SaveChangesAsync(cancellationToken);
         }

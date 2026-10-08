@@ -389,6 +389,11 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
+                    b.Property<int>("ReviewCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
                     b.Property<string>("SeoDescription")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");

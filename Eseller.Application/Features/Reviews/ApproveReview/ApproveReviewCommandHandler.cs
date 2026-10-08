@@ -64,10 +64,12 @@ public class ApproveReviewCommandHandler
         if (approvedReviews.Count == 0)
         {
             product.AvgRating = null;
+            product.ReviewCount = 0;
         }
         else
         {
             product.AvgRating = (decimal)approvedReviews.Average(r => r.Rating);
+            product.ReviewCount = approvedReviews.Count;
         }
 
         product.SetUpdatedAt(_dateTime.UtcNow);

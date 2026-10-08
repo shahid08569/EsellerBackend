@@ -30,4 +30,6 @@ public record ProductListDto(
     /// <summary>Short product description for cards (optional).</summary>
     string? Description = null,
     /// <summary>Master Warehouse: opted-in to customer website (sellers ignore).</summary>
-    bool IsStorefrontLive = false);
+    bool IsStorefrontLive = false,
+    /// <summary>Approved reviewer count for storefront cards.</summary>
+    int ReviewCount = 0);

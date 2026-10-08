@@ -102,6 +102,7 @@ public class GetOutOfStockProductsQueryHandler
                         .Select(b => b.Name)
                         .FirstOrDefault(),
                 p.AvgRating,
+                p.ReviewCount,
                 p.IsFeatured,
                 p.IsApproved,
                 p.RejectionReason,
@@ -130,7 +131,7 @@ public class GetOutOfStockProductsQueryHandler
                 p.RejectionReason,
                 p.CreatedAt,
                 badges.GetValueOrDefault(p.Id),
-                ShopRating: p.ShopRating))
+                ShopRating: p.ShopRating, ReviewCount: p.ReviewCount))
             .ToList();
     }
 }

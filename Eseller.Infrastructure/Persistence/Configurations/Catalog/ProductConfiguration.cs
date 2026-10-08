@@ -21,6 +21,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
         builder.Property(p => p.IsStorefrontLive).IsRequired().HasDefaultValue(false);
         builder.Property(p => p.ViewCount).IsRequired().HasDefaultValue(0);
         builder.Property(p => p.AvgRating).HasPrecision(3, 2);
+        builder.Property(p => p.ReviewCount).IsRequired().HasDefaultValue(0);
         builder.Property(p => p.SeoTitle).HasMaxLength(200);
         builder.Property(p => p.SeoDescription).HasMaxLength(500);
         builder.Property(p => p.IsActive).IsRequired().HasDefaultValue(true);
