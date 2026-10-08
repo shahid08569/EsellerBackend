@@ -5,7 +5,9 @@ public enum OrderStatus
     Pending = 1,
     Confirmed = 2,
     Processing = 3,
-    OnTheWay = 4, // formerly Packed
+    /// <summary>Packed / ready — shown as "Packed" in admin (legacy name OnTheWay).</summary>
+    OnTheWay = 4,
+    /// <summary>In transit — shown as "On the Way" in admin UI.</summary>
     Shipped = 5,
     OutForDelivery = 6,
     Delivered = 7,

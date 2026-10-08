@@ -92,7 +92,16 @@ public class UpdateOrderStatusCommandHandler
         List<(Guid AccountId, decimal Credit)> creditedSellers = [];
         if (newStatus == OrderStatus.Delivered)
         {
-            creditedSellers = await CreditSellerEarningsForOrderAsync(order.Id, now, cancellationToken);
+            try
+            {
+                creditedSellers = await CreditSellerEarningsForOrderAsync(order.Id, now, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                return Result.Failure(
+                    $"Order delivered wallet credit failed: {ex.GetBaseException().Message}",
+                    "WALLET_CREDIT_FAILED");
+            }
         }
         else if (newStatus == OrderStatus.Cancelled)
         {
@@ -183,63 +192,88 @@ public class UpdateOrderStatusCommandHandler
             }
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex)
+        {
+            return Result.Failure(
+                $"Could not save order status: {ex.GetBaseException().Message}",
+                "ORDER_STATUS_SAVE_FAILED");
+        }
 
+        // Notifications are best-effort — never fail a successful Delivered save.
         if (newStatus == OrderStatus.Delivered && oldStatus != OrderStatus.Delivered)
         {
-            var shortRef = order.Id.ToString()[..8].ToUpperInvariant();
-            var sellerAccounts = await (
-                from so in _context.SellerOrders.AsNoTracking()
-                join s in _context.Shops.IgnoreQueryFilters().AsNoTracking() on so.ShopId equals s.Id
-                join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
-                where so.OrderRequestId == order.Id && s.DeletedAt == null
-                select new { so.Id, sk.AccountId }
-            ).Distinct().ToListAsync(cancellationToken);
-
-            foreach (var seller in sellerAccounts)
+            try
             {
-                await _notifications.NotifyAsync(
-                    seller.AccountId,
-                    RoleType.Shopkeeper,
-                    NotificationType.OrderDelivered,
-                    $"Order #{shortRef} delivered",
-                    "An order has been marked as delivered.",
-                    NotificationEntityType.Order,
-                    order.Id,
-                    "/orders",
-                    $"OrderDelivered:{seller.Id:N}:Seller:{seller.AccountId:N}",
-                    cancellationToken);
+                await NotifyDeliveredAsync(order.Id, creditedSellers, cancellationToken);
             }
-
-            foreach (var (accountId, credit) in creditedSellers)
+            catch
             {
-                await _notifications.NotifyAsync(
-                    accountId,
-                    RoleType.Shopkeeper,
-                    NotificationType.PaymentCompleted,
-                    "Payment Completed",
-                    $"Payment for order #{shortRef} has been completed. Rs. {credit:N0} credited to your wallet.",
-                    NotificationEntityType.Payment,
-                    order.Id,
-                    "/earnings",
-                    $"PaymentCompleted:{order.Id:N}:Seller:{accountId:N}",
-                    cancellationToken);
-
-                await _notifications.NotifyAsync(
-                    accountId,
-                    RoleType.Shopkeeper,
-                    NotificationType.CommissionEarned,
-                    "Commission Earned",
-                    $"Congratulations! You earned Rs. {credit:N0} commission from order #{shortRef}.",
-                    NotificationEntityType.Earning,
-                    order.Id,
-                    "/earnings",
-                    $"CommissionEarned:{order.Id:N}:Seller:{accountId:N}",
-                    cancellationToken);
+                // Status already persisted; ignore notification failures.
             }
         }
 
         return Result.Success();
+    }
+
+    private async Task NotifyDeliveredAsync(
+        Guid orderId,
+        List<(Guid AccountId, decimal Credit)> creditedSellers,
+        CancellationToken cancellationToken)
+    {
+        var shortRef = orderId.ToString()[..8].ToUpperInvariant();
+        var sellerAccounts = await (
+            from so in _context.SellerOrders.AsNoTracking()
+            join s in _context.Shops.IgnoreQueryFilters().AsNoTracking() on so.ShopId equals s.Id
+            join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
+            where so.OrderRequestId == orderId && s.DeletedAt == null
+            select new { so.Id, sk.AccountId }
+        ).Distinct().ToListAsync(cancellationToken);
+
+        foreach (var seller in sellerAccounts)
+        {
+            await _notifications.NotifyAsync(
+                seller.AccountId,
+                RoleType.Shopkeeper,
+                NotificationType.OrderDelivered,
+                $"Order #{shortRef} delivered",
+                "An order has been marked as delivered.",
+                NotificationEntityType.Order,
+                orderId,
+                "/orders",
+                $"OrderDelivered:{seller.Id:N}:Seller:{seller.AccountId:N}",
+                cancellationToken);
+        }
+
+        foreach (var (accountId, credit) in creditedSellers)
+        {
+            await _notifications.NotifyAsync(
+                accountId,
+                RoleType.Shopkeeper,
+                NotificationType.PaymentCompleted,
+                "Payment Completed",
+                $"Payment for order #{shortRef} has been completed. Rs. {credit:N0} credited to your wallet.",
+                NotificationEntityType.Payment,
+                orderId,
+                "/earnings",
+                $"PaymentCompleted:{orderId:N}:Seller:{accountId:N}",
+                cancellationToken);
+
+            await _notifications.NotifyAsync(
+                accountId,
+                RoleType.Shopkeeper,
+                NotificationType.CommissionEarned,
+                "Commission Earned",
+                $"Congratulations! You earned Rs. {credit:N0} commission from order #{shortRef}.",
+                NotificationEntityType.Earning,
+                orderId,
+                "/earnings",
+                $"CommissionEarned:{orderId:N}:Seller:{accountId:N}",
+                cancellationToken);
+        }
     }
 
     private static bool IsChatChannel(string? shippingAddress)
@@ -269,6 +303,7 @@ public class UpdateOrderStatusCommandHandler
             (OrderStatus.Processing, OrderStatus.Shipped) => true,
             (OrderStatus.Processing, OrderStatus.Delivered) => true,
             (OrderStatus.OnTheWay, OrderStatus.Shipped) => true,
+            (OrderStatus.OnTheWay, OrderStatus.OutForDelivery) => true,
             (OrderStatus.OnTheWay, OrderStatus.Delivered) => true,
             (OrderStatus.Shipped, OrderStatus.OutForDelivery) => true,
             (OrderStatus.Shipped, OrderStatus.Delivered) => true,
@@ -319,15 +354,17 @@ public class UpdateOrderStatusCommandHandler
                 wallet = new Eseller.Domain.Entities.Wallet.Wallet
                 {
                     AccountId = accountId,
-                    Balance = 0
+                    Balance = 0,
+                    PendingEarnings = 0,
+                    AvailableEarnings = 0
                 };
                 wallet.SetCreatedAt(now);
                 wallet.SetUpdatedAt(now);
                 _context.Wallets.Add(wallet);
-                await _context.SaveChangesAsync(cancellationToken);
             }
 
             var credit = earning.NetAmount > 0 ? earning.NetAmount : earning.CommissionAmount;
+            if (credit < 0) credit = 0;
             wallet.Balance += credit;
             wallet.PendingEarnings = Math.Max(0m, wallet.PendingEarnings - credit);
             wallet.AvailableEarnings += credit;

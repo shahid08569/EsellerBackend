@@ -113,15 +113,17 @@ public class UpdateSellerOrderStatusCommandHandler
                         wallet = new Eseller.Domain.Entities.Wallet.Wallet
                         {
                             AccountId = keeper.AccountId,
-                            Balance = 0
+                            Balance = 0,
+                            PendingEarnings = 0,
+                            AvailableEarnings = 0
                         };
                         wallet.SetCreatedAt(now);
                         wallet.SetUpdatedAt(now);
                         _context.Wallets.Add(wallet);
-                        await _context.SaveChangesAsync(cancellationToken);
                     }
 
                     var credit = earning.NetAmount > 0 ? earning.NetAmount : earning.CommissionAmount;
+                    if (credit < 0) credit = 0;
                     wallet.Balance += credit;
                     wallet.PendingEarnings = Math.Max(0m, wallet.PendingEarnings - credit);
                     wallet.AvailableEarnings += credit;
@@ -174,56 +176,72 @@ public class UpdateSellerOrderStatusCommandHandler
                 ChangedAt = now
             });
 
-            await _context.SaveChangesAsync(cancellationToken);
-
-            var orderRef = sellerOrder.OrderRequestId.ToString()[..8].ToUpperInvariant();
-            var sellerAccount = await (
-                from s in _context.Shops.IgnoreQueryFilters().AsNoTracking()
-                join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
-                where s.Id == sellerOrder.ShopId
-                select sk.AccountId
-            ).FirstOrDefaultAsync(cancellationToken);
-
-            if (sellerAccount != Guid.Empty && oldStatus != OrderStatus.Delivered)
+            try
             {
-                await _notifications.NotifyAsync(
-                    sellerAccount,
-                    RoleType.Shopkeeper,
-                    NotificationType.OrderDelivered,
-                    $"Order #{orderRef} delivered",
-                    "An order has been marked as delivered.",
-                    NotificationEntityType.Order,
-                    sellerOrder.OrderRequestId,
-                    "/orders",
-                    $"OrderDelivered:{sellerOrder.Id:N}:Seller:{sellerAccount:N}",
-                    cancellationToken);
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException ex)
+            {
+                return Result.Failure(
+                    $"Could not save order status: {ex.GetBaseException().Message}",
+                    "ORDER_STATUS_SAVE_FAILED");
             }
 
-            if (creditedAccountId.HasValue && creditedAmount > 0)
+            try
             {
-                await _notifications.NotifyAsync(
-                    creditedAccountId.Value,
-                    RoleType.Shopkeeper,
-                    NotificationType.PaymentCompleted,
-                    "Payment Completed",
-                    $"Payment for order #{orderRef} completed. Rs. {creditedAmount:N0} credited.",
-                    NotificationEntityType.Payment,
-                    sellerOrder.OrderRequestId,
-                    "/earnings",
-                    $"PaymentCompleted:{sellerOrder.Id:N}:Seller:{creditedAccountId.Value:N}",
-                    cancellationToken);
+                var orderRef = sellerOrder.OrderRequestId.ToString()[..8].ToUpperInvariant();
+                var sellerAccount = await (
+                    from s in _context.Shops.IgnoreQueryFilters().AsNoTracking()
+                    join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
+                    where s.Id == sellerOrder.ShopId
+                    select sk.AccountId
+                ).FirstOrDefaultAsync(cancellationToken);
 
-                await _notifications.NotifyAsync(
-                    creditedAccountId.Value,
-                    RoleType.Shopkeeper,
-                    NotificationType.CommissionEarned,
-                    "Commission Earned",
-                    $"Congratulations! You earned Rs. {creditedAmount:N0} from order #{orderRef}.",
-                    NotificationEntityType.Earning,
-                    sellerOrder.OrderRequestId,
-                    "/earnings",
-                    $"CommissionEarned:{sellerOrder.Id:N}:Seller:{creditedAccountId.Value:N}",
-                    cancellationToken);
+                if (sellerAccount != Guid.Empty && oldStatus != OrderStatus.Delivered)
+                {
+                    await _notifications.NotifyAsync(
+                        sellerAccount,
+                        RoleType.Shopkeeper,
+                        NotificationType.OrderDelivered,
+                        $"Order #{orderRef} delivered",
+                        "An order has been marked as delivered.",
+                        NotificationEntityType.Order,
+                        sellerOrder.OrderRequestId,
+                        "/orders",
+                        $"OrderDelivered:{sellerOrder.Id:N}:Seller:{sellerAccount:N}",
+                        cancellationToken);
+                }
+
+                if (creditedAccountId.HasValue && creditedAmount > 0)
+                {
+                    await _notifications.NotifyAsync(
+                        creditedAccountId.Value,
+                        RoleType.Shopkeeper,
+                        NotificationType.PaymentCompleted,
+                        "Payment Completed",
+                        $"Payment for order #{orderRef} completed. Rs. {creditedAmount:N0} credited.",
+                        NotificationEntityType.Payment,
+                        sellerOrder.OrderRequestId,
+                        "/earnings",
+                        $"PaymentCompleted:{sellerOrder.Id:N}:Seller:{creditedAccountId.Value:N}",
+                        cancellationToken);
+
+                    await _notifications.NotifyAsync(
+                        creditedAccountId.Value,
+                        RoleType.Shopkeeper,
+                        NotificationType.CommissionEarned,
+                        "Commission Earned",
+                        $"Congratulations! You earned Rs. {creditedAmount:N0} from order #{orderRef}.",
+                        NotificationEntityType.Earning,
+                        sellerOrder.OrderRequestId,
+                        "/earnings",
+                        $"CommissionEarned:{sellerOrder.Id:N}:Seller:{creditedAccountId.Value:N}",
+                        cancellationToken);
+                }
+            }
+            catch
+            {
+                // Status already saved — notifications must not fail delivery.
             }
 
             return Result.Success();
@@ -272,7 +290,10 @@ public class UpdateSellerOrderStatusCommandHandler
             (OrderStatus.Confirmed, OrderStatus.Processing) => true,
             (OrderStatus.Processing, OrderStatus.OnTheWay) => true,
             (OrderStatus.OnTheWay, OrderStatus.Shipped) => true,
+            (OrderStatus.OnTheWay, OrderStatus.OutForDelivery) => true,
+            (OrderStatus.OnTheWay, OrderStatus.Delivered) => true,
             (OrderStatus.Shipped, OrderStatus.OutForDelivery) => true,
+            (OrderStatus.Shipped, OrderStatus.Delivered) => true,
             (OrderStatus.OutForDelivery, OrderStatus.Delivered) => true,
             (OrderStatus.Pending, OrderStatus.Cancelled) => true,
             (OrderStatus.Confirmed, OrderStatus.Cancelled) => true,
