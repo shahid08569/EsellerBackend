@@ -151,17 +151,31 @@ public class AdminController : ControllerBase
 
             var referralClicks = await _context.AffiliateClicks
                 .AsNoTracking()
-                .Where(c => c.Converted && c.ProductId != null)
+                .Where(c => c.Converted)
                 .ToListAsync(cancellationToken);
+
+            static Guid? ExtractShopId(Eseller.Domain.Entities.Affiliate.AffiliateClick c)
+            {
+                if (!string.IsNullOrWhiteSpace(c.IpAddress) && Guid.TryParse(c.IpAddress.Trim(), out var idFromIp))
+                    return idFromIp;
+                if (!string.IsNullOrWhiteSpace(c.UserAgent))
+                {
+                    var parts = c.UserAgent.Split(':', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length >= 2 && Guid.TryParse(parts[1].Trim(), out var idFromUa))
+                        return idFromUa;
+                }
+                return c.ProductId;
+            }
 
             var referralCountByAffiliate = referralClicks
                 .GroupBy(c => c.AffiliateId)
                 .ToDictionary(g => g.Key, g => g.Count());
 
             var referredByShop = referralClicks
-                .Where(c => c.ProductId.HasValue)
-                .GroupBy(c => c.ProductId!.Value)
-                .ToDictionary(g => g.Key, g => g.First());
+                .Select(c => new { Click = c, ShopId = ExtractShopId(c) })
+                .Where(x => x.ShopId.HasValue)
+                .GroupBy(x => x.ShopId!.Value)
+                .ToDictionary(g => g.Key, g => g.First().Click);
 
             var result = shopkeepers.Select(s =>
             {

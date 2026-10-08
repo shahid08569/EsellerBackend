@@ -72,16 +72,30 @@ public class SellerReferralController : ControllerBase
             await _context.SaveChangesAsync(cancellationToken);
         }
 
-        // Query all shops referred by this affiliate (where ProductId stores shop.Id)
+        // Query all shops referred by this affiliate
         var conversions = await _context.AffiliateClicks
             .AsNoTracking()
-            .Where(c => c.AffiliateId == affiliate.Id && c.Converted && c.ProductId != null)
+            .Where(c => c.AffiliateId == affiliate.Id && c.Converted)
             .OrderByDescending(c => c.ClickedAt)
             .ToListAsync(cancellationToken);
 
+        static Guid? ParseShopId(AffiliateClick c)
+        {
+            if (!string.IsNullOrWhiteSpace(c.IpAddress) && Guid.TryParse(c.IpAddress.Trim(), out var idFromIp))
+                return idFromIp;
+            if (!string.IsNullOrWhiteSpace(c.UserAgent))
+            {
+                var parts = c.UserAgent.Split(':', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 2 && Guid.TryParse(parts[1].Trim(), out var idFromUa))
+                    return idFromUa;
+            }
+            return c.ProductId;
+        }
+
         var shopIds = conversions
-            .Where(c => c.ProductId.HasValue)
-            .Select(c => c.ProductId!.Value)
+            .Select(ParseShopId)
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
             .Distinct()
             .ToList();
 
@@ -119,9 +133,9 @@ public class SellerReferralController : ControllerBase
 
             foreach (var conv in conversions)
             {
-                if (!conv.ProductId.HasValue) continue;
-                var sId = conv.ProductId.Value;
-                var shop = shops.FirstOrDefault(s => s.Id == sId);
+                var sId = ParseShopId(conv);
+                if (!sId.HasValue) continue;
+                var shop = shops.FirstOrDefault(s => s.Id == sId.Value);
                 if (shop is null) continue;
 
                 shopkeepers.TryGetValue(shop.ShopkeeperId, out var sk);
