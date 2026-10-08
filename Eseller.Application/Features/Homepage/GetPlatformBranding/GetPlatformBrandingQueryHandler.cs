@@ -18,9 +18,9 @@ public class GetPlatformBrandingQueryHandler
     public const string DefaultNavLogo = "/brand/eseller-global-nav.png?v=orange3";
     public const string DefaultFooterLogo = "/brand/eseller-global-logo.png?v=orange3";
     public const string DefaultTagline = "Shop Without Borders";
-    public const string DefaultSiteTitle = "EsellerGlobal";
+    public const string DefaultSiteTitle = "eSeller Global — Shop Without Borders | Multi-Vendor Marketplace";
     public const string DefaultMetaDescription =
-        "Shop Without Borders on EsellerGlobal — multi-vendor marketplace for electronics, fashion, and more from verified merchants worldwide.";
+        "Shop Without Borders on eSeller Global — premier multi-vendor marketplace for electronics, fashion, lifestyle, and home products from verified merchants worldwide.";
 
     private readonly IApplicationDbContext _context;
 
