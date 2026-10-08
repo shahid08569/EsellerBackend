@@ -278,6 +278,35 @@ public class CreateOrderRequestCommandHandler
                 NetAmount = commissionAmount,
                 Status = SellerEarningStatus.Pending
             });
+
+            // Keep wallet PendingEarnings in sync with ledger (Management Adjust reads wallet)
+            var keeperAccountId = await _context.Shops
+                .IgnoreQueryFilters()
+                .Where(s => s.Id == shopGroup.Key)
+                .Join(_context.Shopkeepers, s => s.ShopkeeperId, sk => sk.Id, (_, sk) => sk.AccountId)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (keeperAccountId != Guid.Empty && commissionAmount > 0)
+            {
+                var wallet = await _context.Wallets
+                    .FirstOrDefaultAsync(w => w.AccountId == keeperAccountId, cancellationToken);
+                if (wallet is null)
+                {
+                    wallet = new Eseller.Domain.Entities.Wallet.Wallet
+                    {
+                        AccountId = keeperAccountId,
+                        Balance = 0,
+                        PendingEarnings = commissionAmount
+                    };
+                    wallet.SetCreatedAt(now);
+                    wallet.SetUpdatedAt(now);
+                    _context.Wallets.Add(wallet);
+                }
+                else
+                {
+                    wallet.PendingEarnings += commissionAmount;
+                    wallet.SetUpdatedAt(now);
+                }
+            }
         }
 
         // Clear cart

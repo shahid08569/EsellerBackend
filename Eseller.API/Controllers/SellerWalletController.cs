@@ -62,11 +62,15 @@ public class SellerWalletController : ControllerBase
 
         decimal AmountOf(SellerEarning e) => e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount;
 
-        var pending = earnings.Where(e => e.Status == SellerEarningStatus.Pending).Sum(AmountOf);
-        var availableEarnings = earnings.Where(e => e.Status == SellerEarningStatus.Available).Sum(AmountOf);
+        var pendingFromOrders = earnings.Where(e => e.Status == SellerEarningStatus.Pending).Sum(AmountOf);
+        var availableFromOrders = earnings.Where(e => e.Status == SellerEarningStatus.Available).Sum(AmountOf);
         var withdrawn = earnings.Where(e => e.Status == SellerEarningStatus.Withdrawn).Sum(AmountOf);
 
-        var wallet = await EnsureWalletAsync(accountId.Value, cancellationToken);
+        var wallet = await EnsureWalletAsync(
+            accountId.Value,
+            pendingFromOrders,
+            availableFromOrders,
+            cancellationToken);
 
         var pendingWithdrawals = await _context.Withdrawals
             .Where(w => w.AccountId == accountId.Value && w.Status == WithdrawalStatus.Pending)
@@ -77,8 +81,8 @@ public class SellerWalletController : ControllerBase
         return Ok(new
         {
             walletBalance = wallet.Balance,
-            pendingEarnings = pending,
-            availableEarnings,
+            pendingEarnings = wallet.PendingEarnings,
+            availableEarnings = wallet.AvailableEarnings,
             withdrawnEarnings = withdrawn,
             pendingWithdrawals,
             availableToWithdraw = wallet.Balance,
@@ -194,7 +198,7 @@ public class SellerWalletController : ControllerBase
                 errorCode = "STORE_NOT_APPROVED"
             });
 
-        var wallet = await EnsureWalletAsync(accountId.Value, cancellationToken);
+        var wallet = await EnsureWalletAsync(accountId.Value, 0, 0, cancellationToken);
         if (wallet.Balance < body.Amount)
             return BadRequest(new { error = "Insufficient balance.", errorCode = "INSUFFICIENT_BALANCE" });
 
@@ -253,14 +257,24 @@ public class SellerWalletController : ControllerBase
         return FallbackMinimumWithdrawal;
     }
 
-    private async Task<Wallet> EnsureWalletAsync(Guid accountId, CancellationToken cancellationToken)
+    private async Task<Wallet> EnsureWalletAsync(
+        Guid accountId,
+        decimal seedPending,
+        decimal seedAvailable,
+        CancellationToken cancellationToken)
     {
         var wallet = await _context.Wallets
             .FirstOrDefaultAsync(w => w.AccountId == accountId, cancellationToken);
         if (wallet is not null) return wallet;
 
         var now = _dateTime.UtcNow;
-        wallet = new Wallet { AccountId = accountId, Balance = 0 };
+        wallet = new Wallet
+        {
+            AccountId = accountId,
+            Balance = 0,
+            PendingEarnings = seedPending,
+            AvailableEarnings = seedAvailable
+        };
         wallet.SetCreatedAt(now);
         wallet.SetUpdatedAt(now);
         _context.Wallets.Add(wallet);

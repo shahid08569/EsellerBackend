@@ -117,6 +117,8 @@ public class UpdateSellerOrderStatusCommandHandler
 
                     var credit = earning.NetAmount > 0 ? earning.NetAmount : earning.CommissionAmount;
                     wallet.Balance += credit;
+                    wallet.PendingEarnings = Math.Max(0m, wallet.PendingEarnings - credit);
+                    wallet.AvailableEarnings += credit;
                     wallet.SetUpdatedAt(now);
 
                     _context.WalletTransactions.Add(new Eseller.Domain.Entities.Wallet.WalletTransaction

@@ -229,6 +229,33 @@ public class AdminPlaceOrderCommandHandler
             Status = SellerEarningStatus.Pending
         });
 
+        var keeperAccountId = await _context.Shopkeepers
+            .Where(sk => sk.Id == shop.ShopkeeperId)
+            .Select(sk => sk.AccountId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (keeperAccountId != Guid.Empty && commissionAmount > 0)
+        {
+            var wallet = await _context.Wallets
+                .FirstOrDefaultAsync(w => w.AccountId == keeperAccountId, cancellationToken);
+            if (wallet is null)
+            {
+                wallet = new Eseller.Domain.Entities.Wallet.Wallet
+                {
+                    AccountId = keeperAccountId,
+                    Balance = 0,
+                    PendingEarnings = commissionAmount
+                };
+                wallet.SetCreatedAt(now);
+                wallet.SetUpdatedAt(now);
+                _context.Wallets.Add(wallet);
+            }
+            else
+            {
+                wallet.PendingEarnings += commissionAmount;
+                wallet.SetUpdatedAt(now);
+            }
+        }
+
         var payment = new Eseller.Domain.Entities.Payment.Payment
         {
             OrderRequestId = orderRequest.Id,

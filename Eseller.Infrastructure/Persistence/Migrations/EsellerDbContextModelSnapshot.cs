@@ -2944,6 +2944,12 @@ namespace Eseller.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("AccountId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<decimal>("AvailableEarnings")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)")
+                        .HasDefaultValue(0m);
+
                     b.Property<decimal>("Balance")
                         .ValueGeneratedOnAdd()
                         .HasPrecision(18, 2)
@@ -2952,6 +2958,12 @@ namespace Eseller.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<decimal>("PendingEarnings")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)")
+                        .HasDefaultValue(0m);
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("datetime2");

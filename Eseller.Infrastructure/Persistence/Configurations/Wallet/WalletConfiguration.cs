@@ -12,6 +12,8 @@ public class WalletConfiguration : IEntityTypeConfiguration<Eseller.Domain.Entit
         builder.HasKey(w => w.Id);
 
         builder.Property(w => w.Balance).HasPrecision(18, 2).IsRequired().HasDefaultValue(0);
+        builder.Property(w => w.PendingEarnings).HasPrecision(18, 2).IsRequired().HasDefaultValue(0);
+        builder.Property(w => w.AvailableEarnings).HasPrecision(18, 2).IsRequired().HasDefaultValue(0);
         builder.Property(w => w.CreatedAt).IsRequired();
         builder.Property(w => w.UpdatedAt).IsRequired();
 
