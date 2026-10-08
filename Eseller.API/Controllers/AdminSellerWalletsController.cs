@@ -137,8 +137,8 @@ public class AdminSellerWalletsController : ControllerBase
     }
 
     /// <summary>
-    /// Super Admin adjusts seller Pending / Available earning totals (persists on SellerEarnings rows).
-    /// Available delta also adjusts wallet balance so seller wallet stays consistent.
+    /// Management adjusts seller Pending / Available earning totals (persists on SellerEarnings rows).
+    /// Wallet balance is independent — use PUT .../balance so seller sees the exact balance set.
     /// </summary>
     [HttpPut("{accountId:guid}/earnings")]
     public async Task<IActionResult> SetEarnings(
@@ -206,42 +206,6 @@ public class AdminSellerWalletsController : ControllerBase
             fallbackSellerOrderId);
         if (adjustError is not null)
             return BadRequest(new { error = adjustError, errorCode = "EARNINGS_ADJUST_FAILED" });
-
-        var now = _dateTime.UtcNow;
-        var availableDelta = body.AvailableEarnings - previousAvailable;
-
-        if (availableDelta != 0)
-        {
-            var wallet = await _context.Wallets
-                .FirstOrDefaultAsync(w => w.AccountId == accountId, cancellationToken);
-
-            if (wallet is null)
-            {
-                wallet = new Wallet { AccountId = accountId, Balance = 0 };
-                wallet.SetCreatedAt(now);
-                wallet.SetUpdatedAt(now);
-                _context.Wallets.Add(wallet);
-                await _context.SaveChangesAsync(cancellationToken);
-            }
-
-            var previousBalance = wallet.Balance;
-            var newBalance = Math.Max(0m, previousBalance + availableDelta);
-            wallet.Balance = newBalance;
-            wallet.SetUpdatedAt(now);
-
-            _context.WalletTransactions.Add(new WalletTransaction
-            {
-                WalletId = wallet.Id,
-                Direction = availableDelta > 0 ? WalletDirection.Credit : WalletDirection.Debit,
-                TransactionType = WalletTransactionType.ManualAdjustment,
-                Amount = Math.Abs(previousBalance - newBalance),
-                ReferenceType = "AdminEarningsAdjustment",
-                ReferenceId = null,
-                Description =
-                    $"Super Admin available earnings adjustment ({previousAvailable:N2} → {body.AvailableEarnings:N2})",
-                CreatedAt = now
-            });
-        }
 
         await _context.SaveChangesAsync(cancellationToken);
 
