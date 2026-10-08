@@ -94,9 +94,28 @@ public class UpdateOrderStatusCommandHandler
         {
             creditedSellers = await CreditSellerEarningsForOrderAsync(order.Id, now, cancellationToken);
         }
-        else if (newStatus == OrderStatus.Cancelled || newStatus == OrderStatus.Refunded)
+        else if (newStatus == OrderStatus.Cancelled)
         {
-            await ReversePendingSellerEarningsForOrderAsync(order.Id, cancellationToken);
+            var sellerOrderIds = await _context.SellerOrders
+                .Where(so => so.OrderRequestId == order.Id)
+                .Select(so => so.Id)
+                .ToListAsync(cancellationToken);
+            await SellerEarningsWalletEffects.ReversePendingAsync(
+                _context, _dateTime, sellerOrderIds, cancellationToken);
+        }
+        else if (newStatus == OrderStatus.Refunded)
+        {
+            var sellerOrderIds = await _context.SellerOrders
+                .Where(so => so.OrderRequestId == order.Id)
+                .Select(so => so.Id)
+                .ToListAsync(cancellationToken);
+            // Pre-delivery refund: drop pending. Post-delivery refund: claw back available + balance.
+            await SellerEarningsWalletEffects.ReversePendingAsync(
+                _context, _dateTime, sellerOrderIds, cancellationToken);
+            await SellerEarningsWalletEffects.ClawBackAvailableAsync(
+                _context, _dateTime, sellerOrderIds,
+                "Seller earning clawed back for refunded order",
+                cancellationToken);
         }
 
         // Affiliate commission side-effects
@@ -332,56 +351,4 @@ public class UpdateOrderStatusCommandHandler
         return credited;
     }
 
-    private async Task ReversePendingSellerEarningsForOrderAsync(
-        Guid orderRequestId,
-        CancellationToken cancellationToken)
-    {
-        var sellerOrderIds = await _context.SellerOrders
-            .Where(so => so.OrderRequestId == orderRequestId)
-            .Select(so => so.Id)
-            .ToListAsync(cancellationToken);
-
-        if (sellerOrderIds.Count == 0) return;
-
-        var earnings = await _context.SellerEarnings
-            .Where(se => sellerOrderIds.Contains(se.SellerOrderId)
-                      && se.Status == SellerEarningStatus.Pending)
-            .ToListAsync(cancellationToken);
-
-        if (earnings.Count == 0) return;
-
-        var orderShopRows = await _context.SellerOrders
-            .Where(so => sellerOrderIds.Contains(so.Id))
-            .Select(so => new { so.Id, so.ShopId })
-            .ToListAsync(cancellationToken);
-        var shopIds = orderShopRows.Select(r => r.ShopId).Distinct().ToList();
-        var shopKeepers = await _context.Shops
-            .IgnoreQueryFilters()
-            .Where(s => shopIds.Contains(s.Id))
-            .Join(_context.Shopkeepers, s => s.ShopkeeperId, sk => sk.Id,
-                (s, sk) => new { s.Id, sk.AccountId })
-            .ToListAsync(cancellationToken);
-        var shopToAccount = shopKeepers.ToDictionary(x => x.Id, x => x.AccountId);
-        var orderToShop = orderShopRows.ToDictionary(r => r.Id, r => r.ShopId);
-
-        var pendingByAccount = new Dictionary<Guid, decimal>();
-        foreach (var earning in earnings)
-        {
-            earning.Status = SellerEarningStatus.Withdrawn; // mark closed / not payable
-            if (!orderToShop.TryGetValue(earning.SellerOrderId, out var shopId)
-                || !shopToAccount.TryGetValue(shopId, out var accountId))
-                continue;
-            var amount = earning.NetAmount > 0 ? earning.NetAmount : earning.CommissionAmount;
-            pendingByAccount[accountId] = pendingByAccount.GetValueOrDefault(accountId) + amount;
-        }
-
-        foreach (var (accountId, amount) in pendingByAccount)
-        {
-            var wallet = await _context.Wallets
-                .FirstOrDefaultAsync(w => w.AccountId == accountId, cancellationToken);
-            if (wallet is null) continue;
-            wallet.PendingEarnings = Math.Max(0m, wallet.PendingEarnings - amount);
-            wallet.SetUpdatedAt(_dateTime.UtcNow);
-        }
-    }
 }

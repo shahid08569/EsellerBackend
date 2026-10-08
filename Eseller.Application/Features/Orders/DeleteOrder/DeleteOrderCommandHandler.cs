@@ -10,13 +10,16 @@ public class DeleteOrderCommandHandler : IRequestHandler<DeleteOrderCommand, Res
 {
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IDateTime _dateTime;
 
     public DeleteOrderCommandHandler(
         IApplicationDbContext context,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        IDateTime dateTime)
     {
         _context = context;
         _currentUserService = currentUserService;
+        _dateTime = dateTime;
     }
 
     public async Task<Result> Handle(
@@ -59,6 +62,8 @@ public class DeleteOrderCommandHandler : IRequestHandler<DeleteOrderCommand, Res
                 .ToListAsync(cancellationToken);
             if (earnings.Count > 0)
             {
+                await SellerEarningsWalletEffects.UndoWalletBeforeDeleteAsync(
+                    _context, _dateTime, earnings, sellerOrderIds, cancellationToken);
                 _context.SellerEarnings.RemoveRange(earnings);
             }
 

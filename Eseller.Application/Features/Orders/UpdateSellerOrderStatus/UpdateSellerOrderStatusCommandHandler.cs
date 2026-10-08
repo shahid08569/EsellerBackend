@@ -79,6 +79,12 @@ public class UpdateSellerOrderStatusCommandHandler
         sellerOrder.Status = newStatus;
         sellerOrder.SetUpdatedAt(now);
 
+        if (newStatus == OrderStatus.Cancelled)
+        {
+            await SellerEarningsWalletEffects.ReversePendingAsync(
+                _context, _dateTime, [sellerOrder.Id], cancellationToken);
+        }
+
         if (newStatus == OrderStatus.Delivered)
         {
             var earning = await _context.SellerEarnings
