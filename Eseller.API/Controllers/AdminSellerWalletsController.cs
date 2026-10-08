@@ -11,7 +11,7 @@ namespace Eseller.API.Controllers;
 
 [ApiController]
 [Route("api/v1/admin/seller-wallets")]
-[Authorize(Roles = "SuperAdmin")]
+[Authorize(Roles = "SuperAdmin,Partner")]
 public class AdminSellerWalletsController : ControllerBase
 {
     private readonly IApplicationDbContext _context;
@@ -27,97 +27,167 @@ public class AdminSellerWalletsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken cancellationToken)
     {
-        var shopkeepers = await _context.Shopkeepers
-            .AsNoTracking()
-            .Select(sk => new { sk.Id, sk.AccountId, sk.Name })
-            .ToListAsync(cancellationToken);
-
-        if (shopkeepers.Count == 0)
-            return Ok(new { items = Array.Empty<object>() });
-
-        var keeperIds = shopkeepers.Select(sk => sk.Id).ToList();
-
-        var shops = await _context.Shops
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Where(s => s.DeletedAt == null && keeperIds.Contains(s.ShopkeeperId))
-            .Select(s => new { s.Id, s.ShopkeeperId, s.Name, s.CreatedAt })
-            .ToListAsync(cancellationToken);
-
-        var shopNameByKeeper = shops
-            .GroupBy(s => s.ShopkeeperId)
-            .ToDictionary(
-                g => g.Key,
-                g => g.OrderBy(s => s.CreatedAt).First().Name);
-
-        var accountIds = shopkeepers.Select(sk => sk.AccountId).ToList();
-        var wallets = await _context.Wallets
-            .AsNoTracking()
-            .Where(w => accountIds.Contains(w.AccountId))
-            .ToDictionaryAsync(
-                w => w.AccountId,
-                w => new { w.Balance, w.PendingEarnings, w.AvailableEarnings },
-                cancellationToken);
-
-        // Fallback for accounts that still only have SellerEarnings ledger rows
-        var shopIdToKeeper = shops.ToDictionary(s => s.Id, s => s.ShopkeeperId);
-        var shopIds = shopIdToKeeper.Keys.ToList();
-        var sellerOrderRows = shopIds.Count == 0
-            ? []
-            : await _context.SellerOrders
-                .AsNoTracking()
-                .Where(so => shopIds.Contains(so.ShopId))
-                .Select(so => new { so.Id, so.ShopId })
-                .ToListAsync(cancellationToken);
-        var orderIdToKeeper = sellerOrderRows.ToDictionary(r => r.Id, r => shopIdToKeeper[r.ShopId]);
-        var sellerOrderIds = sellerOrderRows.Select(r => r.Id).ToList();
-        var earnings = sellerOrderIds.Count == 0
-            ? []
-            : await _context.SellerEarnings
-                .AsNoTracking()
-                .Where(se => sellerOrderIds.Contains(se.SellerOrderId))
-                .Select(se => new { se.SellerOrderId, se.Status, se.NetAmount, se.CommissionAmount })
-                .ToListAsync(cancellationToken);
-
-        var pendingByKeeper = new Dictionary<Guid, decimal>();
-        var availableByKeeper = new Dictionary<Guid, decimal>();
-        foreach (var e in earnings)
+        try
         {
-            if (!orderIdToKeeper.TryGetValue(e.SellerOrderId, out var keeperId))
-                continue;
-            var amount = e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount;
-            if (e.Status == SellerEarningStatus.Pending)
-                pendingByKeeper[keeperId] = pendingByKeeper.GetValueOrDefault(keeperId) + amount;
-            else if (e.Status == SellerEarningStatus.Available)
-                availableByKeeper[keeperId] = availableByKeeper.GetValueOrDefault(keeperId) + amount;
-        }
+            var shopkeepers = await _context.Shopkeepers
+                .AsNoTracking()
+                .Select(sk => new { sk.Id, sk.AccountId, sk.Name, sk.Status })
+                .ToListAsync(cancellationToken);
 
-        var items = shopkeepers
-            .OrderBy(sk => sk.Name)
-            .Select(sk =>
+            if (shopkeepers.Count == 0)
+                return Ok(new { items = Array.Empty<object>() });
+
+            var keeperIds = shopkeepers.Select(sk => sk.Id).ToList();
+
+            var shops = await _context.Shops
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(s => s.DeletedAt == null && keeperIds.Contains(s.ShopkeeperId))
+                .Select(s => new { s.Id, s.ShopkeeperId, s.Name, s.CreatedAt })
+                .ToListAsync(cancellationToken);
+
+            var shopNameByKeeper = shops
+                .GroupBy(s => s.ShopkeeperId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.OrderBy(s => s.CreatedAt).First().Name);
+
+            // Show keepers that have a shop, or are Approved/Pending (even pre-shop).
+            var visibleKeepers = shopkeepers
+                .Where(sk =>
+                    shopNameByKeeper.ContainsKey(sk.Id)
+                    || sk.Status == ShopkeeperApprovalStatus.Approved
+                    || sk.Status == ShopkeeperApprovalStatus.Pending)
+                .ToList();
+
+            var accountIds = visibleKeepers.Select(sk => sk.AccountId).Distinct().ToList();
+            var wallets = await LoadWalletTotalsAsync(accountIds, cancellationToken);
+
+            // Fallback for accounts that still only have SellerEarnings ledger rows
+            var shopIdToKeeper = shops
+                .GroupBy(s => s.Id)
+                .ToDictionary(g => g.Key, g => g.First().ShopkeeperId);
+            var shopIds = shopIdToKeeper.Keys.ToList();
+            var sellerOrderRows = shopIds.Count == 0
+                ? []
+                : await _context.SellerOrders
+                    .AsNoTracking()
+                    .Where(so => shopIds.Contains(so.ShopId))
+                    .Select(so => new { so.Id, so.ShopId })
+                    .ToListAsync(cancellationToken);
+            var orderIdToKeeper = sellerOrderRows
+                .Where(r => shopIdToKeeper.ContainsKey(r.ShopId))
+                .GroupBy(r => r.Id)
+                .ToDictionary(g => g.Key, g => shopIdToKeeper[g.First().ShopId]);
+            var sellerOrderIds = orderIdToKeeper.Keys.ToList();
+            var earnings = sellerOrderIds.Count == 0
+                ? []
+                : await _context.SellerEarnings
+                    .AsNoTracking()
+                    .Where(se => sellerOrderIds.Contains(se.SellerOrderId))
+                    .Select(se => new { se.SellerOrderId, se.Status, se.NetAmount, se.CommissionAmount })
+                    .ToListAsync(cancellationToken);
+
+            var pendingByKeeper = new Dictionary<Guid, decimal>();
+            var availableByKeeper = new Dictionary<Guid, decimal>();
+            foreach (var e in earnings)
             {
-                wallets.TryGetValue(sk.AccountId, out var wallet);
-                var pendingFromOrders = pendingByKeeper.GetValueOrDefault(sk.Id, 0m);
-                var availableFromOrders = availableByKeeper.GetValueOrDefault(sk.Id, 0m);
-                // Wallet columns are source of truth after Management adjust / migration backfill.
-                // No wallet row yet → fall back to order ledger sums.
-                var pending = wallet?.PendingEarnings ?? pendingFromOrders;
-                var available = wallet?.AvailableEarnings ?? availableFromOrders;
+                if (!orderIdToKeeper.TryGetValue(e.SellerOrderId, out var keeperId))
+                    continue;
+                var amount = e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount;
+                if (e.Status == SellerEarningStatus.Pending)
+                    pendingByKeeper[keeperId] = pendingByKeeper.GetValueOrDefault(keeperId) + amount;
+                else if (e.Status == SellerEarningStatus.Available)
+                    availableByKeeper[keeperId] = availableByKeeper.GetValueOrDefault(keeperId) + amount;
+            }
 
-                return new
+            var items = visibleKeepers
+                .OrderBy(sk => sk.Name)
+                .Select(sk =>
                 {
-                    accountId = sk.AccountId,
-                    shopkeeperName = sk.Name,
-                    shopName = shopNameByKeeper.GetValueOrDefault(sk.Id),
-                    walletBalance = wallet?.Balance ?? 0m,
-                    pendingEarnings = pending,
-                    availableEarnings = available
-                };
-            })
-            .ToList();
+                    wallets.TryGetValue(sk.AccountId, out var wallet);
+                    var pendingFromOrders = pendingByKeeper.GetValueOrDefault(sk.Id, 0m);
+                    var availableFromOrders = availableByKeeper.GetValueOrDefault(sk.Id, 0m);
+                    // Wallet columns are source of truth after Management adjust / migration backfill.
+                    // No wallet row yet → fall back to order ledger sums.
+                    var pending = wallet?.PendingEarnings ?? pendingFromOrders;
+                    var available = wallet?.AvailableEarnings ?? availableFromOrders;
 
-        return Ok(new { items });
+                    return new
+                    {
+                        accountId = sk.AccountId,
+                        shopkeeperName = sk.Name,
+                        shopName = shopNameByKeeper.GetValueOrDefault(sk.Id),
+                        walletBalance = wallet?.Balance ?? 0m,
+                        pendingEarnings = pending,
+                        availableEarnings = available
+                    };
+                })
+                .ToList();
+
+            return Ok(new { items });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new
+            {
+                error = "Failed to load seller wallets.",
+                errorCode = "SELLER_WALLETS_LIST_FAILED",
+                detail = ex.Message
+            });
+        }
     }
+
+    private async Task<Dictionary<Guid, WalletTotals>> LoadWalletTotalsAsync(
+        List<Guid> accountIds,
+        CancellationToken cancellationToken)
+    {
+        if (accountIds.Count == 0)
+            return new Dictionary<Guid, WalletTotals>();
+
+        try
+        {
+            var rows = await _context.Wallets
+                .AsNoTracking()
+                .Where(w => accountIds.Contains(w.AccountId))
+                .Select(w => new
+                {
+                    w.AccountId,
+                    w.Balance,
+                    w.PendingEarnings,
+                    w.AvailableEarnings
+                })
+                .ToListAsync(cancellationToken);
+
+            return rows
+                .GroupBy(r => r.AccountId)
+                .ToDictionary(
+                    g => g.Key,
+                    g =>
+                    {
+                        var w = g.First();
+                        return new WalletTotals(w.Balance, w.PendingEarnings, w.AvailableEarnings);
+                    });
+        }
+        catch
+        {
+            // Deploy race: PendingEarnings / AvailableEarnings columns may be missing briefly.
+            // Fall back to Balance only so the Seller Earnings table still renders.
+            var rows = await _context.Wallets
+                .AsNoTracking()
+                .Where(w => accountIds.Contains(w.AccountId))
+                .Select(w => new { w.AccountId, w.Balance })
+                .ToListAsync(cancellationToken);
+
+            return rows
+                .GroupBy(r => r.AccountId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => new WalletTotals(g.First().Balance, 0m, 0m));
+        }
+    }
+
+    private sealed record WalletTotals(decimal Balance, decimal PendingEarnings, decimal AvailableEarnings);
 
     /// <summary>
     /// Seller payout bank/card details for manual processing.
