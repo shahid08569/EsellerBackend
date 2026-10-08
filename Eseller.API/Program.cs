@@ -169,16 +169,33 @@ if (shouldMigrate || shouldSeed)
     {
         var db = scope.ServiceProvider.GetRequiredService<EsellerDbContext>();
         if (shouldMigrate)
-            await db.Database.MigrateAsync();
+        {
+            try
+            {
+                await db.Database.MigrateAsync();
+            }
+            catch (Exception migrateEx)
+            {
+                logger.LogError(migrateEx, "EF MigrateAsync failed — continuing with raw SQL ensures.");
+            }
+        }
 
-        // Belt-and-suspenders: Product.ReviewCount (deploy race can ship code before migration applies).
-        await db.Database.ExecuteSqlRawAsync("""
-            IF COL_LENGTH(N'Products', N'ReviewCount') IS NULL
-            BEGIN
-                ALTER TABLE [Products] ADD [ReviewCount] int NOT NULL
-                    CONSTRAINT [DF_Products_ReviewCount] DEFAULT 0;
-            END
-            """);
+        // Always ensure Product.ReviewCount (even if MigrateAsync failed / raced).
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync("""
+                IF COL_LENGTH(N'Products', N'ReviewCount') IS NULL
+                BEGIN
+                    ALTER TABLE [Products] ADD [ReviewCount] int NOT NULL
+                        CONSTRAINT [DF_Products_ReviewCount] DEFAULT 0;
+                END
+                """);
+            logger.LogInformation("Ensured Products.ReviewCount column exists.");
+        }
+        catch (Exception reviewCountEx)
+        {
+            logger.LogError(reviewCountEx, "Failed to ensure Products.ReviewCount column.");
+        }
 
         // Belt-and-suspenders: banner content columns (migration historically lacked [Migration] attr).
         await db.Database.ExecuteSqlRawAsync("""
