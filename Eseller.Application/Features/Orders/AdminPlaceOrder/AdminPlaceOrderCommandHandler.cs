@@ -373,26 +373,32 @@ public class AdminPlaceOrderCommandHandler
         var notifTitle = $"New Order #{shortRef}";
         var notifBody = $"{desiredCustomerName} placed an order ({totalQuantity} items, ${grandGrossTotal:N0}).";
 
-        var keeperAccountIds = await (
-            from s in _context.Shops.IgnoreQueryFilters().AsNoTracking()
-            join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
-            where shopIds.Contains(s.Id) && s.DeletedAt == null
-            select sk.AccountId
-        ).Distinct().ToListAsync(cancellationToken);
-
-        foreach (var keeperAccountId in keeperAccountIds)
+        foreach (var (shopId, shopGross) in grossByShop)
         {
-            await _notifications.NotifyAsync(
-                keeperAccountId,
-                RoleType.Shopkeeper,
-                NotificationType.NewOrder,
-                notifTitle,
-                notifBody,
-                NotificationEntityType.Order,
-                orderRequest.Id,
-                "/orders",
-                $"NewOrder:{orderRequest.Id:N}:Seller:{keeperAccountId:N}",
-                cancellationToken);
+            var shop = shops[shopId];
+            var keeperAccountId = await _context.Shopkeepers
+                .Where(sk => sk.Id == shop.ShopkeeperId)
+                .Select(sk => sk.AccountId)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (keeperAccountId != Guid.Empty)
+            {
+                var shopOrderItems = createdItems.Where(i => i.SellerOrderId == sellerOrders[shopId].Id).ToList();
+                var shopQuantity = shopOrderItems.Sum(i => i.Quantity);
+                var shopNotifBody = $"{desiredCustomerName} placed an order for {shop.Name} ({shopQuantity} items, ${shopGross:N0}).";
+
+                await _notifications.NotifyAsync(
+                    keeperAccountId,
+                    RoleType.Shopkeeper,
+                    NotificationType.NewOrder,
+                    notifTitle,
+                    shopNotifBody,
+                    NotificationEntityType.Order,
+                    orderRequest.Id,
+                    "/orders",
+                    $"NewOrder:{orderRequest.Id:N}:Seller:{keeperAccountId:N}",
+                    cancellationToken);
+            }
         }
 
         await _notifications.NotifyAdminsAsync(
