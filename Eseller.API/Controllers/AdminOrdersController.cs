@@ -74,7 +74,8 @@ public class AdminOrdersController : ControllerBase
                 request.City,
                 request.State,
                 request.Country,
-                request.OrderNotes),
+                request.OrderNotes,
+                request.Items),
             cancellationToken);
 
         if (!result.IsSuccess)
@@ -204,12 +205,13 @@ public record UpdateOrderStatusRequest(OrderStatus NewStatus);
 public record UpdateOrderPaymentStatusRequest(PaymentStatus NewStatus);
 
 public record AdminPlaceOrderRequest(
-    Guid ProductVariantId,
-    int Quantity,
+    Guid? ProductVariantId = null,
+    int? Quantity = null,
     string? CustomerName = null,
     string? CustomerPhone = null,
     string? ShippingAddress = null,
     string? City = null,
     string? State = null,
     string? Country = null,
-    string? OrderNotes = null);
+    string? OrderNotes = null,
+    List<AdminPlaceOrderItemDto>? Items = null);

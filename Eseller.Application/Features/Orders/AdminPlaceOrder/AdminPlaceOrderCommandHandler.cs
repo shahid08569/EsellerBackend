@@ -16,7 +16,8 @@ using ChatMessageEntity = Eseller.Domain.Entities.Orders.ChatMessage;
 namespace Eseller.Application.Features.Orders.AdminPlaceOrder;
 
 /// <summary>
-/// SuperAdmin / Partner places an order against any seller (or live warehouse) listing.
+/// SuperAdmin / Partner places an order against any seller (or live warehouse) listings.
+/// Supports both single-product orders and multi-product orders at a time.
 /// Creates/reuses a customer User profile linked to the admin Account so orders appear in the normal list.
 /// </summary>
 public class AdminPlaceOrderCommandHandler
@@ -53,8 +54,25 @@ public class AdminPlaceOrderCommandHandler
         if (role != RoleType.SuperAdmin && role != RoleType.Partner)
             return Result.Failure<Guid>("Only Super Admin can place platform orders.", "FORBIDDEN");
 
-        if (request.Quantity < 1)
-            return Result.Failure<Guid>("Quantity must be at least 1.", "INVALID_QUANTITY");
+        // 1. Gather all requested items (support both multi-item list and fallback single item)
+        var rawItems = new List<AdminPlaceOrderItemDto>();
+        if (request.Items != null && request.Items.Count > 0)
+        {
+            rawItems.AddRange(request.Items.Where(i => i.Quantity > 0));
+        }
+        else if (request.ProductVariantId.HasValue && request.Quantity.HasValue && request.Quantity.Value > 0)
+        {
+            rawItems.Add(new AdminPlaceOrderItemDto(request.ProductVariantId.Value, request.Quantity.Value));
+        }
+
+        if (rawItems.Count == 0)
+            return Result.Failure<Guid>("Please select at least one item with valid quantity.", "INVALID_ITEMS");
+
+        // Consolidate duplicate variant IDs
+        var consolidatedItems = rawItems
+            .GroupBy(i => i.ProductVariantId)
+            .Select(g => new AdminPlaceOrderItemDto(g.Key, g.Sum(x => x.Quantity)))
+            .ToList();
 
         var account = await _context.Accounts
             .AsNoTracking()
@@ -63,19 +81,22 @@ public class AdminPlaceOrderCommandHandler
         if (account is null)
             return Result.Failure<Guid>("Admin account not found.", "ACCOUNT_NOT_FOUND");
 
+        var now = _dateTime.UtcNow;
+
         // Reuse or create a customer User row for this admin account (orders require UserId)
         var user = await _context.Users
             .FirstOrDefaultAsync(u => u.AccountId == _currentUserService.AccountId.Value, cancellationToken);
 
-        var now = _dateTime.UtcNow;
+        var desiredCustomerName = !string.IsNullOrWhiteSpace(request.CustomerName)
+            ? request.CustomerName.Trim()
+            : (!string.IsNullOrWhiteSpace(account.Username) ? account.Username : "Customer");
+
         if (user is null)
         {
             user = new User
             {
                 AccountId = _currentUserService.AccountId.Value,
-                Name = string.IsNullOrWhiteSpace(request.CustomerName)
-                    ? (string.IsNullOrWhiteSpace(account.Username) ? "Platform Admin" : account.Username)
-                    : request.CustomerName.Trim(),
+                Name = desiredCustomerName,
                 Phone = string.IsNullOrWhiteSpace(request.CustomerPhone) ? null : request.CustomerPhone.Trim(),
                 Status = UserApprovalStatus.Approved,
                 ApprovedByAccountId = _currentUserService.AccountId.Value,
@@ -86,71 +107,87 @@ public class AdminPlaceOrderCommandHandler
             _context.Users.Add(user);
             await _context.SaveChangesAsync(cancellationToken);
         }
-        else if (user.Status != UserApprovalStatus.Approved)
+        else
         {
-            user.Status = UserApprovalStatus.Approved;
-            user.ApprovedByAccountId = _currentUserService.AccountId.Value;
-            user.ApprovedAt = now;
-            user.RejectionReason = null;
-            user.SetUpdatedAt(now);
-            await _context.SaveChangesAsync(cancellationToken);
+            var updated = false;
+            if (!string.IsNullOrWhiteSpace(request.CustomerName) && user.Name != desiredCustomerName)
+            {
+                user.Name = desiredCustomerName;
+                updated = true;
+            }
+            if (user.Status != UserApprovalStatus.Approved)
+            {
+                user.Status = UserApprovalStatus.Approved;
+                user.ApprovedByAccountId = _currentUserService.AccountId.Value;
+                user.ApprovedAt = now;
+                user.RejectionReason = null;
+                updated = true;
+            }
+            if (updated)
+            {
+                user.SetUpdatedAt(now);
+                await _context.SaveChangesAsync(cancellationToken);
+            }
         }
 
-        var variant = await _context.ProductVariants
+        // 2. Fetch and validate variants
+        var variantIds = consolidatedItems.Select(i => i.ProductVariantId).ToList();
+        var variants = await _context.ProductVariants
             .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(pv =>
-                    pv.Id == request.ProductVariantId
-                    && pv.IsActive
-                    && pv.DeletedAt == null,
-                cancellationToken);
+            .Where(pv => variantIds.Contains(pv.Id) && pv.IsActive && pv.DeletedAt == null)
+            .ToDictionaryAsync(pv => pv.Id, cancellationToken);
 
-        if (variant is null)
-            return Result.Failure<Guid>("Variant not available.", "VARIANT_NOT_AVAILABLE");
+        foreach (var item in consolidatedItems)
+        {
+            if (!variants.TryGetValue(item.ProductVariantId, out var variant))
+                return Result.Failure<Guid>("One or more selected product variants are not available.", "VARIANT_NOT_AVAILABLE");
 
-        if (request.Quantity > variant.StockQty)
-            return Result.Failure<Guid>(
-                $"Only {variant.StockQty} item(s) available in stock.",
-                "INSUFFICIENT_STOCK");
+            if (item.Quantity > variant.StockQty)
+                return Result.Failure<Guid>(
+                    $"Insufficient stock for variant (SKU: {variant.Sku}). Requested: {item.Quantity}, Available: {variant.StockQty}.",
+                    "INSUFFICIENT_STOCK");
+        }
+
+        // 3. Fetch and validate products
+        var productIds = variants.Values.Select(v => v.ProductId).Distinct().ToList();
+        var products = await _context.Products
+            .IgnoreQueryFilters()
+            .Where(p => productIds.Contains(p.Id) && p.IsActive && p.IsApproved && p.DeletedAt == null)
+            .ToDictionaryAsync(p => p.Id, cancellationToken);
 
         var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
 
-        var product = await _context.Products
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(p =>
-                    p.Id == variant.ProductId
-                    && p.IsActive
-                    && p.IsApproved
-                    && p.DeletedAt == null,
-                cancellationToken);
-
-        if (product is null)
-            return Result.Failure<Guid>("Product not available.", "PRODUCT_NOT_AVAILABLE");
-
-        // Admin may order seller listings, or warehouse SKUs that are marked live
-        if (masterShopId.HasValue
-            && product.ShopId == masterShopId.Value
-            && !product.IsStorefrontLive)
+        foreach (var variant in variants.Values)
         {
-            return Result.Failure<Guid>(
-                "This warehouse product is not live on the storefront. Enable Live on Website first, or order a seller listing.",
-                "PRODUCT_NOT_LIVE");
+            if (!products.TryGetValue(variant.ProductId, out var product))
+                return Result.Failure<Guid>("One or more products are not available.", "PRODUCT_NOT_AVAILABLE");
+
+            if (masterShopId.HasValue && product.ShopId == masterShopId.Value && !product.IsStorefrontLive)
+            {
+                return Result.Failure<Guid>(
+                    $"Warehouse product '{product.Name}' is not live on the storefront. Enable Live on Website first.",
+                    "PRODUCT_NOT_LIVE");
+            }
         }
 
-        var shop = await _context.Shops
-            .FirstOrDefaultAsync(s => s.Id == product.ShopId && s.IsActive, cancellationToken);
+        // 4. Fetch and validate shops
+        var shopIds = products.Values.Select(p => p.ShopId).Distinct().ToList();
+        var shops = await _context.Shops
+            .Where(s => shopIds.Contains(s.Id) && s.IsActive)
+            .ToDictionaryAsync(s => s.Id, cancellationToken);
 
-        if (shop is null)
-            return Result.Failure<Guid>("Shop not available.", "SHOP_NOT_AVAILABLE");
+        foreach (var shopId in shopIds)
+        {
+            if (!shops.ContainsKey(shopId))
+                return Result.Failure<Guid>("One or more seller shops are not active.", "SHOP_NOT_AVAILABLE");
+        }
 
-        var customerName = !string.IsNullOrWhiteSpace(request.CustomerName)
-            ? request.CustomerName.Trim()
-            : user.Name;
-
+        // 5. Create OrderRequest
         var orderRequest = new OrderRequestEntity
         {
             UserId = user.Id,
             Status = OrderStatus.Pending,
-            CustomerName = customerName,
+            CustomerName = desiredCustomerName,
             CustomerPhone = string.IsNullOrWhiteSpace(request.CustomerPhone)
                 ? user.Phone
                 : request.CustomerPhone.Trim(),
@@ -167,101 +204,149 @@ public class AdminPlaceOrderCommandHandler
 
         _context.OrderRequests.Add(orderRequest);
 
-        var sellerOrder = new SellerOrder
+        // 6. Create SellerOrders (grouped by ShopId)
+        var itemsByShop = consolidatedItems
+            .GroupBy(item => products[variants[item.ProductVariantId].ProductId].ShopId)
+            .ToList();
+
+        var sellerOrders = new Dictionary<Guid, SellerOrder>();
+        foreach (var shopGroup in itemsByShop)
         {
-            OrderRequestId = orderRequest.Id,
-            ShopId = shop.Id,
-            Status = OrderStatus.Pending
-        };
-        _context.SellerOrders.Add(sellerOrder);
+            var sellerOrder = new SellerOrder
+            {
+                OrderRequestId = orderRequest.Id,
+                ShopId = shopGroup.Key,
+                Status = OrderStatus.Pending
+            };
+            _context.SellerOrders.Add(sellerOrder);
+            sellerOrders[shopGroup.Key] = sellerOrder;
+        }
+
         await _context.SaveChangesAsync(cancellationToken);
 
-        var attributes = await _context.VariantAttributeValues
-            .Where(vav => vav.ProductVariantId == variant.Id)
+        // 7. Create OrderRequestItems, update inventory, record inventory transactions
+        var allAttributes = await _context.VariantAttributeValues
+            .Where(vav => variantIds.Contains(vav.ProductVariantId))
             .ToListAsync(cancellationToken);
 
-        var attributesDict = attributes
-            .GroupBy(a => a.AttributeName)
-            .ToDictionary(g => g.Key, g => g.First().AttributeValue);
+        var attributesByVariant = allAttributes
+            .GroupBy(a => a.ProductVariantId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.GroupBy(x => x.AttributeName).ToDictionary(x => x.Key, x => x.First().AttributeValue));
 
-        var attributesJson = JsonSerializer.Serialize(attributesDict);
+        var createdItems = new List<OrderRequestItem>();
+        decimal grandGrossTotal = 0;
+        var grossByShop = new Dictionary<Guid, decimal>();
+        var outOfStockProducts = new List<Product>();
 
-        _context.OrderRequestItems.Add(new OrderRequestItem
+        foreach (var item in consolidatedItems)
         {
-            OrderRequestId = orderRequest.Id,
-            SellerOrderId = sellerOrder.Id,
-            ProductVariantId = variant.Id,
-            Quantity = request.Quantity,
-            PriceAtOrder = variant.Price,
-            ProductNameSnapshot = product.Name,
-            VariantAttributesSnapshot = attributesJson,
-            UnitPriceSnapshot = variant.Price,
-            TotalPriceSnapshot = variant.Price * request.Quantity,
-            CreatedAt = now
-        });
+            var variant = variants[item.ProductVariantId];
+            var product = products[variant.ProductId];
+            var sellerOrder = sellerOrders[product.ShopId];
 
-        var previousQty = variant.StockQty;
-        variant.StockQty -= request.Quantity;
-        variant.SetUpdatedAt(now);
-
-        _context.InventoryTransactions.Add(new InventoryTransaction
-        {
-            ProductVariantId = variant.Id,
-            TransactionType = InventoryTransactionType.Order,
-            Quantity = -request.Quantity,
-            PreviousQuantity = previousQty,
-            NewQuantity = variant.StockQty,
-            ReferenceType = "OrderRequest",
-            ReferenceId = orderRequest.Id,
-            CreatedByAccountId = _currentUserService.AccountId.Value,
-            CreatedAt = now
-        });
-
-        var grossTotal = variant.Price * request.Quantity;
-        var commissionAmount = Math.Round(grossTotal * 0.20m, 2);
-
-        _context.SellerEarnings.Add(new SellerEarning
-        {
-            SellerOrderId = sellerOrder.Id,
-            GrossAmount = grossTotal,
-            CommissionAmount = commissionAmount,
-            NetAmount = commissionAmount,
-            Status = SellerEarningStatus.Pending
-        });
-
-        var keeperAccountId = await _context.Shopkeepers
-            .Where(sk => sk.Id == shop.ShopkeeperId)
-            .Select(sk => sk.AccountId)
-            .FirstOrDefaultAsync(cancellationToken);
-        if (keeperAccountId != Guid.Empty && commissionAmount > 0)
-        {
-            var wallet = await _context.Wallets
-                .FirstOrDefaultAsync(w => w.AccountId == keeperAccountId, cancellationToken);
-            if (wallet is null)
+            string attributesJson = "{}";
+            if (attributesByVariant.TryGetValue(variant.Id, out var dict))
             {
-                wallet = new Eseller.Domain.Entities.Wallet.Wallet
-                {
-                    AccountId = keeperAccountId,
-                    Balance = 0,
-                    PendingEarnings = commissionAmount
-                };
-                wallet.SetCreatedAt(now);
-                wallet.SetUpdatedAt(now);
-                _context.Wallets.Add(wallet);
+                attributesJson = JsonSerializer.Serialize(dict);
             }
-            else
+
+            var lineGross = variant.Price * item.Quantity;
+            grandGrossTotal += lineGross;
+            grossByShop[product.ShopId] = grossByShop.GetValueOrDefault(product.ShopId) + lineGross;
+
+            var orderItem = new OrderRequestItem
             {
-                wallet.PendingEarnings += commissionAmount;
-                wallet.SetUpdatedAt(now);
+                OrderRequestId = orderRequest.Id,
+                SellerOrderId = sellerOrder.Id,
+                ProductVariantId = variant.Id,
+                Quantity = item.Quantity,
+                PriceAtOrder = variant.Price,
+                ProductNameSnapshot = product.Name,
+                VariantAttributesSnapshot = attributesJson,
+                UnitPriceSnapshot = variant.Price,
+                TotalPriceSnapshot = lineGross,
+                CreatedAt = now
+            };
+            _context.OrderRequestItems.Add(orderItem);
+            createdItems.Add(orderItem);
+
+            var previousQty = variant.StockQty;
+            variant.StockQty -= item.Quantity;
+            variant.SetUpdatedAt(now);
+
+            _context.InventoryTransactions.Add(new InventoryTransaction
+            {
+                ProductVariantId = variant.Id,
+                TransactionType = InventoryTransactionType.Order,
+                Quantity = -item.Quantity,
+                PreviousQuantity = previousQty,
+                NewQuantity = variant.StockQty,
+                ReferenceType = "OrderRequest",
+                ReferenceId = orderRequest.Id,
+                CreatedByAccountId = _currentUserService.AccountId.Value,
+                CreatedAt = now
+            });
+
+            if (previousQty > 0 && variant.StockQty <= 0)
+            {
+                outOfStockProducts.Add(product);
             }
         }
 
+        // 8. Create SellerEarnings per shop and credit pending wallet
+        foreach (var (shopId, shopGross) in grossByShop)
+        {
+            var sellerOrder = sellerOrders[shopId];
+            var commissionAmount = Math.Round(shopGross * 0.20m, 2);
+
+            _context.SellerEarnings.Add(new SellerEarning
+            {
+                SellerOrderId = sellerOrder.Id,
+                GrossAmount = shopGross,
+                CommissionAmount = commissionAmount,
+                NetAmount = commissionAmount,
+                Status = SellerEarningStatus.Pending
+            });
+
+            var shop = shops[shopId];
+            var keeperAccountId = await _context.Shopkeepers
+                .Where(sk => sk.Id == shop.ShopkeeperId)
+                .Select(sk => sk.AccountId)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (keeperAccountId != Guid.Empty && commissionAmount > 0)
+            {
+                var wallet = await _context.Wallets
+                    .FirstOrDefaultAsync(w => w.AccountId == keeperAccountId, cancellationToken);
+                if (wallet is null)
+                {
+                    wallet = new Eseller.Domain.Entities.Wallet.Wallet
+                    {
+                        AccountId = keeperAccountId,
+                        Balance = 0,
+                        PendingEarnings = commissionAmount
+                    };
+                    wallet.SetCreatedAt(now);
+                    wallet.SetUpdatedAt(now);
+                    _context.Wallets.Add(wallet);
+                }
+                else
+                {
+                    wallet.PendingEarnings += commissionAmount;
+                    wallet.SetUpdatedAt(now);
+                }
+            }
+        }
+
+        // 9. Payment record for total amount
         var payment = new Eseller.Domain.Entities.Payment.Payment
         {
             OrderRequestId = orderRequest.Id,
             Method = PaymentMethod.CashOnDelivery,
             Currency = "USD",
-            Amount = grossTotal,
+            Amount = grandGrossTotal,
             Status = PaymentStatus.Pending
         };
         payment.SetCreatedAt(now);
@@ -270,36 +355,35 @@ public class AdminPlaceOrderCommandHandler
 
         await _context.SaveChangesAsync(cancellationToken);
 
-        var orderItemsForMessage = await _context.OrderRequestItems
-            .Where(i => i.OrderRequestId == orderRequest.Id)
-            .ToListAsync(cancellationToken);
-
+        // 10. ChatMessage for the order
         _context.ChatMessages.Add(new ChatMessageEntity
         {
             OrderRequestId = orderRequest.Id,
             SenderAccountId = _currentUserService.AccountId.Value,
             SenderRole = ChatSenderRole.User,
-            Message = BuildOrderMessage(orderRequest.Id, orderItemsForMessage, customerName),
+            Message = BuildOrderMessage(orderRequest.Id, createdItems, desiredCustomerName),
             SentAt = now,
             IsRead = false
         });
         await _context.SaveChangesAsync(cancellationToken);
 
-        var shopkeeperAccountId = await (
-            from s in _context.Shops.IgnoreQueryFilters().AsNoTracking()
-            join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
-            where s.Id == shop.Id && s.DeletedAt == null
-            select (Guid?)sk.AccountId
-        ).FirstOrDefaultAsync(cancellationToken);
-
+        // 11. Notifications
+        var totalQuantity = consolidatedItems.Sum(i => i.Quantity);
         var shortRef = orderRequest.Id.ToString()[..8].ToUpperInvariant();
         var notifTitle = $"New Order #{shortRef}";
-        var notifBody = $"{customerName} placed an order ({request.Quantity} items, ${grossTotal:N0}).";
+        var notifBody = $"{desiredCustomerName} placed an order ({totalQuantity} items, ${grandGrossTotal:N0}).";
 
-        if (shopkeeperAccountId.HasValue)
+        var keeperAccountIds = await (
+            from s in _context.Shops.IgnoreQueryFilters().AsNoTracking()
+            join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
+            where shopIds.Contains(s.Id) && s.DeletedAt == null
+            select sk.AccountId
+        ).Distinct().ToListAsync(cancellationToken);
+
+        foreach (var keeperAccountId in keeperAccountIds)
         {
             await _notifications.NotifyAsync(
-                shopkeeperAccountId.Value,
+                keeperAccountId,
                 RoleType.Shopkeeper,
                 NotificationType.NewOrder,
                 notifTitle,
@@ -307,7 +391,7 @@ public class AdminPlaceOrderCommandHandler
                 NotificationEntityType.Order,
                 orderRequest.Id,
                 "/orders",
-                $"NewOrder:{orderRequest.Id:N}:Seller:{shopkeeperAccountId.Value:N}",
+                $"NewOrder:{orderRequest.Id:N}:Seller:{keeperAccountId:N}",
                 cancellationToken);
         }
 
@@ -324,15 +408,15 @@ public class AdminPlaceOrderCommandHandler
         try
         {
             await _notificationService.BroadcastNewOrderAsync(
-                orderRequest.Id, customerName, request.Quantity, grossTotal, cancellationToken);
+                orderRequest.Id, desiredCustomerName, totalQuantity, grandGrossTotal, cancellationToken);
         }
         catch { /* best-effort */ }
 
-        if (previousQty > 0 && variant.StockQty <= 0)
+        foreach (var p in outOfStockProducts)
         {
             try
             {
-                await _notifications.NotifyProductOutOfStockOnceAsync(product.Id, product.Name, cancellationToken);
+                await _notifications.NotifyProductOutOfStockOnceAsync(p.Id, p.Name, cancellationToken);
             }
             catch { /* best-effort */ }
         }
