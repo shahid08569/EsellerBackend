@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
@@ -55,9 +55,11 @@ public class ProductBadgeService : IProductBadgeService
             .Distinct()
             .ToList();
 
+        var allLookupIds = productIds.Concat(catalogKeys).Distinct().ToList();
+
         var variants = await _context.ProductVariants
             .IgnoreQueryFilters()
-            .Where(v => productIds.Contains(v.ProductId)
+            .Where(v => allLookupIds.Contains(v.ProductId)
                      && v.IsActive
                      && v.DeletedAt == null)
             .ToListAsync(cancellationToken);
@@ -155,7 +157,23 @@ public class ProductBadgeService : IProductBadgeService
             if (product is null) continue;
 
             var catalogKey = product.SourceProductId ?? product.Id;
-            var stock = stockByProduct.GetValueOrDefault(productId, 0);
+            var hasDirectStock = stockByProduct.ContainsKey(productId);
+            var hasSourceStock = product.SourceProductId.HasValue && stockByProduct.ContainsKey(product.SourceProductId.Value);
+
+            int stock;
+            if (hasDirectStock)
+            {
+                stock = stockByProduct[productId];
+            }
+            else if (hasSourceStock)
+            {
+                stock = stockByProduct[product.SourceProductId!.Value];
+            }
+            else
+            {
+                // Product has no variant entries recorded yet - do not falsely flag as Out of Stock
+                stock = 16;
+            }
 
             var flashSale = flashSaleDict.GetValueOrDefault(productId)
                 ?? flashSaleDict.GetValueOrDefault(catalogKey);
@@ -192,7 +210,7 @@ public class ProductBadgeService : IProductBadgeService
                 IsFeatured: product.IsFeatured,
                 IsFlashSale: flashSale is not null,
                 IsLowStock: stock > 0 && stock < 10,
-                IsOutOfStock: stock == 0,
+                IsOutOfStock: stock <= 0,
                 DiscountPercent: discountPercent.HasValue
                     ? Math.Round(discountPercent.Value, 0)
                     : null,
