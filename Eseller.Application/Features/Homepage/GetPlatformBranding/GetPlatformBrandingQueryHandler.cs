@@ -29,6 +29,13 @@ public class GetPlatformBrandingQueryHandler
         _context = context;
     }
 
+    public const string FacebookUrlKey = "Social.FacebookUrl";
+    public const string TwitterUrlKey = "Social.TwitterUrl";
+    public const string InstagramUrlKey = "Social.InstagramUrl";
+    public const string YoutubeUrlKey = "Social.YoutubeUrl";
+    public const string LinkedinUrlKey = "Social.LinkedinUrl";
+    public const string WhatsappUrlKey = "Social.WhatsappUrl";
+
     public async Task<Result<PlatformBrandingDto>> Handle(
         GetPlatformBrandingQuery request,
         CancellationToken cancellationToken)
@@ -36,7 +43,9 @@ public class GetPlatformBrandingQueryHandler
         var keys = new[]
         {
             NavLogoKey, FooterLogoKey, TaglineKey,
-            SiteTitleKey, MetaDescriptionKey, FaviconUrlKey
+            SiteTitleKey, MetaDescriptionKey, FaviconUrlKey,
+            FacebookUrlKey, TwitterUrlKey, InstagramUrlKey,
+            YoutubeUrlKey, LinkedinUrlKey, WhatsappUrlKey
         };
         var settings = await _context.Settings
             .AsNoTracking()
@@ -64,6 +73,12 @@ public class GetPlatformBrandingQueryHandler
             string.IsNullOrWhiteSpace(tagline) ? DefaultTagline : tagline!,
             string.IsNullOrWhiteSpace(siteTitle) ? DefaultSiteTitle : siteTitle!,
             string.IsNullOrWhiteSpace(metaDescription) ? DefaultMetaDescription : metaDescription!,
-            faviconUrl));
+            faviconUrl,
+            ValueOf(FacebookUrlKey),
+            ValueOf(TwitterUrlKey),
+            ValueOf(InstagramUrlKey),
+            ValueOf(YoutubeUrlKey),
+            ValueOf(LinkedinUrlKey),
+            ValueOf(WhatsappUrlKey)));
     }
 }
