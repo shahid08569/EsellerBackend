@@ -151,7 +151,7 @@ public class AuthController : ControllerBase
 
         if (!result.IsSuccess)
         {
-            Response.Cookies.Delete(RefreshTokenCookieName);
+            DeleteRefreshTokenCookie();
 
             return Unauthorized(new
             {
@@ -183,7 +183,7 @@ public class AuthController : ControllerBase
     {
         var refreshToken = Request.Cookies[RefreshTokenCookieName];
 
-        Response.Cookies.Delete(RefreshTokenCookieName);
+        DeleteRefreshTokenCookie();
 
         if (string.IsNullOrWhiteSpace(refreshToken))
         {
@@ -341,5 +341,20 @@ public class AuthController : ControllerBase
         };
 
         Response.Cookies.Append(RefreshTokenCookieName, refreshToken, cookieOptions);
+    }
+
+    private void DeleteRefreshTokenCookie()
+    {
+        var isProduction = !Request.Host.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase);
+
+        var cookieOptions = new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = isProduction,
+            SameSite = isProduction ? SameSiteMode.None : SameSiteMode.Lax,
+            Path = "/"
+        };
+
+        Response.Cookies.Delete(RefreshTokenCookieName, cookieOptions);
     }
 }
