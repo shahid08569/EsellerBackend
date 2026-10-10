@@ -91,14 +91,25 @@ public class GetHomepageSectionsQueryHandler
             }
         }
 
-        // ? 4. New Arrivals
-        var newThreshold = now.AddDays(-30);
-        var newArrivalIds = await baseQuery
-            .Where(p => p.CreatedAt >= newThreshold)
+        // ? 4. New Arrivals (Strictly at most 1 product per category)
+        var newArrivalCandidates = await baseQuery
             .OrderByDescending(p => p.CreatedAt)
-            .Take(limit)
-            .Select(p => p.Id)
+            .Take(limit * 8)
+            .Select(p => new { p.Id, p.CategoryId })
             .ToListAsync(cancellationToken);
+
+        var seenNewArrivalCategories = new HashSet<Guid>();
+        var newArrivalIds = new List<Guid>();
+
+        foreach (var c in newArrivalCandidates)
+        {
+            if (seenNewArrivalCategories.Add(c.CategoryId))
+            {
+                newArrivalIds.Add(c.Id);
+                if (newArrivalIds.Count >= limit)
+                    break;
+            }
+        }
 
         // ? 5. Flash Sale � map catalog SKUs to storefront listings when needed
         var flashRawIds = await _context.FlashSaleProducts

@@ -28,27 +28,26 @@ public class GetNewArrivalsQueryHandler
         CancellationToken cancellationToken)
     {
         var limit = request.Limit > 50 ? 50 : (request.Limit < 1 ? 20 : request.Limit);
-        var newThreshold = _dateTime.UtcNow.AddDays(-30);
-
         var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
 
-        var productIds = await MasterCatalog.StorefrontListings(_context, masterShopId)
-            .Where(p => p.CreatedAt >= newThreshold)
+        // Fetch candidate products ordered by newest first, strictly taking at most 1 product per category
+        var candidates = await MasterCatalog.StorefrontListings(_context, masterShopId)
             .OrderByDescending(p => p.CreatedAt)
-            .Take(limit)
-            .Select(p => p.Id)
+            .Take(limit * 10)
+            .Select(p => new { p.Id, p.CategoryId })
             .ToListAsync(cancellationToken);
 
-        if (productIds.Count < limit)
-        {
-            var backfillIds = await MasterCatalog.StorefrontListings(_context, masterShopId)
-                .Where(p => !productIds.Contains(p.Id))
-                .OrderByDescending(p => p.CreatedAt)
-                .Take(limit - productIds.Count)
-                .Select(p => p.Id)
-                .ToListAsync(cancellationToken);
+        var seenCategories = new HashSet<Guid>();
+        var productIds = new List<Guid>();
 
-            productIds.AddRange(backfillIds);
+        foreach (var c in candidates)
+        {
+            if (seenCategories.Add(c.CategoryId))
+            {
+                productIds.Add(c.Id);
+                if (productIds.Count >= limit)
+                    break;
+            }
         }
 
         var products = await LoadProducts(productIds, cancellationToken);
