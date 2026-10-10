@@ -25,12 +25,30 @@ public class LocalFileStorageService : IFileStorageService
         _logger.LogInformation("File storage root: {RootPath}", _rootPath);
     }
 
+    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".pdf", ".doc", ".docx"
+    };
+
+    private static readonly HashSet<string> DangerousExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".exe", ".dll", ".bat", ".cmd", ".sh", ".ps1", ".vbs", ".php", ".phtml",
+        ".asp", ".aspx", ".jsp", ".jar", ".cgi", ".pl", ".py", ".config", ".htaccess"
+    };
+
     public async Task<string> UploadAsync(
         Stream stream,
         string fileName,
         string contentType,
         CancellationToken cancellationToken = default)
     {
+        var ext = Path.GetExtension(fileName).ToLowerInvariant();
+        if (DangerousExtensions.Contains(ext) || !AllowedExtensions.Contains(ext))
+        {
+            _logger.LogWarning("Rejected file upload with disallowed extension: {FileName}", fileName);
+            throw new InvalidOperationException("File extension is not allowed for security reasons.");
+        }
+
         var cleanRel = NormalizeRelativePath(fileName);
         var fullPath = ResolveUnderRoot(cleanRel);
 
@@ -38,14 +56,65 @@ public class LocalFileStorageService : IFileStorageService
         if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
             Directory.CreateDirectory(directory);
 
-        await using (var fileStream = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.None))
-        {
-            await stream.CopyToAsync(fileStream, cancellationToken);
-        }
+        // Copy stream into memory buffer to validate magic bytes and content
+        using var memoryStream = new MemoryStream();
+        await stream.CopyToAsync(memoryStream, cancellationToken);
+        var bytes = memoryStream.ToArray();
+
+        if (bytes.Length == 0)
+            throw new InvalidOperationException("Cannot upload an empty file.");
+
+        // Maximum upload limit: 20 MB
+        if (bytes.Length > 20 * 1024 * 1024)
+            throw new InvalidOperationException("File size exceeds 20 MB limit.");
+
+        // Validate file content signature (Magic Bytes)
+        ValidateFileSignature(ext, bytes);
+
+        await File.WriteAllBytesAsync(fullPath, bytes, cancellationToken);
 
         var relativeUrl = "/uploads/" + cleanRel.Replace('\\', '/');
-        _logger.LogDebug("File uploaded: {RelativeUrl} -> {FullPath}", relativeUrl, fullPath);
+        _logger.LogDebug("File uploaded securely: {RelativeUrl} -> {FullPath}", relativeUrl, fullPath);
         return relativeUrl;
+    }
+
+    private static void ValidateFileSignature(string extension, byte[] bytes)
+    {
+        if (bytes.Length < 4) return;
+
+        switch (extension)
+        {
+            case ".jpg" or ".jpeg":
+                // JPEG magic bytes: FF D8 FF
+                if (bytes[0] != 0xFF || bytes[1] != 0xD8 || bytes[2] != 0xFF)
+                    throw new InvalidOperationException("Invalid JPEG file content.");
+                break;
+
+            case ".png":
+                // PNG magic bytes: 89 50 4E 47
+                if (bytes[0] != 0x89 || bytes[1] != 0x50 || bytes[2] != 0x4E || bytes[3] != 0x47)
+                    throw new InvalidOperationException("Invalid PNG file content.");
+                break;
+
+            case ".gif":
+                // GIF magic bytes: GIF8
+                if (bytes[0] != 0x47 || bytes[1] != 0x49 || bytes[2] != 0x46 || bytes[3] != 0x38)
+                    throw new InvalidOperationException("Invalid GIF file content.");
+                break;
+
+            case ".pdf":
+                // PDF magic bytes: %PDF
+                if (bytes[0] != 0x25 || bytes[1] != 0x50 || bytes[2] != 0x44 || bytes[3] != 0x46)
+                    throw new InvalidOperationException("Invalid PDF file content.");
+                break;
+
+            case ".svg":
+                // SVG safety check: inspect for dangerous scripts
+                var text = System.Text.Encoding.UTF8.GetString(bytes).ToLowerInvariant();
+                if (text.Contains("<script") || text.Contains("javascript:") || text.Contains("onload=") || text.Contains("onerror="))
+                    throw new InvalidOperationException("SVG file contains disallowed executable scripts.");
+                break;
+        }
     }
 
     public Task DeleteAsync(

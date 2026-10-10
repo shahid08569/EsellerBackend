@@ -131,6 +131,7 @@ public static class DependencyInjection
         services.AddSingleton<IDateTime, DateTimeService>();
         services.AddScoped<IJwtService, JwtService>();
         services.AddScoped<IEmailService, EmailService>();
+        services.AddSingleton<IWebhookSignatureValidator, HmacWebhookSignatureValidator>();
 
         var smsSettings = configuration.GetSection(SmsSettings.SectionName).Get<SmsSettings>()
             ?? new SmsSettings();

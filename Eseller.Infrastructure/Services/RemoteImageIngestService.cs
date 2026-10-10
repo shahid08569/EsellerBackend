@@ -71,10 +71,58 @@ public class RemoteImageIngestService : IRemoteImageIngestService
 
         var host = uri.Host.ToLowerInvariant();
         if (host.Contains("esellerglobal.com", StringComparison.Ordinal)
-            || host is "localhost" or "127.0.0.1")
+            || host is "localhost" or "127.0.0.1" or "::1" or "0.0.0.0")
             return false;
 
+        // Block port scanning / non-standard ports
+        if (uri.Port != 80 && uri.Port != 443 && !uri.IsDefaultPort)
+            return false;
+
+        // Resolve DNS and verify the resolved IP is not a private, loopback, or cloud-metadata IP
+        try
+        {
+            var ips = System.Net.Dns.GetHostAddresses(uri.DnsSafeHost);
+            foreach (var ip in ips)
+            {
+                if (System.Net.IPAddress.IsLoopback(ip) || IsPrivateOrReservedIp(ip))
+                    return false;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
         return true;
+    }
+
+    private static bool IsPrivateOrReservedIp(System.Net.IPAddress ip)
+    {
+        if (ip.IsIPv4MappedToIPv6)
+            ip = ip.MapToIPv4();
+
+        var bytes = ip.GetAddressBytes();
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            // 10.0.0.0/8
+            if (bytes[0] == 10) return true;
+            // 172.16.0.0/12
+            if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) return true;
+            // 192.168.0.0/16
+            if (bytes[0] == 192 && bytes[1] == 168) return true;
+            // 169.254.0.0/16 (Link Local / Cloud Metadata 169.254.169.254)
+            if (bytes[0] == 169 && bytes[1] == 254) return true;
+            // 127.0.0.0/8
+            if (bytes[0] == 127) return true;
+            // 0.0.0.0/8
+            if (bytes[0] == 0) return true;
+        }
+        else if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6Multicast) return true;
+        }
+
+        return false;
     }
 
     private static string GuessExtension(string url, string contentType)

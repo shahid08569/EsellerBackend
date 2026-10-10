@@ -75,7 +75,7 @@ builder.Services.AddCors(options =>
     });
 });
 
-// ─── Rate Limiting ──────────────────────────────────────────
+// ─── Rate Limiting (Standard OWASP Tiered Limits) ────────────
 builder.Services.AddRateLimiter(options =>
 {
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
@@ -86,14 +86,27 @@ builder.Services.AddRateLimiter(options =>
 
         var path = context.Request.Path.Value?.ToLowerInvariant() ?? "";
 
-        // Auth-sensitive endpoints: strict limit (5/min)
+        // Sensitive OTP / Password recovery: 5 per 2 minutes
+        if (path.Contains("/auth/send-phone-otp")
+            || path.Contains("/auth/verify-phone-otp")
+            || path.Contains("/auth/forgot-password")
+            || path.Contains("/auth/reset-password"))
+        {
+            return RateLimitPartition.GetFixedWindowLimiter(
+                partitionKey: $"otp-{partitionKey}",
+                factory: _ => new FixedWindowRateLimiterOptions
+                {
+                    AutoReplenishment = true,
+                    PermitLimit = 5,
+                    Window = TimeSpan.FromMinutes(2),
+                    QueueLimit = 0
+                });
+        }
+
+        // Standard Auth endpoints (login, register, token refresh): 20 per minute
         if (path.Contains("/auth/login")
             || path.Contains("/auth/register")
-            || path.Contains("/auth/forgot-password")
-            || path.Contains("/auth/reset-password")
             || path.Contains("/auth/refresh-token")
-            || path.Contains("/auth/send-phone-otp")
-            || path.Contains("/auth/verify-phone-otp")
             || path.Contains("/auth/upload-document"))
         {
             return RateLimitPartition.GetFixedWindowLimiter(
@@ -101,21 +114,21 @@ builder.Services.AddRateLimiter(options =>
                 factory: _ => new FixedWindowRateLimiterOptions
                 {
                     AutoReplenishment = true,
-                    PermitLimit = 5,
+                    PermitLimit = 20,
                     Window = TimeSpan.FromMinutes(1),
-                    QueueLimit = 0
+                    QueueLimit = 2
                 });
         }
 
-        // Default: 100/min
+        // General API endpoints: 120 per minute with small queue buffer
         return RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: partitionKey,
             factory: _ => new FixedWindowRateLimiterOptions
             {
                 AutoReplenishment = true,
-                PermitLimit = 100,
+                PermitLimit = 120,
                 Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0
+                QueueLimit = 5
             });
     });
 
@@ -144,11 +157,24 @@ builder.Services.AddProblemDetails();
 var app = builder.Build();
 
 app.UseForwardedHeaders();
+app.UseMiddleware<SecurityHeadersMiddleware>();
 
 // ─── Middleware Pipeline ────────────────────────────────────
 if (!app.Environment.IsDevelopment())
 {
-    app.UseSerilogRequestLogging();
+    app.UseSerilogRequestLogging(opt =>
+    {
+        opt.GetLevel = (httpContext, elapsed, ex) =>
+        {
+            if (httpContext.Request.Path.StartsWithSegments("/health"))
+                return Serilog.Events.LogEventLevel.Verbose;
+            return ex != null || httpContext.Response.StatusCode >= 500
+                ? Serilog.Events.LogEventLevel.Error
+                : httpContext.Response.StatusCode >= 400
+                    ? Serilog.Events.LogEventLevel.Warning
+                    : Serilog.Events.LogEventLevel.Information;
+        };
+    });
     app.UseHsts();
 }
 app.UseExceptionHandler();
