@@ -64,14 +64,17 @@ public class GetPlatformBrandingQueryHandler
         var favicon = ValueOf(FaviconUrlKey);
 
         var navLogo = string.IsNullOrWhiteSpace(nav) ? DefaultNavLogo : nav!;
-        // Favicon defaults to SuperAdmin navbar logo so Google matches storefront branding.
-        var faviconUrl = string.IsNullOrWhiteSpace(favicon) ? navLogo : favicon!;
+        var faviconUrl = string.IsNullOrWhiteSpace(favicon) ? "/favicon.ico" : favicon!;
+
+        var resolvedTitle = string.IsNullOrWhiteSpace(siteTitle) || siteTitle == "EsellerGlobal" || siteTitle == "Eseller — Home"
+            ? DefaultSiteTitle
+            : siteTitle!;
 
         return Result.Success(new PlatformBrandingDto(
             navLogo,
             string.IsNullOrWhiteSpace(footer) ? DefaultFooterLogo : footer!,
             string.IsNullOrWhiteSpace(tagline) ? DefaultTagline : tagline!,
-            string.IsNullOrWhiteSpace(siteTitle) ? DefaultSiteTitle : siteTitle!,
+            resolvedTitle,
             string.IsNullOrWhiteSpace(metaDescription) ? DefaultMetaDescription : metaDescription!,
             faviconUrl,
             ValueOf(FacebookUrlKey),
