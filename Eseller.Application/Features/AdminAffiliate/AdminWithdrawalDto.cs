@@ -1,4 +1,4 @@
-﻿namespace Eseller.Application.Features.AdminAffiliate;
+namespace Eseller.Application.Features.AdminAffiliate;
 
 public record AdminWithdrawalDto(
     Guid Id,
@@ -10,4 +10,10 @@ public record AdminWithdrawalDto(
     string Status,
     DateTime RequestedAt,
     DateTime? ProcessedAt,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? UserName = null,
+    string? UserType = null,
+    string? StoreName = null,
+    string? PaymentMethod = null,
+    string? AccountDetails = null,
+    bool HasBankDetails = false);

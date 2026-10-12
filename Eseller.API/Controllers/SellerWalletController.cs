@@ -198,6 +198,17 @@ public class SellerWalletController : ControllerBase
                 errorCode = "STORE_NOT_APPROVED"
             });
 
+        var bankDetails = await SellerBankDetailsStore.LoadForSellerAsync(
+            _context, accountId.Value, cancellationToken);
+        if (bankDetails is null || string.IsNullOrWhiteSpace(bankDetails.BankName) || string.IsNullOrWhiteSpace(bankDetails.CardNumberLast4))
+        {
+            return BadRequest(new
+            {
+                error = "Please add your bank / payout details before requesting a withdrawal.",
+                errorCode = "BANK_DETAILS_REQUIRED"
+            });
+        }
+
         var wallet = await EnsureWalletAsync(accountId.Value, 0, 0, cancellationToken);
         if (wallet.Balance < body.Amount)
             return BadRequest(new { error = "Insufficient balance.", errorCode = "INSUFFICIENT_BALANCE" });
@@ -215,10 +226,14 @@ public class SellerWalletController : ControllerBase
 
         var now = _dateTime.UtcNow;
         var method = string.IsNullOrWhiteSpace(body.PayoutMethod)
-            ? "Bank Transfer"
+            ? "Bank Card"
             : body.PayoutMethod.Trim();
-        if (!string.IsNullOrWhiteSpace(body.AccountDetails))
-            method = $"{method} | {body.AccountDetails.Trim()}";
+
+        var details = !string.IsNullOrWhiteSpace(body.AccountDetails)
+            ? body.AccountDetails.Trim()
+            : $"{bankDetails.CardHolderName} · {bankDetails.BankName} · ****{bankDetails.CardNumberLast4} · Exp {bankDetails.ExpMonth:D2}/{bankDetails.ExpYear}";
+
+        method = $"{method} | {details}";
 
         var withdrawal = new Withdrawal
         {

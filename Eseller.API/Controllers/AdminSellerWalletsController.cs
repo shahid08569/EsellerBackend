@@ -198,12 +198,15 @@ public class AdminSellerWalletsController : ControllerBase
         Guid accountId,
         CancellationToken cancellationToken)
     {
-        var shopkeeper = await _context.Shopkeepers
+        var exists = await _context.Shopkeepers
             .AsNoTracking()
-            .FirstOrDefaultAsync(sk => sk.AccountId == accountId, cancellationToken);
+            .AnyAsync(sk => sk.AccountId == accountId, cancellationToken)
+            || await _context.Accounts
+            .AsNoTracking()
+            .AnyAsync(a => a.Id == accountId, cancellationToken);
 
-        if (shopkeeper is null)
-            return NotFound(new { error = "Shopkeeper not found for this account.", errorCode = "SHOPKEEPER_NOT_FOUND" });
+        if (!exists)
+            return NotFound(new { error = "Account not found.", errorCode = "ACCOUNT_NOT_FOUND" });
 
         var details = await SellerBankDetailsStore.LoadForAdminAsync(
             _context, accountId, cancellationToken);
