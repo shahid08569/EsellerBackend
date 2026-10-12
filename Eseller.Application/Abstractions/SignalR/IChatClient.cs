@@ -1,4 +1,4 @@
-﻿namespace Eseller.Application.Abstractions.SignalR;
+namespace Eseller.Application.Abstractions.SignalR;
 
 public interface IChatClient
 {
@@ -20,4 +20,15 @@ public interface IChatClient
     Task MessageRead(Guid messageId, DateTime readAt);
 
     Task UnreadCountChanged(Guid conversationId, int unreadCount);
+
+    Task MessageEdited(
+        Guid messageId,
+        Guid orderRequestId,
+        string newContent,
+        DateTime editedAt);
+
+    Task MessageDeleted(
+        Guid messageId,
+        Guid orderRequestId,
+        bool isDeletedForEveryone);
 }

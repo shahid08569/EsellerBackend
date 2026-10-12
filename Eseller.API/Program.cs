@@ -246,6 +246,59 @@ if (shouldMigrate || shouldSeed)
             logger.LogError(walletColsEx, "Failed to ensure Wallets earnings columns.");
         }
 
+        // Ensure chat edit & delete columns on Messages and ChatMessages tables
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync("""
+                IF COL_LENGTH(N'Messages', N'IsEdited') IS NULL
+                BEGIN
+                    ALTER TABLE [Messages] ADD [IsEdited] bit NOT NULL CONSTRAINT [DF_Messages_IsEdited] DEFAULT 0;
+                END
+                IF COL_LENGTH(N'Messages', N'EditedAt') IS NULL
+                BEGIN
+                    ALTER TABLE [Messages] ADD [EditedAt] datetime2 NULL;
+                END
+                IF COL_LENGTH(N'Messages', N'IsDeletedForEveryone') IS NULL
+                BEGIN
+                    ALTER TABLE [Messages] ADD [IsDeletedForEveryone] bit NOT NULL CONSTRAINT [DF_Messages_IsDeletedForEveryone] DEFAULT 0;
+                END
+                IF COL_LENGTH(N'Messages', N'DeletedForEveryoneAt') IS NULL
+                BEGIN
+                    ALTER TABLE [Messages] ADD [DeletedForEveryoneAt] datetime2 NULL;
+                END
+                IF COL_LENGTH(N'Messages', N'DeletedForAccountIds') IS NULL
+                BEGIN
+                    ALTER TABLE [Messages] ADD [DeletedForAccountIds] nvarchar(max) NULL;
+                END
+
+                IF COL_LENGTH(N'ChatMessages', N'IsEdited') IS NULL
+                BEGIN
+                    ALTER TABLE [ChatMessages] ADD [IsEdited] bit NOT NULL CONSTRAINT [DF_ChatMessages_IsEdited] DEFAULT 0;
+                END
+                IF COL_LENGTH(N'ChatMessages', N'EditedAt') IS NULL
+                BEGIN
+                    ALTER TABLE [ChatMessages] ADD [EditedAt] datetime2 NULL;
+                END
+                IF COL_LENGTH(N'ChatMessages', N'IsDeletedForEveryone') IS NULL
+                BEGIN
+                    ALTER TABLE [ChatMessages] ADD [IsDeletedForEveryone] bit NOT NULL CONSTRAINT [DF_ChatMessages_IsDeletedForEveryone] DEFAULT 0;
+                END
+                IF COL_LENGTH(N'ChatMessages', N'DeletedForEveryoneAt') IS NULL
+                BEGIN
+                    ALTER TABLE [ChatMessages] ADD [DeletedForEveryoneAt] datetime2 NULL;
+                END
+                IF COL_LENGTH(N'ChatMessages', N'DeletedForAccountIds') IS NULL
+                BEGIN
+                    ALTER TABLE [ChatMessages] ADD [DeletedForAccountIds] nvarchar(max) NULL;
+                END
+                """);
+            logger.LogInformation("Ensured chat edit and delete columns on Messages/ChatMessages.");
+        }
+        catch (Exception chatColsEx)
+        {
+            logger.LogError(chatColsEx, "Failed to ensure chat edit and delete columns.");
+        }
+
         // Belt-and-suspenders: banner content columns (migration historically lacked [Migration] attr).
         await db.Database.ExecuteSqlRawAsync("""
             IF COL_LENGTH('HomepageBanners', 'Title') IS NULL

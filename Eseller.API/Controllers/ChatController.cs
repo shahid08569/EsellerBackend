@@ -5,6 +5,8 @@ using Eseller.Application.Features.Chat.GetConversations;
 using Eseller.Application.Features.Chat.GetUnreadCount;
 using Eseller.Application.Features.Chat.MarkMessageAsRead;
 using Eseller.Application.Features.Chat.SendChatMessage;
+using Eseller.Application.Features.Chat.EditChatMessage;
+using Eseller.Application.Features.Chat.DeleteChatMessage;
 using Eseller.Domain.Entities.Identity;
 using Eseller.Domain.Entities.Orders;
 using Eseller.Domain.Enums;
@@ -357,6 +359,57 @@ public class ChatController : ControllerBase
     }
 
     /// <summary>
+    /// Edit an existing message in-place (WhatsApp style).
+    /// </summary>
+    [HttpPut("messages/{messageId:guid}")]
+    public async Task<IActionResult> EditMessage(
+        Guid messageId,
+        [FromBody] EditChatMessageRequest request,
+        CancellationToken cancellationToken)
+    {
+        var command = new EditChatMessageCommand(messageId, request.Message);
+        var result = await _sender.Send(command, cancellationToken);
+
+        if (!result.IsSuccess)
+        {
+            return result.ErrorCode switch
+            {
+                "MESSAGE_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
+                "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
+                "MESSAGE_DELETED" => StatusCode(StatusCodes.Status409Conflict, new { error = result.Error, errorCode = result.ErrorCode }),
+                _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
+            };
+        }
+
+        return Ok(result.Value);
+    }
+
+    /// <summary>
+    /// Delete a message (WhatsApp style: forEveryone = true / false).
+    /// </summary>
+    [HttpDelete("messages/{messageId:guid}")]
+    public async Task<IActionResult> DeleteMessage(
+        Guid messageId,
+        [FromQuery] bool forEveryone = false,
+        CancellationToken cancellationToken = default)
+    {
+        var command = new DeleteChatMessageCommand(messageId, forEveryone);
+        var result = await _sender.Send(command, cancellationToken);
+
+        if (!result.IsSuccess)
+        {
+            return result.ErrorCode switch
+            {
+                "MESSAGE_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
+                "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
+                _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
+            };
+        }
+
+        return Ok(result.Value);
+    }
+
+    /// <summary>
     /// Upload a chat attachment (image/pdf/doc). Returns URL to attach on send.
     /// </summary>
     [HttpPost("attachments")]
@@ -668,3 +721,5 @@ public record SendMessageRequest(
     string? AttachmentFileName = null,
     string? AttachmentContentType = null,
     long? AttachmentSizeBytes = null);
+
+public record EditChatMessageRequest(string Message);

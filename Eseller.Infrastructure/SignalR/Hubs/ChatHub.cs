@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Abstractions.SignalR;
 using Eseller.Application.Features.Chat;
 using Microsoft.AspNetCore.Authorization;
@@ -57,16 +57,55 @@ public class ChatHub : Hub<IChatClient>
     public async Task JoinConversation(Guid conversationId)
     {
         var conversation = await _context.Conversations.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Id == conversationId, Context.ConnectionAborted);
+            .FirstOrDefaultAsync(c => c.Id == conversationId || c.ParticipantId == conversationId, Context.ConnectionAborted);
 
         if (conversation is null)
-            throw new HubException("Conversation not found.");
+        {
+            var isShop = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
+                .AnyAsync(s => s.Id == conversationId && s.DeletedAt == null, Context.ConnectionAborted);
+            if (isShop)
+            {
+                conversation = await SupportConversationService.GetOrCreateAsync(
+                    _context, conversationId, Domain.Enums.ChatParticipantType.Seller, DateTime.UtcNow, Context.ConnectionAborted);
+            }
+            else
+            {
+                var isUser = await _context.Users.AsNoTracking()
+                    .AnyAsync(u => u.Id == conversationId, Context.ConnectionAborted);
+                if (isUser)
+                {
+                    conversation = await SupportConversationService.GetOrCreateAsync(
+                        _context, conversationId, Domain.Enums.ChatParticipantType.Customer, DateTime.UtcNow, Context.ConnectionAborted);
+                }
+                else
+                {
+                    var order = await _context.OrderRequests.AsNoTracking()
+                        .FirstOrDefaultAsync(o => o.Id == conversationId, Context.ConnectionAborted);
+                    if (order is not null && order.UserId != Guid.Empty)
+                    {
+                        conversation = await SupportConversationService.GetOrCreateAsync(
+                            _context, order.UserId, Domain.Enums.ChatParticipantType.Customer, DateTime.UtcNow, Context.ConnectionAborted);
+                    }
+                }
+            }
+        }
 
-        var allowed = await SupportConversationService.CanAccessAsync(
-            _context, _currentUser, conversation, Context.ConnectionAborted);
+        if (conversation is not null)
+        {
+            var allowed = await SupportConversationService.CanAccessAsync(
+                _context, _currentUser, conversation, Context.ConnectionAborted);
 
-        if (!allowed)
-            throw new HubException("Access denied.");
+            if (!allowed)
+                throw new HubException("Access denied.");
+
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"conversation:{conversation.Id}");
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"order-{conversation.Id}");
+            if (conversation.ParticipantId != conversation.Id && conversation.ParticipantId != Guid.Empty)
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"conversation:{conversation.ParticipantId}");
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"order-{conversation.ParticipantId}");
+            }
+        }
 
         await Groups.AddToGroupAsync(Context.ConnectionId, $"conversation:{conversationId}");
         await Groups.AddToGroupAsync(Context.ConnectionId, $"order-{conversationId}");

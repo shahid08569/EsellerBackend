@@ -161,4 +161,69 @@ public class SignalRNotificationService : ISignalRNotificationService
                 .MessageRead(messageId, readAt);
         }
     }
+
+    public async Task BroadcastMessageEditedAsync(
+        Guid conversationId,
+        Guid messageId,
+        string newContent,
+        DateTime editedAt,
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<Guid>? notifyAccountIds = null)
+    {
+        var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            $"conversation:{conversationId}",
+            $"order-{conversationId}",
+            nameof(RoleType.SuperAdmin),
+            nameof(RoleType.Partner)
+        };
+
+        if (notifyAccountIds is { Count: > 0 })
+        {
+            foreach (var accountId in notifyAccountIds.Distinct())
+            {
+                if (accountId != Guid.Empty)
+                    groups.Add($"account-{accountId}");
+            }
+        }
+
+        foreach (var group in groups)
+        {
+            await _chatHubContext.Clients
+                .Group(group)
+                .MessageEdited(messageId, conversationId, newContent, editedAt);
+        }
+    }
+
+    public async Task BroadcastMessageDeletedAsync(
+        Guid conversationId,
+        Guid messageId,
+        bool isDeletedForEveryone,
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<Guid>? notifyAccountIds = null)
+    {
+        var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            $"conversation:{conversationId}",
+            $"order-{conversationId}",
+            nameof(RoleType.SuperAdmin),
+            nameof(RoleType.Partner)
+        };
+
+        if (notifyAccountIds is { Count: > 0 })
+        {
+            foreach (var accountId in notifyAccountIds.Distinct())
+            {
+                if (accountId != Guid.Empty)
+                    groups.Add($"account-{accountId}");
+            }
+        }
+
+        foreach (var group in groups)
+        {
+            await _chatHubContext.Clients
+                .Group(group)
+                .MessageDeleted(messageId, conversationId, isDeletedForEveryone);
+        }
+    }
 }

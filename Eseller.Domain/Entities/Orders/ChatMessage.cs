@@ -1,4 +1,4 @@
-﻿using Eseller.Domain.Common;
+using Eseller.Domain.Common;
 using Eseller.Domain.Enums;
 
 namespace Eseller.Domain.Entities.Orders;
@@ -13,4 +13,10 @@ public class ChatMessage : BaseEntity
     public bool IsRead { get; set; }
     public DateTime? ReadAt { get; set; }
     public DateTime? DeliveredAt { get; set; }
+
+    public bool IsEdited { get; set; }
+    public DateTime? EditedAt { get; set; }
+    public bool IsDeletedForEveryone { get; set; }
+    public DateTime? DeletedForEveryoneAt { get; set; }
+    public string? DeletedForAccountIds { get; set; }
 }

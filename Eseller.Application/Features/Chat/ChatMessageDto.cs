@@ -1,4 +1,4 @@
-﻿namespace Eseller.Application.Features.Chat;
+namespace Eseller.Application.Features.Chat;
 
 public record ChatMessageDto(
     Guid Id,
@@ -13,4 +13,7 @@ public record ChatMessageDto(
     string? AttachmentUrl = null,
     string? AttachmentFileName = null,
     string? AttachmentContentType = null,
-    long? AttachmentSizeBytes = null);
+    long? AttachmentSizeBytes = null,
+    bool IsEdited = false,
+    DateTime? EditedAt = null,
+    bool IsDeletedForEveryone = false);

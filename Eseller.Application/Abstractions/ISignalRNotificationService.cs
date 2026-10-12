@@ -1,4 +1,4 @@
-﻿using Eseller.Domain.Enums;
+using Eseller.Domain.Enums;
 
 namespace Eseller.Application.Abstractions;
 
@@ -48,6 +48,21 @@ public interface ISignalRNotificationService
         Guid conversationId,
         Guid messageId,
         DateTime readAt,
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<Guid>? notifyAccountIds = null);
+
+    Task BroadcastMessageEditedAsync(
+        Guid conversationId,
+        Guid messageId,
+        string newContent,
+        DateTime editedAt,
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<Guid>? notifyAccountIds = null);
+
+    Task BroadcastMessageDeletedAsync(
+        Guid conversationId,
+        Guid messageId,
+        bool isDeletedForEveryone,
         CancellationToken cancellationToken,
         IReadOnlyCollection<Guid>? notifyAccountIds = null);
 }

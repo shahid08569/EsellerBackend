@@ -32,7 +32,8 @@ public class GetChatMessagesQueryHandler
                 "User is not authenticated.", "UNAUTHENTICATED");
 
         var conversation = await _context.Conversations
-            .FirstOrDefaultAsync(c => c.Id == request.OrderRequestId, cancellationToken);
+            .FirstOrDefaultAsync(c => c.Id == request.OrderRequestId
+                                   || c.ParticipantId == request.OrderRequestId, cancellationToken);
 
         if (conversation is null)
         {
@@ -55,6 +56,17 @@ public class GetChatMessagesQueryHandler
                         _context, request.OrderRequestId, ChatParticipantType.Customer,
                         _dateTime.UtcNow, cancellationToken);
                 }
+                else
+                {
+                    var order = await _context.OrderRequests.AsNoTracking()
+                        .FirstOrDefaultAsync(o => o.Id == request.OrderRequestId, cancellationToken);
+                    if (order is not null && order.UserId != Guid.Empty)
+                    {
+                        conversation = await SupportConversationService.GetOrCreateAsync(
+                            _context, order.UserId, ChatParticipantType.Customer,
+                            _dateTime.UtcNow, cancellationToken);
+                    }
+                }
             }
         }
 
@@ -67,17 +79,28 @@ public class GetChatMessagesQueryHandler
             return Result.Failure<PagedList<ChatMessageDto>>(
                 "You do not have permission.", "FORBIDDEN");
 
-        // Latest page first for UX: return chronological page of latest N
-        var totalCount = await _context.Messages
-            .CountAsync(m => m.ConversationId == conversation.Id, cancellationToken);
+        var roomIds = new[] { conversation.Id, conversation.ParticipantId, request.OrderRequestId }
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        var accountIdStr = _currentUserService.AccountId.Value.ToString();
+
+        // 1. Modern Messages table
+        var modernQuery = _context.Messages
+            .AsNoTracking()
+            .Where(m => roomIds.Contains(m.ConversationId)
+                && (m.DeletedForAccountIds == null || !m.DeletedForAccountIds.Contains(accountIdStr)));
+
+        var modernCount = await modernQuery.CountAsync(cancellationToken);
 
         List<ChatMessageDto> messages;
+        int totalCount;
 
-        if (totalCount > 0)
+        if (modernCount > 0)
         {
-            messages = await _context.Messages
-                .AsNoTracking()
-                .Where(m => m.ConversationId == conversation.Id)
+            totalCount = modernCount;
+            messages = await modernQuery
                 .OrderByDescending(m => m.SentAt)
                 .Skip((request.PageNumber - 1) * request.PageSize)
                 .Take(request.PageSize)
@@ -86,27 +109,31 @@ public class GetChatMessagesQueryHandler
                     m.ConversationId,
                     m.SenderId,
                     m.SenderRole.ToString(),
-                    m.Content,
+                    m.IsDeletedForEveryone ? "This message was deleted" : m.Content,
                     m.IsRead,
                     m.ReadAt,
                     null,
                     m.SentAt,
-                    m.AttachmentUrl,
-                    m.AttachmentFileName,
-                    m.AttachmentContentType,
-                    m.AttachmentSizeBytes))
+                    m.IsDeletedForEveryone ? null : m.AttachmentUrl,
+                    m.IsDeletedForEveryone ? null : m.AttachmentFileName,
+                    m.IsDeletedForEveryone ? null : m.AttachmentContentType,
+                    m.IsDeletedForEveryone ? null : m.AttachmentSizeBytes,
+                    m.IsEdited,
+                    m.EditedAt,
+                    m.IsDeletedForEveryone))
                 .ToListAsync(cancellationToken);
         }
         else
         {
-            // Legacy ChatMessages (shop.id / order id room keys) before Messages migration
-            var legacyRoomIds = new[] { conversation.Id, conversation.ParticipantId }.Distinct().ToList();
-            totalCount = await _context.ChatMessages
-                .CountAsync(cm => legacyRoomIds.Contains(cm.OrderRequestId), cancellationToken);
-
-            messages = await _context.ChatMessages
+            // 2. Legacy ChatMessages table
+            var legacyQuery = _context.ChatMessages
                 .AsNoTracking()
-                .Where(cm => legacyRoomIds.Contains(cm.OrderRequestId))
+                .Where(cm => roomIds.Contains(cm.OrderRequestId)
+                    && (cm.DeletedForAccountIds == null || !cm.DeletedForAccountIds.Contains(accountIdStr)));
+
+            totalCount = await legacyQuery.CountAsync(cancellationToken);
+
+            messages = await legacyQuery
                 .OrderByDescending(cm => cm.SentAt)
                 .Skip((request.PageNumber - 1) * request.PageSize)
                 .Take(request.PageSize)
@@ -115,7 +142,7 @@ public class GetChatMessagesQueryHandler
                     cm.OrderRequestId,
                     cm.SenderAccountId,
                     cm.SenderRole.ToString(),
-                    cm.Message,
+                    cm.IsDeletedForEveryone ? "This message was deleted" : cm.Message,
                     cm.IsRead,
                     cm.ReadAt,
                     cm.DeliveredAt,
@@ -123,11 +150,14 @@ public class GetChatMessagesQueryHandler
                     null,
                     null,
                     null,
-                    null))
+                    null,
+                    cm.IsEdited,
+                    cm.EditedAt,
+                    cm.IsDeletedForEveryone))
                 .ToListAsync(cancellationToken);
         }
 
-        // Oldest → newest for chat window
+        // Oldest → newest for chat feed display
         messages.Reverse();
 
         return Result.Success(new PagedList<ChatMessageDto>(
