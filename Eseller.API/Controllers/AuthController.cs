@@ -11,10 +11,12 @@ using Eseller.Application.Features.Auth.ResetPassword;
 using Eseller.Application.Features.Auth.SendPhoneOtp;
 using Eseller.Application.Features.Auth.VerifyEmail;
 using Eseller.Application.Features.Auth.VerifyPhoneOtp;
+using Eseller.Domain.Enums;
 using Eseller.Infrastructure.Settings;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace Eseller.API.Controllers;
@@ -221,6 +223,81 @@ public class AuthController : ControllerBase
     }
 
     // ═══════════════════════════════════════════════════════════
+    // CURRENT USER PROFILE
+    // ═══════════════════════════════════════════════════════════
+    [Authorize]
+    [HttpGet("me")]
+    public async Task<IActionResult> GetCurrentProfile(
+        [FromServices] IApplicationDbContext context,
+        [FromServices] ICurrentUserService currentUserService,
+        CancellationToken cancellationToken)
+    {
+        if (currentUserService.AccountId is null)
+            return Unauthorized(new { error = "User is not authenticated.", errorCode = "UNAUTHENTICATED" });
+
+        var account = await context.Accounts
+            .AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == currentUserService.AccountId.Value, cancellationToken);
+
+        if (account is null)
+            return NotFound(new { error = "Account not found.", errorCode = "ACCOUNT_NOT_FOUND" });
+
+        string? permissions = null;
+        if (account.RoleType == RoleType.Partner)
+        {
+            var partner = await context.Partners
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.AccountId == account.Id, cancellationToken);
+            permissions = partner?.Permissions;
+        }
+
+        return Ok(new
+        {
+            id = account.Id,
+            username = account.Username,
+            email = account.Email,
+            roleType = account.RoleType.ToString(),
+            permissions,
+            createdAt = account.CreatedAt
+        });
+    }
+
+    [Authorize]
+    [HttpPut("profile")]
+    public async Task<IActionResult> UpdateProfile(
+        [FromBody] UpdateAccountNameRequest request,
+        [FromServices] IApplicationDbContext context,
+        [FromServices] ICurrentUserService currentUserService,
+        [FromServices] IDateTime dateTime,
+        CancellationToken cancellationToken)
+    {
+        if (currentUserService.AccountId is null)
+            return Unauthorized(new { error = "User is not authenticated.", errorCode = "UNAUTHENTICATED" });
+
+        var account = await context.Accounts
+            .FirstOrDefaultAsync(a => a.Id == currentUserService.AccountId.Value, cancellationToken);
+
+        if (account is null)
+            return NotFound(new { error = "Account not found.", errorCode = "ACCOUNT_NOT_FOUND" });
+
+        var newName = request.Username ?? request.Name;
+        if (!string.IsNullOrWhiteSpace(newName))
+        {
+            account.Username = newName.Trim();
+        }
+
+        account.SetUpdatedAt(dateTime.UtcNow);
+        await context.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            message = "Profile name updated successfully.",
+            username = account.Username,
+            email = account.Email
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // SEND PHONE OTP
     // ═══════════════════════════════════════════════════════════
     [HttpPost("send-phone-otp")]
@@ -358,3 +435,5 @@ public class AuthController : ControllerBase
         Response.Cookies.Delete(RefreshTokenCookieName, cookieOptions);
     }
 }
+
+public record UpdateAccountNameRequest(string? Username, string? Name = null);

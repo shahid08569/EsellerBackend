@@ -136,6 +136,7 @@ public class AdminPartnersController : ControllerBase
             "PARTNER_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
             "ACCOUNT_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
             "ALREADY_INACTIVE" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
+            "CANNOT_DEACTIVATE_SELF" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
             _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
         };
     }

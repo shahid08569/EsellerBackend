@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -46,6 +46,9 @@ public class DeactivatePartnerCommandHandler
 
         if (account is null)
             return Result.Failure("Account not found.", "ACCOUNT_NOT_FOUND");
+
+        if (account.Id == _currentUserService.AccountId.Value)
+            return Result.Failure("You cannot deactivate your own account.", "CANNOT_DEACTIVATE_SELF");
 
         if (!account.IsActive)
             return Result.Failure("Partner is already inactive.", "ALREADY_INACTIVE");

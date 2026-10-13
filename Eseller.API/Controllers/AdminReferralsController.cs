@@ -27,9 +27,42 @@ public class AdminReferralsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetAllAffiliates(CancellationToken cancellationToken)
     {
+        // Ensure all shopkeepers have an affiliate referral record
+        var existingAccountIds = await _context.Affiliates
+            .Select(a => a.AccountId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        var missingShopkeepers = await _context.Shopkeepers
+            .Where(sk => !existingAccountIds.Contains(sk.AccountId))
+            .ToListAsync(cancellationToken);
+
+        if (missingShopkeepers.Any())
+        {
+            foreach (var sk in missingShopkeepers)
+            {
+                var suffix = Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
+                var uniqueCode = $"REF-{suffix}";
+                var aff = new Affiliate
+                {
+                    AccountId = sk.AccountId,
+                    ReferralCode = uniqueCode,
+                    TotalClicks = 0,
+                    TotalConversions = 0,
+                    TotalEarned = 0,
+                    IsActive = true
+                };
+                aff.SetCreatedAt(DateTime.UtcNow);
+                aff.SetUpdatedAt(DateTime.UtcNow);
+                _context.Affiliates.Add(aff);
+            }
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
         var affiliates = await _context.Affiliates
             .AsNoTracking()
-            .OrderByDescending(a => a.CreatedAt)
+            .OrderByDescending(a => a.TotalConversions)
+            .ThenByDescending(a => a.CreatedAt)
             .ToListAsync(cancellationToken);
 
         if (!affiliates.Any())
@@ -96,14 +129,21 @@ public class AdminReferralsController : ControllerBase
             {
                 id = a.Id,
                 accountId = a.AccountId,
-                sellerName = sk?.Name ?? acc?.Username ?? "Merchant",
-                shopName = shop?.Name ?? "No Store",
+                shopId = shop?.Id,
+                shopName = shop?.Name ?? sk?.Name ?? acc?.Username ?? "Storefront",
                 shopSlug = shop?.Slug ?? "",
+                shopOwner = sk?.Name ?? acc?.Username ?? "Merchant",
+                sellerName = sk?.Name ?? acc?.Username ?? "Merchant",
+                shopEmail = acc?.Email ?? "",
                 email = acc?.Email ?? "",
                 phone = sk?.Phone ?? shop?.Phone ?? "",
+                code = a.ReferralCode,
                 referralCode = a.ReferralCode,
+                clicksCount = a.TotalClicks,
                 totalClicks = a.TotalClicks,
+                conversionsCount = myReferredShops.Count > 0 ? myReferredShops.Count : a.TotalConversions,
                 totalConversions = myReferredShops.Count > 0 ? myReferredShops.Count : a.TotalConversions,
+                activeStoresCount = activeStores,
                 activeConversions = activeStores,
                 totalEarned = a.TotalEarned,
                 isActive = a.IsActive,
@@ -204,14 +244,18 @@ public class AdminReferralsController : ControllerBase
 
                 referredShopsList.Add(new
                 {
+                    id = rShop.Id,
                     shopId = rShop.Id,
                     shopName = rShop.Name,
                     shopSlug = rShop.Slug,
+                    ownerName = rSk?.Name ?? rAcc?.Username ?? "Merchant",
                     sellerName = rSk?.Name ?? rAcc?.Username ?? "Merchant",
                     email = rAcc?.Email ?? "",
+                    phoneNumber = rSk?.Phone ?? rShop.Phone ?? "",
                     phone = rSk?.Phone ?? rShop.Phone ?? "",
                     status = rSk?.Status.ToString() ?? "Pending",
                     isApproved = rSk?.Status == ShopkeeperApprovalStatus.Approved,
+                    productsCount = pCount,
                     totalProducts = pCount,
                     hasListedProducts = pCount > 0,
                     registeredAt = conv.ClickedAt
@@ -219,26 +263,40 @@ public class AdminReferralsController : ControllerBase
             }
         }
 
+        var activeCount = referredShopsList.Count(s =>
+        {
+            var prop = s.GetType().GetProperty("hasListedProducts");
+            return prop != null && (bool)prop.GetValue(s)!;
+        });
+
         return Ok(new
         {
             affiliate = new
             {
                 id = affiliate.Id,
                 accountId = affiliate.AccountId,
-                sellerName = sk?.Name ?? acc?.Username ?? "Merchant",
-                shopName = shop?.Name ?? "No Store",
+                shopId = shop?.Id,
+                shopName = shop?.Name ?? sk?.Name ?? acc?.Username ?? "Storefront",
                 shopSlug = shop?.Slug ?? "",
+                shopOwner = sk?.Name ?? acc?.Username ?? "Merchant",
+                sellerName = sk?.Name ?? acc?.Username ?? "Merchant",
+                shopEmail = acc?.Email ?? "",
                 email = acc?.Email ?? "",
                 phone = sk?.Phone ?? shop?.Phone ?? "",
+                code = affiliate.ReferralCode,
                 referralCode = affiliate.ReferralCode,
+                clicksCount = affiliate.TotalClicks,
                 totalClicks = affiliate.TotalClicks,
+                conversionsCount = referredShopsList.Count > 0 ? referredShopsList.Count : affiliate.TotalConversions,
                 totalConversions = referredShopsList.Count > 0 ? referredShopsList.Count : affiliate.TotalConversions,
-                activeConversions = referredShopsList.Count(s => (bool)s.GetType().GetProperty("hasListedProducts")!.GetValue(s)!),
+                activeStoresCount = activeCount,
+                activeConversions = activeCount,
                 totalEarned = affiliate.TotalEarned,
                 isActive = affiliate.IsActive,
                 createdAt = affiliate.CreatedAt
             },
-            referredStores = referredShopsList
+            referredStores = referredShopsList,
+            referredShops = referredShopsList
         });
     }
 

@@ -440,9 +440,9 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>
-    /// Get all affiliate users with referral stats, commissions, and balances.
+    /// Legacy endpoint for affiliate commissions. Replaced by AdminReferralsController.
     /// </summary>
-    [HttpGet("affiliates")]
+    [HttpGet("affiliates-legacy")]
     public async Task<IActionResult> GetAffiliates(CancellationToken cancellationToken)
     {
         var affiliates = await _context.Affiliates
