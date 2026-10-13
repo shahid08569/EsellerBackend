@@ -69,11 +69,31 @@ public class CreateOrderRequestCommandHandler
             .FirstOrDefaultAsync(c => c.UserId == user.Id, cancellationToken);
 
         if (cart is null)
-            return Result.Failure<Guid>("Cart is empty.", "CART_EMPTY");
+        {
+            cart = new Eseller.Domain.Entities.Orders.Cart { UserId = user.Id };
+            _context.Carts.Add(cart);
+            await _context.SaveChangesAsync(cancellationToken);
+        }
 
         var cartItems = await _context.CartItems
             .Where(ci => ci.CartId == cart.Id)
             .ToListAsync(cancellationToken);
+
+        if (cartItems.Count == 0 && request.Items != null && request.Items.Count > 0)
+        {
+            foreach (var item in request.Items)
+            {
+                var ci = new CartItem
+                {
+                    CartId = cart.Id,
+                    ProductVariantId = item.ProductVariantId,
+                    Quantity = item.Quantity > 0 ? item.Quantity : 1
+                };
+                _context.CartItems.Add(ci);
+                cartItems.Add(ci);
+            }
+            await _context.SaveChangesAsync(cancellationToken);
+        }
 
         if (cartItems.Count == 0)
             return Result.Failure<Guid>("Cart is empty.", "CART_EMPTY");
@@ -386,26 +406,6 @@ public class CreateOrderRequestCommandHandler
             await _context.SaveChangesAsync(cancellationToken);
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // PART 3 — Auto-create first chat message
-        // ═══════════════════════════════════════════════════════════
-
-        var orderItemsForMessage = await _context.OrderRequestItems
-            .Where(i => i.OrderRequestId == orderRequest.Id)
-            .ToListAsync(cancellationToken);
-
-        var messageText = BuildOrderMessage(orderRequest.Id, orderItemsForMessage);
-
-        _context.ChatMessages.Add(new ChatMessageEntity
-        {
-            OrderRequestId = orderRequest.Id,
-            SenderAccountId = _currentUserService.AccountId.Value,
-            SenderRole = ChatSenderRole.User,
-            Message = messageText,
-            SentAt = _dateTime.UtcNow,
-            IsRead = false
-        });
-
         // Notify each shopkeeper who received a SellerOrder split
         var shopIdsForNotify = sellerOrders.Select(so => so.ShopId).Distinct().ToList();
         var shopkeeperAccountIds = await (
@@ -415,8 +415,8 @@ public class CreateOrderRequestCommandHandler
             select sk.AccountId
         ).Distinct().ToListAsync(cancellationToken);
 
-        var orderTotal = orderItemsForMessage.Sum(i => i.TotalPriceSnapshot);
-        var itemCount = orderItemsForMessage.Sum(i => i.Quantity);
+        var orderTotal = createdOrderItems.Sum(i => i.UnitPrice * i.Quantity);
+        var itemCount = createdOrderItems.Sum(i => i.Quantity);
         var shortRef = orderRequest.Id.ToString()[..8].ToUpperInvariant();
         var notifTitle = $"New Order #{shortRef}";
         var notifBody = $"{orderRequest.CustomerName ?? "Customer"} placed an order ({itemCount} items, ${orderTotal:N0}).";

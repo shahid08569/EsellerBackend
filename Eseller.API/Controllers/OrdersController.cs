@@ -30,6 +30,7 @@ public class OrdersController : ControllerBase
         [FromBody] CreateOrderRequest request,
         CancellationToken cancellationToken)
     {
+        var items = request.Items?.Select(i => new CreateOrderItemInput(i.ProductVariantId, i.Quantity)).ToList();
         var command = new CreateOrderRequestCommand(
             request.ReferralCode,
             request.CustomerName,
@@ -38,7 +39,8 @@ public class OrdersController : ControllerBase
             request.City,
             request.State,
             request.Country,
-            request.OrderNotes);
+            request.OrderNotes,
+            items);
         var result = await _sender.Send(command, cancellationToken);
 
         if (!result.IsSuccess)
@@ -67,7 +69,17 @@ public class OrdersController : ControllerBase
         [FromBody] BuyNowRequest request,
         CancellationToken cancellationToken)
     {
-        var command = new BuyNowCommand(request.ProductVariantId, request.Quantity, request.ReferralCode);
+        var command = new BuyNowCommand(
+            request.ProductVariantId,
+            request.Quantity,
+            request.ReferralCode,
+            request.CustomerName,
+            request.CustomerPhone,
+            request.ShippingAddress,
+            request.City,
+            request.State,
+            request.Country,
+            request.OrderNotes);
         var result = await _sender.Send(command, cancellationToken);
 
         if (!result.IsSuccess)
@@ -191,6 +203,8 @@ public class OrdersController : ControllerBase
 // REQUEST DTOs
 // ─────────────────────────────────────────────────────────────
 
+public record CreateOrderItemRequest(Guid ProductVariantId, int Quantity);
+
 public record CreateOrderRequest(
     string? ReferralCode,
     string? CustomerName = null,
@@ -199,5 +213,17 @@ public record CreateOrderRequest(
     string? City = null,
     string? State = null,
     string? Country = null,
+    string? OrderNotes = null,
+    List<CreateOrderItemRequest>? Items = null);
+
+public record BuyNowRequest(
+    Guid ProductVariantId,
+    int Quantity,
+    string? ReferralCode = null,
+    string? CustomerName = null,
+    string? CustomerPhone = null,
+    string? ShippingAddress = null,
+    string? City = null,
+    string? State = null,
+    string? Country = null,
     string? OrderNotes = null);
-public record BuyNowRequest(Guid ProductVariantId, int Quantity, string? ReferralCode);

@@ -76,6 +76,43 @@ public class BuyNowCommandHandler
                 cancellationToken);
 
         if (variant is null)
+        {
+            // Fallback: check if the passed ID is the Product ID
+            variant = await _context.ProductVariants
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(pv => pv.ProductId == request.ProductVariantId
+                                        && pv.IsActive
+                                        && pv.DeletedAt == null,
+                    cancellationToken);
+
+            if (variant is null)
+            {
+                // If product exists but has no active variant, auto-create a default base variant
+                var baseProduct = await _context.Products
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(p => p.Id == request.ProductVariantId
+                                           && p.DeletedAt == null,
+                        cancellationToken);
+
+                if (baseProduct is not null)
+                {
+                    variant = new ProductVariant
+                    {
+                        ProductId = baseProduct.Id,
+                        Sku = $"SKU-{(baseProduct.Slug.Length > 8 ? baseProduct.Slug[..8] : baseProduct.Slug).ToUpperInvariant()}-{_dateTime.UtcNow.Ticks % 10000}",
+                        Price = baseProduct.BasePrice,
+                        StockQty = 100,
+                        IsActive = true
+                    };
+                    variant.SetCreatedAt(_dateTime.UtcNow);
+                    variant.SetUpdatedAt(_dateTime.UtcNow);
+                    _context.ProductVariants.Add(variant);
+                    await _context.SaveChangesAsync(cancellationToken);
+                }
+            }
+        }
+
+        if (variant is null)
             return Result.Failure<Guid>("Variant not available.", "VARIANT_NOT_AVAILABLE");
 
         if (request.Quantity > variant.StockQty)
@@ -130,7 +167,14 @@ public class BuyNowCommandHandler
             UserId = user.Id,
             Status = OrderStatus.Pending,
             AffiliateId = affiliateId,
-            ReferralCodeSnapshot = referralCodeSnapshot
+            ReferralCodeSnapshot = referralCodeSnapshot,
+            CustomerName = !string.IsNullOrWhiteSpace(request.CustomerName) ? request.CustomerName.Trim() : user.Name,
+            CustomerPhone = !string.IsNullOrWhiteSpace(request.CustomerPhone) ? request.CustomerPhone.Trim() : user.Phone,
+            ShippingAddress = request.ShippingAddress?.Trim(),
+            City = request.City?.Trim(),
+            State = request.State?.Trim(),
+            Country = request.Country?.Trim(),
+            OrderNotes = request.OrderNotes?.Trim()
         };
 
         _context.OrderRequests.Add(orderRequest);
@@ -254,29 +298,7 @@ public class BuyNowCommandHandler
         // 13. Save all
         await _context.SaveChangesAsync(cancellationToken);
 
-        // ═══════════════════════════════════════════════════════════
-        // PART 3 — Auto-create first chat message
-        // ═══════════════════════════════════════════════════════════
-
-        // 14. Load items for message
-        var orderItemsForMessage = await _context.OrderRequestItems
-            .Where(i => i.OrderRequestId == orderRequest.Id)
-            .ToListAsync(cancellationToken);
-
-        var messageText = BuildOrderMessage(orderRequest.Id, orderItemsForMessage);
-
-        // 15. Create auto chat message
-        _context.ChatMessages.Add(new ChatMessageEntity
-        {
-            OrderRequestId = orderRequest.Id,
-            SenderAccountId = _currentUserService.AccountId.Value,
-            SenderRole = ChatSenderRole.User,
-            Message = messageText,
-            SentAt = _dateTime.UtcNow,
-            IsRead = false
-        });
-
-        // 16. Notify the shopkeeper + admins
+        // 14. Notify the shopkeeper + admins
         var shopkeeperAccountId = await (
             from s in _context.Shops.IgnoreQueryFilters().AsNoTracking()
             join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id

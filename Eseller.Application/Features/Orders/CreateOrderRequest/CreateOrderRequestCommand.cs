@@ -3,6 +3,8 @@ using MediatR;
 
 namespace Eseller.Application.Features.Orders.CreateOrderRequest;
 
+public record CreateOrderItemInput(Guid ProductVariantId, int Quantity);
+
 public record CreateOrderRequestCommand(
     string? ReferralCode,
     string? CustomerName = null,
@@ -11,4 +13,5 @@ public record CreateOrderRequestCommand(
     string? City = null,
     string? State = null,
     string? Country = null,
-    string? OrderNotes = null) : IRequest<Result<Guid>>;
+    string? OrderNotes = null,
+    List<CreateOrderItemInput>? Items = null) : IRequest<Result<Guid>>;
