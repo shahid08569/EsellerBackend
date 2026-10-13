@@ -2,6 +2,7 @@ using Eseller.API.Filters;
 using Eseller.API.Middleware;
 using Eseller.Application;
 using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions.SignalR;
 using Eseller.Infrastructure;
 using Eseller.Infrastructure.BackgroundJobs;
 using Eseller.Infrastructure.Persistence;
@@ -146,6 +147,7 @@ builder.Services.AddSignalR(options =>
     options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
 });
 
+builder.Services.AddSingleton<IUserPresenceTracker, UserPresenceTracker>();
 builder.Services.AddScoped<ISignalRNotificationService, SignalRNotificationService>();
 builder.Services.AddHostedService<FlashSaleExpiryJob>();
 
@@ -319,6 +321,9 @@ if (shouldMigrate || shouldSeed)
                 ALTER TABLE [HomepageBanners] ADD [TextColor] nvarchar(50) NULL;
             IF COL_LENGTH('HomepageBanners', 'AvailableSizes') IS NULL
                 ALTER TABLE [HomepageBanners] ADD [AvailableSizes] nvarchar(100) NULL;
+
+            IF COL_LENGTH('Messages', 'DeliveredAt') IS NULL
+                ALTER TABLE [Messages] ADD [DeliveredAt] datetime2 NULL;
 
             IF OBJECT_ID(N'[PaymentShowcaseLogos]', N'U') IS NULL
             BEGIN

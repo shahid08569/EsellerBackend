@@ -8,57 +8,67 @@ using Microsoft.EntityFrameworkCore;
 namespace Eseller.Application.Features.Chat.SendChatMessage;
 
 public class SendChatMessageCommandHandler
-    : IRequestHandler<SendChatMessageCommand, Result<Guid>>
+    : IRequestHandler<SendChatMessageCommand, Result<SendChatMessageResult>>
 {
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
     private readonly ISignalRNotificationService _notificationService;
     private readonly IAppNotificationService _appNotifications;
+    private readonly Eseller.Application.Abstractions.SignalR.IUserPresenceTracker _presenceTracker;
 
     public SendChatMessageCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
         IDateTime dateTime,
         ISignalRNotificationService notificationService,
-        IAppNotificationService appNotifications)
+        IAppNotificationService appNotifications,
+        Eseller.Application.Abstractions.SignalR.IUserPresenceTracker presenceTracker)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
         _notificationService = notificationService;
         _appNotifications = appNotifications;
+        _presenceTracker = presenceTracker;
     }
 
-    public async Task<Result<Guid>> Handle(
+    public async Task<Result<SendChatMessageResult>> Handle(
         SendChatMessageCommand request,
         CancellationToken cancellationToken)
     {
         if (_currentUserService.AccountId is null)
-            return Result.Failure<Guid>("User is not authenticated.", "UNAUTHENTICATED");
+            return Result.Failure<SendChatMessageResult>("User is not authenticated.", "UNAUTHENTICATED");
 
         var conversation = await ResolveConversationAsync(request.ConversationId, cancellationToken);
         if (conversation is null)
-            return Result.Failure<Guid>("Conversation not found.", "CONVERSATION_NOT_FOUND");
+            return Result.Failure<SendChatMessageResult>("Conversation not found.", "CONVERSATION_NOT_FOUND");
 
         if (!await SupportConversationService.CanAccessAsync(
                 _context, _currentUserService, conversation, cancellationToken))
-            return Result.Failure<Guid>("You do not have permission.", "FORBIDDEN");
+            return Result.Failure<SendChatMessageResult>("You do not have permission.", "FORBIDDEN");
 
         // Role matrix: only Customer|Seller ↔ Super Admin
         var role = _currentUserService.RoleType;
         if (role is null || role is not (RoleType.SuperAdmin or RoleType.Partner or RoleType.Shopkeeper or RoleType.User))
-            return Result.Failure<Guid>("You do not have permission.", "FORBIDDEN");
+            return Result.Failure<SendChatMessageResult>("You do not have permission.", "FORBIDDEN");
 
         if (role == RoleType.Shopkeeper && conversation.ParticipantType != ChatParticipantType.Seller)
-            return Result.Failure<Guid>("Sellers can only message Super Admin.", "FORBIDDEN");
+            return Result.Failure<SendChatMessageResult>("Sellers can only message Super Admin.", "FORBIDDEN");
 
         if (role == RoleType.User && conversation.ParticipantType != ChatParticipantType.Customer)
-            return Result.Failure<Guid>("Customers can only message Super Admin.", "FORBIDDEN");
+            return Result.Failure<SendChatMessageResult>("Customers can only message Super Admin.", "FORBIDDEN");
 
         var senderRole = SupportConversationService.MapSenderRole(role.Value);
         var now = _dateTime.UtcNow;
         var text = (request.Message ?? string.Empty).Trim();
+
+        var notifyAccountIds = await ResolveNotifyAccountIdsAsync(
+            conversation, _currentUserService.AccountId.Value, senderRole, cancellationToken);
+
+        // Check if recipient is online in SignalR
+        var isRecipientOnline = _presenceTracker.IsAnyUserOnline(notifyAccountIds);
+        var deliveredAt = isRecipientOnline ? now : (DateTime?)null;
 
         var message = new Message
         {
@@ -68,6 +78,7 @@ public class SendChatMessageCommandHandler
             Content = text,
             SentAt = now,
             IsRead = false,
+            DeliveredAt = deliveredAt,
             AttachmentUrl = string.IsNullOrWhiteSpace(request.AttachmentUrl) ? null : request.AttachmentUrl.Trim(),
             AttachmentFileName = string.IsNullOrWhiteSpace(request.AttachmentFileName) ? null : request.AttachmentFileName.Trim(),
             AttachmentContentType = string.IsNullOrWhiteSpace(request.AttachmentContentType) ? null : request.AttachmentContentType.Trim(),
@@ -78,9 +89,6 @@ public class SendChatMessageCommandHandler
         conversation.LastMessageAt = now;
         conversation.SetUpdatedAt(now);
         await _context.SaveChangesAsync(cancellationToken);
-
-        var notifyAccountIds = await ResolveNotifyAccountIdsAsync(
-            conversation, _currentUserService.AccountId.Value, senderRole, cancellationToken);
 
         var preview = string.IsNullOrWhiteSpace(text)
             ? (message.AttachmentFileName is not null ? $"📎 {message.AttachmentFileName}" : "Attachment")
@@ -127,7 +135,7 @@ public class SendChatMessageCommandHandler
             message.AttachmentFileName,
             message.AttachmentContentType);
 
-        return Result.Success(message.Id);
+        return Result.Success(new SendChatMessageResult(message.Id, isRecipientOnline, deliveredAt));
     }
 
     private async Task<Conversation?> ResolveConversationAsync(

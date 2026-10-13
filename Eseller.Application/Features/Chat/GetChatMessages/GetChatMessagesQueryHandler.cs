@@ -118,7 +118,7 @@ public class GetChatMessagesQueryHandler
                 m.IsDeletedForEveryone ? "This message was deleted" : m.Content,
                 m.IsRead,
                 m.ReadAt,
-                null,
+                m.DeliveredAt ?? (m.IsRead ? (m.ReadAt ?? m.SentAt) : null),
                 m.SentAt,
                 m.IsDeletedForEveryone ? null : m.AttachmentUrl,
                 m.IsDeletedForEveryone ? null : m.AttachmentFileName,

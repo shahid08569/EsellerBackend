@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -57,6 +57,10 @@ public class MarkMessageAsReadCommandHandler
             var readAt = _dateTime.UtcNow;
             message.IsRead = true;
             message.ReadAt = readAt;
+            if (message.DeliveredAt == null)
+            {
+                message.DeliveredAt = readAt;
+            }
             await _context.SaveChangesAsync(cancellationToken);
 
             try

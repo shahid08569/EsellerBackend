@@ -355,7 +355,13 @@ public class ChatController : ControllerBase
             };
         }
 
-        return Ok(new { messageId = result.Value, message = "Message sent." });
+        return Ok(new
+        {
+            messageId = result.Value.MessageId,
+            isDelivered = result.Value.IsDelivered,
+            deliveredAt = result.Value.DeliveredAt,
+            message = "Message sent."
+        });
     }
 
     /// <summary>
@@ -601,6 +607,10 @@ public class ChatController : ControllerBase
         {
             msg.IsRead = true;
             msg.ReadAt = now;
+            if (msg.DeliveredAt == null)
+            {
+                msg.DeliveredAt = now;
+            }
         }
 
         // Clear bell notifications for this conversation so they disappear after opening/reading

@@ -16,6 +16,7 @@ public class MessageConfiguration : IEntityTypeConfiguration<Message>
         builder.Property(m => m.Content).IsRequired().HasMaxLength(4000);
         builder.Property(m => m.SentAt).IsRequired();
         builder.Property(m => m.IsRead).IsRequired().HasDefaultValue(false);
+        builder.Property(m => m.DeliveredAt).IsRequired(false);
         builder.Property(m => m.AttachmentUrl).HasMaxLength(1000);
         builder.Property(m => m.AttachmentFileName).HasMaxLength(260);
         builder.Property(m => m.AttachmentContentType).HasMaxLength(200);

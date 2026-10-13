@@ -14,15 +14,18 @@ public class ChatHub : Hub<IChatClient>
 {
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUser;
+    private readonly IUserPresenceTracker _presenceTracker;
     private readonly ILogger<ChatHub> _logger;
 
     public ChatHub(
         IApplicationDbContext context,
         ICurrentUserService currentUser,
+        IUserPresenceTracker presenceTracker,
         ILogger<ChatHub> logger)
     {
         _context = context;
         _currentUser = currentUser;
+        _presenceTracker = presenceTracker;
         _logger = logger;
     }
 
@@ -39,18 +42,89 @@ public class ChatHub : Hub<IChatClient>
             await Groups.AddToGroupAsync(Context.ConnectionId, role);
 
         if (accountId != Guid.Empty)
+        {
+            _presenceTracker.TrackUserConnected(accountId, Context.ConnectionId);
             await Groups.AddToGroupAsync(Context.ConnectionId, $"account-{accountId}");
+            _ = DeliverPendingMessagesAsync(accountId);
+        }
 
         await base.OnConnectedAsync();
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
+        var accountId = GetAccountId();
+        if (accountId != Guid.Empty)
+        {
+            _presenceTracker.TrackUserDisconnected(accountId, Context.ConnectionId);
+        }
+
         _logger.LogInformation(
             "ChatHub disconnected — ConnectionId: {ConnectionId}",
             Context.ConnectionId);
 
         await base.OnDisconnectedAsync(exception);
+    }
+
+    private async Task DeliverPendingMessagesAsync(Guid accountId)
+    {
+        if (accountId == Guid.Empty) return;
+
+        try
+        {
+            var now = DateTime.UtcNow;
+
+            var shopIds = await (
+                from s in _context.Shops.IgnoreQueryFilters().AsNoTracking()
+                join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
+                where sk.AccountId == accountId && s.DeletedAt == null
+                select s.Id
+            ).ToListAsync(Context.ConnectionAborted);
+
+            var userIds = await _context.Users.AsNoTracking()
+                .Where(u => u.AccountId == accountId)
+                .Select(u => u.Id)
+                .ToListAsync(Context.ConnectionAborted);
+
+            var participantIds = shopIds.Concat(userIds).Distinct().ToList();
+
+            var conversationIds = await _context.Conversations.AsNoTracking()
+                .Where(c => participantIds.Contains(c.ParticipantId) || participantIds.Contains(c.Id) || c.Id == accountId)
+                .Select(c => c.Id)
+                .ToListAsync(Context.ConnectionAborted);
+
+            var allRoomIds = conversationIds.Concat(participantIds).Distinct().ToList();
+            if (allRoomIds.Count == 0) return;
+
+            var undelivered = await _context.Messages
+                .Where(m => allRoomIds.Contains(m.ConversationId)
+                            && m.SenderId != accountId
+                            && m.DeliveredAt == null
+                            && !m.IsRead)
+                .ToListAsync(Context.ConnectionAborted);
+
+            if (undelivered.Count > 0)
+            {
+                foreach (var msg in undelivered)
+                {
+                    msg.DeliveredAt = now;
+                }
+
+                await _context.SaveChangesAsync(Context.ConnectionAborted);
+
+                foreach (var msg in undelivered)
+                {
+                    await Clients.Group($"account-{msg.SenderId}")
+                        .MessageDelivered(msg.Id, now);
+                    await Clients.Group($"conversation:{msg.ConversationId}")
+                        .MessageDelivered(msg.Id, now);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed delivering pending messages for account {AccountId}", accountId);
+        }
     }
 
     /// <summary>Join conversation:{id} (and legacy order-{id}).</summary>

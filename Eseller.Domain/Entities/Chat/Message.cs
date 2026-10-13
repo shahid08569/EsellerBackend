@@ -19,6 +19,7 @@ public class Message : BaseEntity
     public DateTime SentAt { get; set; }
     public bool IsRead { get; set; }
     public DateTime? ReadAt { get; set; }
+    public DateTime? DeliveredAt { get; set; }
 
     public string? AttachmentUrl { get; set; }
     public string? AttachmentFileName { get; set; }

@@ -17,6 +17,7 @@ public interface IChatClient
         string? attachmentFileName,
         string? attachmentContentType);
 
+    Task MessageDelivered(Guid messageId, DateTime deliveredAt);
     Task MessageRead(Guid messageId, DateTime readAt);
 
     Task UnreadCountChanged(Guid conversationId, int unreadCount);
