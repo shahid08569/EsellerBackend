@@ -12,15 +12,18 @@ public class UpdatePartnerCommandHandler
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
+    private readonly IPasswordHasher _passwordHasher;
 
     public UpdatePartnerCommandHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        IPasswordHasher passwordHasher)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
+        _passwordHasher = passwordHasher;
     }
 
     public async Task<Result> Handle(
@@ -42,6 +45,17 @@ public class UpdatePartnerCommandHandler
 
         if (request.Permissions is not null)
             partner.Permissions = request.Permissions;
+
+        if (!string.IsNullOrWhiteSpace(request.NewPassword))
+        {
+            var account = await _context.Accounts
+                .FirstOrDefaultAsync(a => a.Id == partner.AccountId, cancellationToken);
+            if (account != null)
+            {
+                account.PasswordHash = _passwordHasher.Hash(request.NewPassword.Trim());
+                account.SetUpdatedAt(_dateTime.UtcNow);
+            }
+        }
 
         partner.SetUpdatedAt(_dateTime.UtcNow);
 

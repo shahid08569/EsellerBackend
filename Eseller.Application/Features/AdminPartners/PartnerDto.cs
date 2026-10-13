@@ -1,4 +1,4 @@
-﻿namespace Eseller.Application.Features.AdminPartners;
+namespace Eseller.Application.Features.AdminPartners;
 
 public record PartnerDto(
     Guid Id,
@@ -8,4 +8,5 @@ public record PartnerDto(
     string AddedByEmail,
     DateTime AddedAt,
     string? Permissions,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    bool IsActive = true);

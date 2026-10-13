@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -65,7 +65,8 @@ public class GetPartnersQueryHandler
                 addedBy?.Email ?? string.Empty,
                 p.AddedAt,
                 p.Permissions,
-                p.CreatedAt);
+                p.CreatedAt,
+                account?.IsActive ?? true);
         }).ToList();
 
         var pagedList = new PagedList<PartnerDto>(

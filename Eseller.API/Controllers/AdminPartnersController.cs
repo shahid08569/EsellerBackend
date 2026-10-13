@@ -87,13 +87,28 @@ public class AdminPartnersController : ControllerBase
             _ => request.Permissions.ToString()
         };
 
-        var command = new UpdatePartnerCommand(id, permStr);
+        var command = new UpdatePartnerCommand(id, permStr, request.Password);
         var result = await _sender.Send(command, cancellationToken);
 
         if (!result.IsSuccess)
             return HandleError(result);
 
         return Ok(new { message = "Partner updated successfully." });
+    }
+
+    [HttpPut("{id:guid}/activate")]
+    [Authorize(Roles = "SuperAdmin")]
+    public async Task<IActionResult> Activate(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var command = new Eseller.Application.Features.AdminPartners.ActivatePartner.ActivatePartnerCommand(id);
+        var result = await _sender.Send(command, cancellationToken);
+
+        if (!result.IsSuccess)
+            return HandleError(result);
+
+        return Ok(new { message = "Partner activated successfully." });
     }
 
     [HttpPut("{id:guid}/deactivate")]
@@ -121,6 +136,7 @@ public class AdminPartnersController : ControllerBase
             "PARTNER_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
             "ACCOUNT_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
             "ALREADY_INACTIVE" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
+            "ALREADY_ACTIVE" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
             "MAX_PARTNERS_LIMIT_REACHED" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
             _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
         };
@@ -136,6 +152,8 @@ public class AdminPartnersController : ControllerBase
             "PARTNER_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
             "ACCOUNT_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
             "ALREADY_INACTIVE" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
+            "ALREADY_ACTIVE" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
+            "MAX_PARTNERS_LIMIT_REACHED" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
             "CANNOT_DEACTIVATE_SELF" => BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
             _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
         };
@@ -152,4 +170,5 @@ public record AddPartnerRequest(
     object? Permissions);
 
 public record UpdatePartnerRequest(
-    object? Permissions);
+    object? Permissions,
+    string? Password = null);
