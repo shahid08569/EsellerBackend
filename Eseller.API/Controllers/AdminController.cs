@@ -697,7 +697,7 @@ public class AdminController : ControllerBase
             IsManual = true,
             Note = !string.IsNullOrWhiteSpace(request.Note)
                 ? request.Note
-                : $"Manual override by Admin ({monthAnchor:MMMM yyyy})"
+                : $"Management traffic adjustment ({monthAnchor:MMMM yyyy})"
         };
         newRecord.SetCreatedAt(DateTime.UtcNow);
         _context.ShopTraffics.Add(newRecord);
@@ -750,7 +750,7 @@ public class AdminController : ControllerBase
                 VisitCount = request.VisitCount,
                 UniqueVisitors = unique,
                 IsManual = true,
-                Note = request.Note ?? "Manual daily override by Admin"
+                Note = request.Note ?? "Management daily traffic adjustment"
             };
             record.SetCreatedAt(DateTime.UtcNow);
             _context.ShopTraffics.Add(record);

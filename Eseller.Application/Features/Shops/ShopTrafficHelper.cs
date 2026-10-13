@@ -71,7 +71,8 @@ public static class ShopTrafficHelper
         CancellationToken cancellationToken = default,
         string? logoUrl = null,
         DateTime? customStartDate = null,
-        DateTime? customEndDate = null)
+        DateTime? customEndDate = null,
+        bool isForSeller = false)
     {
         var nowUtc = DateTime.UtcNow;
         var todayUtc = nowUtc.Date;
@@ -191,7 +192,7 @@ public static class ShopTrafficHelper
                 Label = d.ToString("MMM dd", CultureInfo.InvariantCulture),
                 Visits = rec?.VisitCount ?? 0,
                 UniqueVisitors = rec?.UniqueVisitors ?? 0,
-                IsManual = rec?.IsManual ?? false
+                IsManual = isForSeller ? false : (rec?.IsManual ?? false)
             });
         }
 
@@ -221,16 +222,17 @@ public static class ShopTrafficHelper
             var key = $"{mDate.Year}-{mDate.Month:D2}";
             monthlyDict.TryGetValue(key, out var mData);
 
+            var totalMVisits = mData?.Visits ?? 0;
             monthlyList.Add(new ShopTrafficMonthDto
             {
                 Year = mDate.Year,
                 Month = mDate.Month,
                 MonthName = mDate.ToString("MMMM yyyy", CultureInfo.InvariantCulture),
-                Visits = mData?.Visits ?? 0,
+                Visits = totalMVisits,
                 UniqueVisitors = mData?.UniqueVisitors ?? 0,
-                AutoTrackedVisits = mData?.AutoTrackedVisits ?? 0,
-                ManualVisits = mData?.ManualVisits ?? 0,
-                IsManual = mData?.IsManual ?? false
+                AutoTrackedVisits = isForSeller ? totalMVisits : (mData?.AutoTrackedVisits ?? 0),
+                ManualVisits = isForSeller ? 0 : (mData?.ManualVisits ?? 0),
+                IsManual = isForSeller ? false : (mData?.IsManual ?? false)
             });
         }
 

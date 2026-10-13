@@ -505,7 +505,7 @@ public class ShopsController : ControllerBase
             .FirstOrDefaultAsync(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null, cancellationToken);
         if (shop == null) return NotFound(new { error = "Shop not found." });
 
-        var summary = await ShopTrafficHelper.BuildSummaryAsync(shop.Id, shop.Name, range, context, cancellationToken, shop.LogoUrl, startDate, endDate);
+        var summary = await ShopTrafficHelper.BuildSummaryAsync(shop.Id, shop.Name, range, context, cancellationToken, shop.LogoUrl, startDate, endDate, isForSeller: true);
         return Ok(summary);
     }
 }
