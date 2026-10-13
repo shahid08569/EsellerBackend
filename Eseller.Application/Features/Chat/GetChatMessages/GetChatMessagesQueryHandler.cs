@@ -84,83 +84,96 @@ public class GetChatMessagesQueryHandler
             .Distinct()
             .ToList();
 
+        if (conversation.ParticipantType == ChatParticipantType.Customer)
+        {
+            var userOrders = await _context.OrderRequests.AsNoTracking()
+                .Where(o => o.UserId == conversation.ParticipantId)
+                .Select(o => o.Id)
+                .ToListAsync(cancellationToken);
+            roomIds.AddRange(userOrders);
+            roomIds = roomIds.Distinct().ToList();
+        }
+        else if (conversation.ParticipantType == ChatParticipantType.Seller)
+        {
+            var shopOrderReqIds = await _context.SellerOrders.AsNoTracking()
+                .Where(so => so.ShopId == conversation.ParticipantId)
+                .Select(so => so.OrderRequestId)
+                .ToListAsync(cancellationToken);
+            roomIds.AddRange(shopOrderReqIds);
+            roomIds = roomIds.Distinct().ToList();
+        }
+
         var accountIdStr = _currentUserService.AccountId.Value.ToString();
 
         // 1. Modern Messages table
-        var modernQuery = _context.Messages
+        var modernList = await _context.Messages
             .AsNoTracking()
             .Where(m => roomIds.Contains(m.ConversationId)
-                && (m.DeletedForAccountIds == null || !m.DeletedForAccountIds.Contains(accountIdStr)));
+                && (m.DeletedForAccountIds == null || !m.DeletedForAccountIds.Contains(accountIdStr)))
+            .Select(m => new ChatMessageDto(
+                m.Id,
+                m.ConversationId,
+                m.SenderId,
+                m.SenderRole.ToString(),
+                m.IsDeletedForEveryone ? "This message was deleted" : m.Content,
+                m.IsRead,
+                m.ReadAt,
+                null,
+                m.SentAt,
+                m.IsDeletedForEveryone ? null : m.AttachmentUrl,
+                m.IsDeletedForEveryone ? null : m.AttachmentFileName,
+                m.IsDeletedForEveryone ? null : m.AttachmentContentType,
+                m.IsDeletedForEveryone ? null : m.AttachmentSizeBytes,
+                m.IsEdited,
+                m.EditedAt,
+                m.IsDeletedForEveryone))
+            .ToListAsync(cancellationToken);
 
-        var modernCount = await modernQuery.CountAsync(cancellationToken);
+        // 2. Legacy ChatMessages table
+        var legacyList = await _context.ChatMessages
+            .AsNoTracking()
+            .Where(cm => roomIds.Contains(cm.OrderRequestId)
+                && (cm.DeletedForAccountIds == null || !cm.DeletedForAccountIds.Contains(accountIdStr)))
+            .Select(cm => new ChatMessageDto(
+                cm.Id,
+                cm.OrderRequestId,
+                cm.SenderAccountId,
+                cm.SenderRole.ToString(),
+                cm.IsDeletedForEveryone ? "This message was deleted" : cm.Message,
+                cm.IsRead,
+                cm.ReadAt,
+                cm.DeliveredAt,
+                cm.SentAt,
+                null,
+                null,
+                null,
+                null,
+                cm.IsEdited,
+                cm.EditedAt,
+                cm.IsDeletedForEveryone))
+            .ToListAsync(cancellationToken);
 
-        List<ChatMessageDto> messages;
-        int totalCount;
-
-        if (modernCount > 0)
+        var seenIds = new HashSet<Guid>();
+        var combined = new List<ChatMessageDto>();
+        foreach (var m in modernList)
         {
-            totalCount = modernCount;
-            messages = await modernQuery
-                .OrderByDescending(m => m.SentAt)
-                .Skip((request.PageNumber - 1) * request.PageSize)
-                .Take(request.PageSize)
-                .Select(m => new ChatMessageDto(
-                    m.Id,
-                    m.ConversationId,
-                    m.SenderId,
-                    m.SenderRole.ToString(),
-                    m.IsDeletedForEveryone ? "This message was deleted" : m.Content,
-                    m.IsRead,
-                    m.ReadAt,
-                    null,
-                    m.SentAt,
-                    m.IsDeletedForEveryone ? null : m.AttachmentUrl,
-                    m.IsDeletedForEveryone ? null : m.AttachmentFileName,
-                    m.IsDeletedForEveryone ? null : m.AttachmentContentType,
-                    m.IsDeletedForEveryone ? null : m.AttachmentSizeBytes,
-                    m.IsEdited,
-                    m.EditedAt,
-                    m.IsDeletedForEveryone))
-                .ToListAsync(cancellationToken);
+            if (seenIds.Add(m.Id))
+                combined.Add(m);
         }
-        else
+        foreach (var m in legacyList)
         {
-            // 2. Legacy ChatMessages table
-            var legacyQuery = _context.ChatMessages
-                .AsNoTracking()
-                .Where(cm => roomIds.Contains(cm.OrderRequestId)
-                    && (cm.DeletedForAccountIds == null || !cm.DeletedForAccountIds.Contains(accountIdStr)));
-
-            totalCount = await legacyQuery.CountAsync(cancellationToken);
-
-            messages = await legacyQuery
-                .OrderByDescending(cm => cm.SentAt)
-                .Skip((request.PageNumber - 1) * request.PageSize)
-                .Take(request.PageSize)
-                .Select(cm => new ChatMessageDto(
-                    cm.Id,
-                    cm.OrderRequestId,
-                    cm.SenderAccountId,
-                    cm.SenderRole.ToString(),
-                    cm.IsDeletedForEveryone ? "This message was deleted" : cm.Message,
-                    cm.IsRead,
-                    cm.ReadAt,
-                    cm.DeliveredAt,
-                    cm.SentAt,
-                    null,
-                    null,
-                    null,
-                    null,
-                    cm.IsEdited,
-                    cm.EditedAt,
-                    cm.IsDeletedForEveryone))
-                .ToListAsync(cancellationToken);
+            if (seenIds.Add(m.Id))
+                combined.Add(m);
         }
 
-        // Oldest → newest for chat feed display
-        messages.Reverse();
+        var ordered = combined.OrderBy(m => m.SentAt).ToList();
+        var totalCount = ordered.Count;
+        var paged = ordered
+            .Skip((request.PageNumber - 1) * request.PageSize)
+            .Take(request.PageSize)
+            .ToList();
 
         return Result.Success(new PagedList<ChatMessageDto>(
-            messages, totalCount, request.PageNumber, request.PageSize));
+            paged, totalCount, request.PageNumber, request.PageSize));
     }
 }

@@ -410,6 +410,30 @@ public class ChatController : ControllerBase
     }
 
     /// <summary>
+    /// Batch delete multiple messages (WhatsApp style: forEveryone = true / false).
+    /// </summary>
+    [HttpPost("messages/batch-delete")]
+    public async Task<IActionResult> BatchDeleteMessages(
+        [FromBody] BatchDeleteMessagesRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var command = new BatchDeleteChatMessagesCommand(request.MessageIds, request.ForEveryone);
+        var result = await _sender.Send(command, cancellationToken);
+
+        if (!result.IsSuccess)
+        {
+            return result.ErrorCode switch
+            {
+                "NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
+                "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
+                _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
+            };
+        }
+
+        return Ok(result.Value);
+    }
+
+    /// <summary>
     /// Upload a chat attachment (image/pdf/doc). Returns URL to attach on send.
     /// </summary>
     [HttpPost("attachments")]
@@ -722,4 +746,8 @@ public record SendMessageRequest(
     string? AttachmentContentType = null,
     long? AttachmentSizeBytes = null);
 
-public record EditChatMessageRequest(string Message);
+public record EditChatMessageRequest(string Message);
+
+public record BatchDeleteMessagesRequest(
+    List<Guid> MessageIds,
+    bool ForEveryone = false);

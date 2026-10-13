@@ -52,7 +52,7 @@ public class EditChatMessageCommandHandler
             if (message.IsDeletedForEveryone)
                 return Result.Failure<EditChatMessageResult>("Cannot edit a deleted message.", "MESSAGE_DELETED");
 
-            if (message.SenderId != callerAccountId && !isAdmin)
+            if (message.SenderId != callerAccountId)
                 return Result.Failure<EditChatMessageResult>("You can only edit your own messages.", "FORBIDDEN");
 
             message.Content = text;
@@ -100,7 +100,7 @@ public class EditChatMessageCommandHandler
             if (legacy.IsDeletedForEveryone)
                 return Result.Failure<EditChatMessageResult>("Cannot edit a deleted message.", "MESSAGE_DELETED");
 
-            if (legacy.SenderAccountId != callerAccountId && !isAdmin)
+            if (legacy.SenderAccountId != callerAccountId)
                 return Result.Failure<EditChatMessageResult>("You can only edit your own messages.", "FORBIDDEN");
 
             legacy.Message = text;
