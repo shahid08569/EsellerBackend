@@ -774,6 +774,130 @@ public class AdminController : ControllerBase
             visitCount = request.VisitCount
         });
     }
+
+    /// <summary>
+    /// Management: randomly distribute total visitors across custom dates so the sum matches the exact requested total.
+    /// </summary>
+    [HttpPost("shops/{id:guid}/traffic/distribute")]
+    public async Task<IActionResult> DistributeRangeTraffic(
+        Guid id,
+        [FromBody] DistributeRangeTrafficRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.TotalVisits < 0)
+            return BadRequest(new { error = "Total visits cannot be negative.", errorCode = "INVALID_COUNT" });
+
+        var shop = await _context.Shops
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(s => s.Id == id && s.DeletedAt == null, cancellationToken);
+
+        if (shop is null)
+            return NotFound(new { error = "Shop not found.", errorCode = "SHOP_NOT_FOUND" });
+
+        var startDate = request.StartDate.Date;
+        var endDate = request.EndDate.Date;
+        if (startDate > endDate)
+        {
+            (startDate, endDate) = (endDate, startDate);
+        }
+
+        var totalDays = (int)(endDate - startDate).TotalDays + 1;
+        if (totalDays > 365)
+            return BadRequest(new { error = "Date range cannot exceed 365 days.", errorCode = "RANGE_TOO_LARGE" });
+
+        // Calculate random partition of request.TotalVisits across totalDays
+        var dayVisits = new int[totalDays];
+        var total = request.TotalVisits;
+
+        if (total == 0)
+        {
+            // all 0
+        }
+        else if (totalDays == 1)
+        {
+            dayVisits[0] = total;
+        }
+        else
+        {
+            var rng = Random.Shared;
+            var weights = new double[totalDays];
+            double weightSum = 0;
+            for (int i = 0; i < totalDays; i++)
+            {
+                weights[i] = 0.5 + rng.NextDouble();
+                weightSum += weights[i];
+            }
+
+            int allocated = 0;
+            for (int i = 0; i < totalDays; i++)
+            {
+                int v = (int)Math.Floor((weights[i] / weightSum) * total);
+                dayVisits[i] = v;
+                allocated += v;
+            }
+
+            int remainder = total - allocated;
+            while (remainder > 0)
+            {
+                int idx = rng.Next(totalDays);
+                dayVisits[idx]++;
+                remainder--;
+            }
+        }
+
+        var existingRecords = await _context.ShopTraffics
+            .Where(t => t.ShopId == id && t.Date >= startDate && t.Date <= endDate)
+            .ToDictionaryAsync(t => t.Date.Date, cancellationToken);
+
+        var now = DateTime.UtcNow;
+        var note = !string.IsNullOrWhiteSpace(request.Note)
+            ? request.Note
+            : $"Management traffic allocation ({startDate:yyyy-MM-dd} to {endDate:yyyy-MM-dd})";
+
+        for (int i = 0; i < totalDays; i++)
+        {
+            var currentDate = startDate.AddDays(i);
+            var visits = dayVisits[i];
+            var unique = visits > 0
+                ? Math.Min(visits, (int)Math.Max(1, Math.Round(visits * (0.72 + (Random.Shared.NextDouble() * 0.14)))))
+                : 0;
+
+            if (existingRecords.TryGetValue(currentDate, out var rec))
+            {
+                rec.VisitCount = visits;
+                rec.UniqueVisitors = unique;
+                rec.IsManual = true;
+                rec.Note = note;
+                rec.SetUpdatedAt(now);
+            }
+            else
+            {
+                var newRec = new ShopTraffic
+                {
+                    ShopId = id,
+                    Date = currentDate,
+                    VisitCount = visits,
+                    UniqueVisitors = unique,
+                    IsManual = true,
+                    Note = note
+                };
+                newRec.SetCreatedAt(now);
+                _context.ShopTraffics.Add(newRec);
+            }
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            message = $"Successfully allocated {request.TotalVisits:N0} visits across {totalDays} days ({startDate:yyyy-MM-dd} to {endDate:yyyy-MM-dd}).",
+            shopId = id,
+            startDate = startDate.ToString("yyyy-MM-dd"),
+            endDate = endDate.ToString("yyyy-MM-dd"),
+            totalDays,
+            totalVisits = request.TotalVisits
+        });
+    }
 }
 
 public record RejectShopkeeperRequest(string Reason);
@@ -789,4 +913,9 @@ public record OverrideDailyTrafficRequest(
     DateTime Date,
     int VisitCount,
     int? UniqueVisitors = null,
+    string? Note = null);
+public record DistributeRangeTrafficRequest(
+    DateTime StartDate,
+    DateTime EndDate,
+    int TotalVisits,
     string? Note = null);

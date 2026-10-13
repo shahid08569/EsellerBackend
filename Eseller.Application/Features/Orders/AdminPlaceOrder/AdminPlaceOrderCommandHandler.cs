@@ -355,17 +355,7 @@ public class AdminPlaceOrderCommandHandler
 
         await _context.SaveChangesAsync(cancellationToken);
 
-        // 10. ChatMessage for the order
-        _context.ChatMessages.Add(new ChatMessageEntity
-        {
-            OrderRequestId = orderRequest.Id,
-            SenderAccountId = _currentUserService.AccountId.Value,
-            SenderRole = ChatSenderRole.User,
-            Message = BuildOrderMessage(orderRequest.Id, createdItems, desiredCustomerName),
-            SentAt = now,
-            IsRead = false
-        });
-        await _context.SaveChangesAsync(cancellationToken);
+        // 10. SuperAdmin orders do not send chat message to merchant — notification only
 
         // 11. Notifications
         var totalQuantity = consolidatedItems.Sum(i => i.Quantity);
