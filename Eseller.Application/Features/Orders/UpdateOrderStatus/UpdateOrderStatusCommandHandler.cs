@@ -39,6 +39,14 @@ public class UpdateOrderStatusCommandHandler
         if (role != RoleType.SuperAdmin && role != RoleType.Partner)
             return Result.Failure("Only admins can update order status.", "FORBIDDEN");
 
+        if (role == RoleType.Partner)
+        {
+            var hasPerm = await PartnerPermissionChecker.HasPermissionAsync(
+                _context, _currentUserService, "orders:manage", cancellationToken);
+            if (!hasPerm)
+                return Result.Failure("You do not have permission to update order status.", "FORBIDDEN");
+        }
+
         // Block status updates on chat/support channel rows (not commerce orders)
         var order = await _context.OrderRequests
             .FirstOrDefaultAsync(o => o.Id == request.OrderId, cancellationToken);

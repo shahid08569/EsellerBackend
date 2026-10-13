@@ -1,4 +1,6 @@
-﻿using Eseller.Application.Features.AdminSettings.GetSettingByKey;
+using Eseller.Application.Abstractions;
+using Eseller.Application.Common;
+using Eseller.Application.Features.AdminSettings.GetSettingByKey;
 using Eseller.Application.Features.AdminSettings.GetSettings;
 using Eseller.Application.Features.AdminSettings.UpdateSetting;
 using MediatR;
@@ -28,8 +30,12 @@ public class AdminSettingsController : ControllerBase
         [FromQuery] bool? isActive,
         [FromQuery] int pageNumber = 1,
         [FromQuery] int pageSize = 50,
+        [FromServices] IApplicationDbContext context = null!,
+        [FromServices] ICurrentUserService currentUserService = null!,
         CancellationToken cancellationToken = default)
     {
+        if (!await PartnerPermissionChecker.HasPermissionAsync(context, currentUserService, "settings:manage", cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to view system settings.", errorCode = "FORBIDDEN" });
         if (pageSize > 200) pageSize = 200;
         if (pageSize < 1) pageSize = 50;
 

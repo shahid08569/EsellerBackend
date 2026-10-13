@@ -1,4 +1,5 @@
 using Eseller.Application.Abstractions;
+using Eseller.Application.Common;
 using Eseller.Application.Features.Shops;
 using Eseller.Application.Features.Admin.Shopkeepers.ApproveShopkeeper;
 using Eseller.Application.Features.Admin.Shopkeepers.RejectShopkeeper;
@@ -656,8 +657,11 @@ public class AdminController : ControllerBase
     public async Task<IActionResult> OverrideMonthlyTraffic(
         Guid id,
         [FromBody] OverrideMonthlyTrafficRequest request,
+        [FromServices] ICurrentUserService currentUserService,
         CancellationToken cancellationToken)
     {
+        if (!await PartnerPermissionChecker.HasPermissionAsync(_context, currentUserService, "traffic:manage", cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to modify merchant traffic analytics.", errorCode = "FORBIDDEN" });
         if (request.Year < 2020 || request.Year > 2100 || request.Month < 1 || request.Month > 12)
             return BadRequest(new { error = "Invalid year or month.", errorCode = "INVALID_MONTH" });
 
@@ -721,8 +725,11 @@ public class AdminController : ControllerBase
     public async Task<IActionResult> OverrideDailyTraffic(
         Guid id,
         [FromBody] OverrideDailyTrafficRequest request,
+        [FromServices] ICurrentUserService currentUserService,
         CancellationToken cancellationToken)
     {
+        if (!await PartnerPermissionChecker.HasPermissionAsync(_context, currentUserService, "traffic:manage", cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to modify merchant traffic analytics.", errorCode = "FORBIDDEN" });
         if (request.VisitCount < 0)
             return BadRequest(new { error = "Visit count cannot be negative.", errorCode = "INVALID_COUNT" });
 
@@ -782,8 +789,11 @@ public class AdminController : ControllerBase
     public async Task<IActionResult> DistributeRangeTraffic(
         Guid id,
         [FromBody] DistributeRangeTrafficRequest request,
+        [FromServices] ICurrentUserService currentUserService,
         CancellationToken cancellationToken)
     {
+        if (!await PartnerPermissionChecker.HasPermissionAsync(_context, currentUserService, "traffic:manage", cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to modify merchant traffic analytics.", errorCode = "FORBIDDEN" });
         if (request.TotalVisits < 0)
             return BadRequest(new { error = "Total visits cannot be negative.", errorCode = "INVALID_COUNT" });
 

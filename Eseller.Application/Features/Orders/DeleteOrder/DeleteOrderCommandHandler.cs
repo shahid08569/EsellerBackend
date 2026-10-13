@@ -33,6 +33,14 @@ public class DeleteOrderCommandHandler : IRequestHandler<DeleteOrderCommand, Res
         if (role != RoleType.SuperAdmin && role != RoleType.Partner)
             return Result.Failure("Only Super Admin or authorized Partner can delete orders.", "FORBIDDEN");
 
+        if (role == RoleType.Partner)
+        {
+            var hasPerm = await PartnerPermissionChecker.HasPermissionAsync(
+                _context, _currentUserService, "orders:manage", cancellationToken);
+            if (!hasPerm)
+                return Result.Failure("You do not have permission to delete orders.", "FORBIDDEN");
+        }
+
         var order = await _context.OrderRequests
             .FirstOrDefaultAsync(o => o.Id == request.OrderId, cancellationToken);
 

@@ -1,3 +1,5 @@
+using Eseller.Application.Abstractions;
+using Eseller.Application.Common;
 using Eseller.Application.Features.Orders.AdminPlaceOrder;
 using Eseller.Application.Features.Orders.DeleteOrder;
 using Eseller.Application.Features.Orders.GetAdminOrders;
@@ -33,8 +35,12 @@ public class AdminOrdersController : ControllerBase
         [FromQuery] OrderStatus? status = null,
         [FromQuery] Guid? shopId = null,
         [FromQuery] string? search = null,
+        [FromServices] IApplicationDbContext context = null!,
+        [FromServices] ICurrentUserService currentUserService = null!,
         CancellationToken cancellationToken = default)
     {
+        if (!await PartnerPermissionChecker.HasPermissionAsync(context, currentUserService, "orders:view", cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to view orders.", errorCode = "FORBIDDEN" });
         if (pageSize > 200) pageSize = 200;
         if (pageSize < 1) pageSize = 20;
         if (pageNumber < 1) pageNumber = 1;

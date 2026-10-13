@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -40,7 +40,7 @@ public class UpdatePartnerCommandHandler
         if (partner is null)
             return Result.Failure("Partner not found.", "PARTNER_NOT_FOUND");
 
-        if (!string.IsNullOrWhiteSpace(request.Permissions))
+        if (request.Permissions is not null)
             partner.Permissions = request.Permissions;
 
         partner.SetUpdatedAt(_dateTime.UtcNow);

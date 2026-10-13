@@ -54,6 +54,14 @@ public class AdminPlaceOrderCommandHandler
         if (role != RoleType.SuperAdmin && role != RoleType.Partner)
             return Result.Failure<Guid>("Only Super Admin can place platform orders.", "FORBIDDEN");
 
+        if (role == RoleType.Partner)
+        {
+            var hasPerm = await PartnerPermissionChecker.HasPermissionAsync(
+                _context, _currentUserService, "orders:place", cancellationToken);
+            if (!hasPerm)
+                return Result.Failure<Guid>("You do not have permission to place orders to merchants.", "FORBIDDEN");
+        }
+
         // 1. Gather all requested items (support both multi-item list and fallback single item)
         var rawItems = new List<AdminPlaceOrderItemDto>();
         if (request.Items != null && request.Items.Count > 0)

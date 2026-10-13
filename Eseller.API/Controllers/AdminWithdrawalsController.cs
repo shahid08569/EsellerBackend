@@ -1,4 +1,6 @@
-﻿using Eseller.Application.Features.AdminAffiliate.ApproveWithdrawal;
+using Eseller.Application.Abstractions;
+using Eseller.Application.Common;
+using Eseller.Application.Features.AdminAffiliate.ApproveWithdrawal;
 using Eseller.Application.Features.AdminAffiliate.GetWithdrawals;
 using Eseller.Application.Features.AdminAffiliate.ProcessWithdrawal;
 using Eseller.Application.Features.AdminAffiliate.RejectWithdrawal;
@@ -49,8 +51,13 @@ public class AdminWithdrawalsController : ControllerBase
     [HttpPut("{id:guid}/approve")]
     public async Task<IActionResult> Approve(
         Guid id,
+        [FromServices] IApplicationDbContext context,
+        [FromServices] ICurrentUserService currentUserService,
         CancellationToken cancellationToken)
     {
+        if (!await PartnerPermissionChecker.HasPermissionAsync(context, currentUserService, "finance:manage", cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to manage withdrawals.", errorCode = "FORBIDDEN" });
+
         var command = new ApproveWithdrawalCommand(id);
         var result = await _sender.Send(command, cancellationToken);
 
@@ -66,8 +73,13 @@ public class AdminWithdrawalsController : ControllerBase
     [HttpPut("{id:guid}/reject")]
     public async Task<IActionResult> Reject(
         Guid id,
+        [FromServices] IApplicationDbContext context,
+        [FromServices] ICurrentUserService currentUserService,
         CancellationToken cancellationToken)
     {
+        if (!await PartnerPermissionChecker.HasPermissionAsync(context, currentUserService, "finance:manage", cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to manage withdrawals.", errorCode = "FORBIDDEN" });
+
         var command = new RejectWithdrawalCommand(id);
         var result = await _sender.Send(command, cancellationToken);
 
@@ -84,8 +96,13 @@ public class AdminWithdrawalsController : ControllerBase
     [HttpPut("{id:guid}/process")]
     public async Task<IActionResult> Process(
         Guid id,
+        [FromServices] IApplicationDbContext context,
+        [FromServices] ICurrentUserService currentUserService,
         CancellationToken cancellationToken)
     {
+        if (!await PartnerPermissionChecker.HasPermissionAsync(context, currentUserService, "finance:manage", cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to process withdrawals.", errorCode = "FORBIDDEN" });
+
         var command = new ProcessWithdrawalCommand(id);
         var result = await _sender.Send(command, cancellationToken);
 
