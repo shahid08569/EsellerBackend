@@ -1,4 +1,5 @@
 using Eseller.Application.Abstractions;
+using Eseller.Application.Features.Shops;
 using Eseller.Application.Features.Admin.Shopkeepers.ApproveShopkeeper;
 using Eseller.Application.Features.Admin.Shopkeepers.RejectShopkeeper;
 using Eseller.Domain.Entities.Catalog;
@@ -527,8 +528,263 @@ public class AdminController : ControllerBase
             rating = shop.Rating
         });
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // SHOP VISITOR & TRAFFIC ANALYTICS (SUPERADMIN)
+    // ═══════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// SuperAdmin: list all shops with visitor traffic metrics.
+    /// </summary>
+    [HttpGet("shops/traffic")]
+    public async Task<IActionResult> GetAllShopsTraffic(CancellationToken cancellationToken)
+    {
+        var nowUtc = DateTime.UtcNow;
+        var todayUtc = nowUtc.Date;
+        var firstOfMonthUtc = new DateTime(nowUtc.Year, nowUtc.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var nextMonthUtc = firstOfMonthUtc.AddMonths(1);
+        var firstOfLastMonthUtc = firstOfMonthUtc.AddMonths(-1);
+
+        var shops = await _context.Shops
+            .IgnoreQueryFilters()
+            .Where(s => s.DeletedAt == null)
+            .OrderBy(s => s.Name)
+            .ToListAsync(cancellationToken);
+
+        var shopIds = shops.Select(s => s.Id).ToList();
+
+        var shopkeeperIds = shops.Select(s => s.ShopkeeperId).Distinct().ToList();
+        var shopkeepers = await _context.Shopkeepers
+            .Where(sk => shopkeeperIds.Contains(sk.Id))
+            .ToDictionaryAsync(sk => sk.Id, cancellationToken);
+
+        var accountIds = shopkeepers.Values.Select(sk => sk.AccountId).Distinct().ToList();
+        var accounts = await _context.Accounts
+            .Where(a => accountIds.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, cancellationToken);
+
+        // Group visits by shop
+        var allTimeTotals = await _context.ShopTraffics
+            .Where(t => shopIds.Contains(t.ShopId))
+            .GroupBy(t => t.ShopId)
+            .Select(g => new { ShopId = g.Key, Total = g.Sum(x => (long)x.VisitCount) })
+            .ToDictionaryAsync(x => x.ShopId, x => x.Total, cancellationToken);
+
+        var todayTotals = await _context.ShopTraffics
+            .Where(t => shopIds.Contains(t.ShopId) && t.Date == todayUtc)
+            .GroupBy(t => t.ShopId)
+            .Select(g => new { ShopId = g.Key, Total = g.Sum(x => x.VisitCount) })
+            .ToDictionaryAsync(x => x.ShopId, x => x.Total, cancellationToken);
+
+        var thisMonthTotals = await _context.ShopTraffics
+            .Where(t => shopIds.Contains(t.ShopId) && t.Date >= firstOfMonthUtc && t.Date < nextMonthUtc)
+            .GroupBy(t => t.ShopId)
+            .Select(g => new { ShopId = g.Key, Total = g.Sum(x => (long)x.VisitCount) })
+            .ToDictionaryAsync(x => x.ShopId, x => x.Total, cancellationToken);
+
+        var lastMonthTotals = await _context.ShopTraffics
+            .Where(t => shopIds.Contains(t.ShopId) && t.Date >= firstOfLastMonthUtc && t.Date < firstOfMonthUtc)
+            .GroupBy(t => t.ShopId)
+            .Select(g => new { ShopId = g.Key, Total = g.Sum(x => (long)x.VisitCount) })
+            .ToDictionaryAsync(x => x.ShopId, x => x.Total, cancellationToken);
+
+        var items = shops.Select(s =>
+        {
+            var sk = shopkeepers.GetValueOrDefault(s.ShopkeeperId);
+            var acc = sk != null ? accounts.GetValueOrDefault(sk.AccountId) : null;
+
+            var total = allTimeTotals.GetValueOrDefault(s.Id, 0L);
+            var today = todayTotals.GetValueOrDefault(s.Id, 0);
+            var thisMonth = thisMonthTotals.GetValueOrDefault(s.Id, 0L);
+            var lastMonth = lastMonthTotals.GetValueOrDefault(s.Id, 0L);
+
+            decimal growth = 0m;
+            if (lastMonth > 0)
+                growth = Math.Round(((decimal)thisMonth - lastMonth) / lastMonth * 100m, 1);
+            else if (thisMonth > 0)
+                growth = 100m;
+
+            return new AdminShopTrafficItemDto
+            {
+                ShopId = s.Id,
+                ShopName = s.Name,
+                Slug = s.Slug,
+                LogoUrl = s.LogoUrl,
+                OwnerName = sk?.Name ?? "Merchant",
+                OwnerEmail = acc?.Email ?? string.Empty,
+                Rating = s.Rating,
+                IsApproved = sk?.Status == ShopkeeperApprovalStatus.Approved,
+                IsActive = s.IsActive,
+                TotalVisits = total,
+                TodayVisits = today,
+                ThisMonthVisits = thisMonth,
+                LastMonthVisits = lastMonth,
+                GrowthRate = growth,
+                TrendDirection = growth > 0 ? "up" : (growth < 0 ? "down" : "flat")
+            };
+        }).ToList();
+
+        return Ok(items);
+    }
+
+    /// <summary>
+    /// SuperAdmin: get detailed traffic summary & timeline for a specific shop.
+    /// </summary>
+    [HttpGet("shops/{id:guid}/traffic")]
+    public async Task<IActionResult> GetShopTrafficDetail(
+        Guid id,
+        [FromQuery] string range = "30d",
+        CancellationToken cancellationToken = default)
+    {
+        var shop = await _context.Shops
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(s => s.Id == id && s.DeletedAt == null, cancellationToken);
+
+        if (shop is null)
+            return NotFound(new { error = "Shop not found.", errorCode = "SHOP_NOT_FOUND" });
+
+        var summary = await ShopTrafficHelper.BuildSummaryAsync(shop.Id, shop.Name, range, _context, cancellationToken);
+        return Ok(summary);
+    }
+
+    /// <summary>
+    /// SuperAdmin: manually set / override total visitors for a specific month.
+    /// </summary>
+    [HttpPost("shops/{id:guid}/traffic/monthly")]
+    public async Task<IActionResult> OverrideMonthlyTraffic(
+        Guid id,
+        [FromBody] OverrideMonthlyTrafficRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.Year < 2020 || request.Year > 2100 || request.Month < 1 || request.Month > 12)
+            return BadRequest(new { error = "Invalid year or month.", errorCode = "INVALID_MONTH" });
+
+        if (request.TotalVisits < 0)
+            return BadRequest(new { error = "Visits count cannot be negative.", errorCode = "INVALID_VISITS" });
+
+        var shop = await _context.Shops
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(s => s.Id == id && s.DeletedAt == null, cancellationToken);
+
+        if (shop is null)
+            return NotFound(new { error = "Shop not found.", errorCode = "SHOP_NOT_FOUND" });
+
+        var monthAnchor = new DateTime(request.Year, request.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var nextMonth = monthAnchor.AddMonths(1);
+
+        // Remove any existing records for this month to cleanly match target
+        var monthRecords = await _context.ShopTraffics
+            .Where(t => t.ShopId == id && t.Date >= monthAnchor && t.Date < nextMonth)
+            .ToListAsync(cancellationToken);
+
+        if (monthRecords.Any())
+        {
+            _context.ShopTraffics.RemoveRange(monthRecords);
+        }
+
+        var unique = request.UniqueVisitors.HasValue && request.UniqueVisitors.Value > 0
+            ? request.UniqueVisitors.Value
+            : (int)Math.Round(request.TotalVisits * 0.75);
+
+        var newRecord = new ShopTraffic
+        {
+            ShopId = id,
+            Date = monthAnchor,
+            VisitCount = request.TotalVisits,
+            UniqueVisitors = unique,
+            IsManual = true,
+            Note = !string.IsNullOrWhiteSpace(request.Note)
+                ? request.Note
+                : $"Manual override by Admin ({monthAnchor:MMMM yyyy})"
+        };
+        newRecord.SetCreatedAt(DateTime.UtcNow);
+        _context.ShopTraffics.Add(newRecord);
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            message = $"Successfully updated visitor count for {monthAnchor:MMMM yyyy} to {request.TotalVisits:N0}.",
+            shopId = id,
+            year = request.Year,
+            month = request.Month,
+            totalVisits = request.TotalVisits
+        });
+    }
+
+    /// <summary>
+    /// SuperAdmin: manually set / override visitors for a specific date.
+    /// </summary>
+    [HttpPost("shops/{id:guid}/traffic/daily")]
+    public async Task<IActionResult> OverrideDailyTraffic(
+        Guid id,
+        [FromBody] OverrideDailyTrafficRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.VisitCount < 0)
+            return BadRequest(new { error = "Visit count cannot be negative.", errorCode = "INVALID_COUNT" });
+
+        var shop = await _context.Shops
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(s => s.Id == id && s.DeletedAt == null, cancellationToken);
+
+        if (shop is null)
+            return NotFound(new { error = "Shop not found.", errorCode = "SHOP_NOT_FOUND" });
+
+        var targetDate = request.Date.Date;
+        var record = await _context.ShopTraffics
+            .FirstOrDefaultAsync(t => t.ShopId == id && t.Date == targetDate, cancellationToken);
+
+        var unique = request.UniqueVisitors.HasValue && request.UniqueVisitors.Value > 0
+            ? request.UniqueVisitors.Value
+            : (int)Math.Round(request.VisitCount * 0.75);
+
+        if (record == null)
+        {
+            record = new ShopTraffic
+            {
+                ShopId = id,
+                Date = targetDate,
+                VisitCount = request.VisitCount,
+                UniqueVisitors = unique,
+                IsManual = true,
+                Note = request.Note ?? "Manual daily override by Admin"
+            };
+            record.SetCreatedAt(DateTime.UtcNow);
+            _context.ShopTraffics.Add(record);
+        }
+        else
+        {
+            record.VisitCount = request.VisitCount;
+            record.UniqueVisitors = unique;
+            record.IsManual = true;
+            if (!string.IsNullOrWhiteSpace(request.Note)) record.Note = request.Note;
+            record.SetUpdatedAt(DateTime.UtcNow);
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            message = $"Successfully updated visitor count for {targetDate:yyyy-MM-dd} to {request.VisitCount:N0}.",
+            shopId = id,
+            date = targetDate.ToString("yyyy-MM-dd"),
+            visitCount = request.VisitCount
+        });
+    }
 }
 
 public record RejectShopkeeperRequest(string Reason);
 public record SetShopkeeperStatusRequest(bool IsActive);
 public record SetShopRatingRequest(decimal Rating);
+public record OverrideMonthlyTrafficRequest(
+    int Year,
+    int Month,
+    int TotalVisits,
+    int? UniqueVisitors = null,
+    string? Note = null);
+public record OverrideDailyTrafficRequest(
+    DateTime Date,
+    int VisitCount,
+    int? UniqueVisitors = null,
+    string? Note = null);

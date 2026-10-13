@@ -44,6 +44,7 @@ public class EsellerDbContext : DbContext,IApplicationDbContext
     public DbSet<Brand> Brands => Set<Brand>();
     public DbSet<ShopCategory> ShopCategories => Set<ShopCategory>();
     public DbSet<TierUpgradeRequest> TierUpgradeRequests => Set<TierUpgradeRequest>();
+    public DbSet<ShopTraffic> ShopTraffics => Set<ShopTraffic>();
     public DbSet<Shop> Shops => Set<Shop>();
     public DbSet<ShopImage> ShopImages => Set<ShopImage>();
     public DbSet<Product> Products => Set<Product>();

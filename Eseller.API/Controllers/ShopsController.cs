@@ -1,4 +1,5 @@
 using Eseller.Application.Abstractions;
+using Eseller.Application.Features.Shops;
 using Eseller.Application.Features.Shops.DeleteShop;
 using Eseller.Application.Features.Shops.DeleteShopBanner;
 using Eseller.Application.Features.Shops.DeleteShopLogo;
@@ -394,6 +395,97 @@ public class ShopsController : ControllerBase
         return Ok(new { message = "Tier upgrade request submitted for Super Admin review.", requestId = tierReq.Id });
     }
 
+    /// <summary>
+    /// Record storefront visit by slug (public auto-increment).
+    /// </summary>
+    [HttpPost("{slug}/visit")]
+    [AllowAnonymous]
+    public async Task<IActionResult> RecordVisitBySlug(
+        string slug,
+        [FromServices] IApplicationDbContext context,
+        CancellationToken cancellationToken)
+    {
+        var shop = await context.Shops
+            .FirstOrDefaultAsync(s => s.Slug == slug && s.DeletedAt == null, cancellationToken);
+        if (shop == null) return NotFound(new { error = "Shop not found." });
+
+        return await RecordVisitInternal(shop.Id, context, cancellationToken);
+    }
+
+    /// <summary>
+    /// Record storefront visit by shop ID (public auto-increment).
+    /// </summary>
+    [HttpPost("{id:guid}/visit")]
+    [AllowAnonymous]
+    public async Task<IActionResult> RecordVisitById(
+        Guid id,
+        [FromServices] IApplicationDbContext context,
+        CancellationToken cancellationToken)
+    {
+        var shop = await context.Shops
+            .FirstOrDefaultAsync(s => s.Id == id && s.DeletedAt == null, cancellationToken);
+        if (shop == null) return NotFound(new { error = "Shop not found." });
+
+        return await RecordVisitInternal(shop.Id, context, cancellationToken);
+    }
+
+    private async Task<IActionResult> RecordVisitInternal(
+        Guid shopId,
+        IApplicationDbContext context,
+        CancellationToken cancellationToken)
+    {
+        var todayUtc = DateTime.UtcNow.Date;
+        var record = await context.ShopTraffics
+            .FirstOrDefaultAsync(t => t.ShopId == shopId && t.Date == todayUtc, cancellationToken);
+
+        if (record == null)
+        {
+            record = new ShopTraffic
+            {
+                ShopId = shopId,
+                Date = todayUtc,
+                VisitCount = 1,
+                UniqueVisitors = 1,
+                IsManual = false
+            };
+            record.SetCreatedAt(DateTime.UtcNow);
+            context.ShopTraffics.Add(record);
+        }
+        else
+        {
+            record.VisitCount += 1;
+            record.UniqueVisitors += 1;
+            record.SetUpdatedAt(DateTime.UtcNow);
+        }
+
+        await context.SaveChangesAsync(cancellationToken);
+        return Ok(new { success = true, shopId, visitsToday = record.VisitCount });
+    }
+
+    /// <summary>
+    /// Get seller's shop traffic analytics and visitor timeline.
+    /// </summary>
+    [HttpGet("my/traffic")]
+    [Authorize(Roles = "Shopkeeper")]
+    public async Task<IActionResult> GetMyTraffic(
+        [FromQuery] string range = "30d",
+        [FromServices] IApplicationDbContext context = null!,
+        [FromServices] ICurrentUserService currentUserService = null!,
+        CancellationToken cancellationToken = default)
+    {
+        if (currentUserService.AccountId == null) return Unauthorized();
+
+        var shopkeeper = await context.Shopkeepers
+            .FirstOrDefaultAsync(s => s.AccountId == currentUserService.AccountId.Value, cancellationToken);
+        if (shopkeeper == null) return NotFound(new { error = "Shopkeeper profile not found." });
+
+        var shop = await context.Shops
+            .FirstOrDefaultAsync(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null, cancellationToken);
+        if (shop == null) return NotFound(new { error = "Shop not found." });
+
+        var summary = await ShopTrafficHelper.BuildSummaryAsync(shop.Id, shop.Name, range, context, cancellationToken);
+        return Ok(summary);
+    }
 }
 
 public record UpdateShopRequest(

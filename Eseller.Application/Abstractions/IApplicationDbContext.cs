@@ -36,6 +36,7 @@ public interface IApplicationDbContext
     DbSet<Shop> Shops { get; }
     DbSet<ShopCategory> ShopCategories { get; }
     DbSet<TierUpgradeRequest> TierUpgradeRequests { get; }
+    DbSet<ShopTraffic> ShopTraffics { get; }
     DbSet<ShopImage> ShopImages { get; }
     DbSet<Product> Products { get; }
     DbSet<ProductImage> ProductImages { get; }
