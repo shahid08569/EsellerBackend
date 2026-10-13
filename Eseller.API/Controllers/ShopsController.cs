@@ -429,6 +429,26 @@ public class ShopsController : ControllerBase
         return await RecordVisitInternal(shop.Id, context, cancellationToken);
     }
 
+    /// <summary>
+    /// Record product visit / click: increments storefront visit for product's owning or listing shop.
+    /// </summary>
+    [HttpPost("products/{productId:guid}/visit")]
+    [AllowAnonymous]
+    public async Task<IActionResult> RecordProductVisit(
+        Guid productId,
+        [FromServices] IApplicationDbContext context,
+        CancellationToken cancellationToken)
+    {
+        var product = await context.Products
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p => p.Id == productId && p.DeletedAt == null, cancellationToken);
+
+        if (product == null || product.ShopId == Guid.Empty)
+            return NotFound(new { error = "Product or Shop not found." });
+
+        return await RecordVisitInternal(product.ShopId, context, cancellationToken);
+    }
+
     private async Task<IActionResult> RecordVisitInternal(
         Guid shopId,
         IApplicationDbContext context,
@@ -483,7 +503,7 @@ public class ShopsController : ControllerBase
             .FirstOrDefaultAsync(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null, cancellationToken);
         if (shop == null) return NotFound(new { error = "Shop not found." });
 
-        var summary = await ShopTrafficHelper.BuildSummaryAsync(shop.Id, shop.Name, range, context, cancellationToken);
+        var summary = await ShopTrafficHelper.BuildSummaryAsync(shop.Id, shop.Name, range, context, cancellationToken, shop.LogoUrl);
         return Ok(summary);
     }
 }

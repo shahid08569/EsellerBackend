@@ -9,6 +9,7 @@ public class ShopTrafficSummaryDto
 {
     public Guid ShopId { get; set; }
     public string ShopName { get; set; } = string.Empty;
+    public string? LogoUrl { get; set; }
     public long TotalVisits { get; set; }
     public int TodayVisits { get; set; }
     public long ThisMonthVisits { get; set; }
@@ -33,9 +34,11 @@ public class ShopTrafficMonthDto
 {
     public int Year { get; set; }
     public int Month { get; set; }
-    public string MonthName { get; set; } = string.Empty; // October 2026
+    public string MonthName { get; set; } = string.Empty; // e.g. "October 2026"
     public long Visits { get; set; }
     public long UniqueVisitors { get; set; }
+    public long AutoTrackedVisits { get; set; }
+    public long ManualVisits { get; set; }
     public bool IsManual { get; set; }
 }
 
@@ -65,7 +68,8 @@ public static class ShopTrafficHelper
         string shopName,
         string range,
         IApplicationDbContext context,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? logoUrl = null)
     {
         var nowUtc = DateTime.UtcNow;
         var todayUtc = nowUtc.Date;
@@ -142,6 +146,8 @@ public static class ShopTrafficHelper
                 g.Key.Month,
                 Visits = g.Sum(x => (long)x.VisitCount),
                 UniqueVisitors = g.Sum(x => (long)x.UniqueVisitors),
+                AutoTrackedVisits = g.Where(x => !x.IsManual).Sum(x => (long)x.VisitCount),
+                ManualVisits = g.Where(x => x.IsManual).Sum(x => (long)x.VisitCount),
                 IsManual = g.Any(x => x.IsManual)
             })
             .ToListAsync(cancellationToken);
@@ -162,6 +168,8 @@ public static class ShopTrafficHelper
                 MonthName = mDate.ToString("MMMM yyyy", CultureInfo.InvariantCulture),
                 Visits = mData?.Visits ?? 0,
                 UniqueVisitors = mData?.UniqueVisitors ?? 0,
+                AutoTrackedVisits = mData?.AutoTrackedVisits ?? 0,
+                ManualVisits = mData?.ManualVisits ?? 0,
                 IsManual = mData?.IsManual ?? false
             });
         }
@@ -170,6 +178,7 @@ public static class ShopTrafficHelper
         {
             ShopId = shopId,
             ShopName = shopName,
+            LogoUrl = logoUrl,
             TotalVisits = totalVisits,
             TodayVisits = todayVisits,
             ThisMonthVisits = thisMonthVisits,

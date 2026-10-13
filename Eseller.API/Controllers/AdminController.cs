@@ -643,7 +643,7 @@ public class AdminController : ControllerBase
         if (shop is null)
             return NotFound(new { error = "Shop not found.", errorCode = "SHOP_NOT_FOUND" });
 
-        var summary = await ShopTrafficHelper.BuildSummaryAsync(shop.Id, shop.Name, range, _context, cancellationToken);
+        var summary = await ShopTrafficHelper.BuildSummaryAsync(shop.Id, shop.Name, range, _context, cancellationToken, shop.LogoUrl);
         return Ok(summary);
     }
 
