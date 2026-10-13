@@ -489,6 +489,8 @@ public class ShopsController : ControllerBase
     [Authorize(Roles = "Shopkeeper")]
     public async Task<IActionResult> GetMyTraffic(
         [FromQuery] string range = "30d",
+        [FromQuery] DateTime? startDate = null,
+        [FromQuery] DateTime? endDate = null,
         [FromServices] IApplicationDbContext context = null!,
         [FromServices] ICurrentUserService currentUserService = null!,
         CancellationToken cancellationToken = default)
@@ -503,7 +505,7 @@ public class ShopsController : ControllerBase
             .FirstOrDefaultAsync(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null, cancellationToken);
         if (shop == null) return NotFound(new { error = "Shop not found." });
 
-        var summary = await ShopTrafficHelper.BuildSummaryAsync(shop.Id, shop.Name, range, context, cancellationToken, shop.LogoUrl);
+        var summary = await ShopTrafficHelper.BuildSummaryAsync(shop.Id, shop.Name, range, context, cancellationToken, shop.LogoUrl, startDate, endDate);
         return Ok(summary);
     }
 }

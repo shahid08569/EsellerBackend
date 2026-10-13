@@ -69,7 +69,9 @@ public static class ShopTrafficHelper
         string range,
         IApplicationDbContext context,
         CancellationToken cancellationToken = default,
-        string? logoUrl = null)
+        string? logoUrl = null,
+        DateTime? customStartDate = null,
+        DateTime? customEndDate = null)
     {
         var nowUtc = DateTime.UtcNow;
         var todayUtc = nowUtc.Date;
@@ -106,23 +108,81 @@ public static class ShopTrafficHelper
 
         string trend = growthRate > 0 ? "up" : (growthRate < 0 ? "down" : "flat");
 
-        // Determine days range for graph timeline
-        int daysBack = 30;
-        var r = (range ?? "30d").ToLowerInvariant();
-        if (r == "7d" || r == "7days") daysBack = 7;
-        else if (r == "14d" || r == "14days") daysBack = 14;
-        else if (r == "30d" || r == "30days") daysBack = 30;
-        else if (r == "90d" || r == "90days") daysBack = 90;
-        else if (r == "thismonth") daysBack = Math.Max(1, nowUtc.Day);
+        // Determine date range for graph timeline: all, 1y, 1m, 1w, custom
+        DateTime startDate;
+        DateTime endDate = todayUtc;
 
-        var startDate = todayUtc.AddDays(-(daysBack - 1));
+        var r = (range ?? "30d").Trim().ToLowerInvariant();
+        if (r.StartsWith("custom") && r.Contains("_"))
+        {
+            var parts = r.Split('_');
+            if (parts.Length >= 3 &&
+                DateTime.TryParse(parts[1], out var pStart) &&
+                DateTime.TryParse(parts[2], out var pEnd))
+            {
+                customStartDate = pStart;
+                customEndDate = pEnd;
+                r = "custom";
+            }
+        }
+
+        if (r == "custom" && customStartDate.HasValue)
+        {
+            startDate = customStartDate.Value.Date;
+            endDate = (customEndDate ?? todayUtc).Date;
+            if (startDate > endDate)
+            {
+                (startDate, endDate) = (endDate, startDate);
+            }
+            if (endDate > todayUtc) endDate = todayUtc;
+            if ((endDate - startDate).TotalDays > 730)
+            {
+                startDate = endDate.AddDays(-730);
+            }
+        }
+        else if (r == "1w" || r == "1week" || r == "7d" || r == "7days")
+        {
+            startDate = todayUtc.AddDays(-6);
+        }
+        else if (r == "1m" || r == "1month" || r == "30d" || r == "30days")
+        {
+            startDate = todayUtc.AddDays(-29);
+        }
+        else if (r == "1y" || r == "1year" || r == "365d" || r == "365days")
+        {
+            startDate = todayUtc.AddDays(-364);
+        }
+        else if (r == "all")
+        {
+            var minDate = await context.ShopTraffics
+                .Where(t => t.ShopId == shopId)
+                .Select(t => (DateTime?)t.Date)
+                .MinAsync(cancellationToken);
+            startDate = minDate?.Date ?? todayUtc.AddDays(-29);
+            if ((endDate - startDate).TotalDays > 1095) // max 3 years
+            {
+                startDate = endDate.AddDays(-1095);
+            }
+        }
+        else if (r == "thismonth")
+        {
+            startDate = firstOfMonthUtc;
+        }
+        else if (r == "90d" || r == "90days")
+        {
+            startDate = todayUtc.AddDays(-89);
+        }
+        else
+        {
+            startDate = todayUtc.AddDays(-29);
+        }
 
         var dailyRecords = await context.ShopTraffics
-            .Where(t => t.ShopId == shopId && t.Date >= startDate && t.Date <= todayUtc)
+            .Where(t => t.ShopId == shopId && t.Date >= startDate && t.Date <= endDate)
             .ToDictionaryAsync(t => t.Date.Date, cancellationToken);
 
         var timeline = new List<ShopTrafficPointDto>();
-        for (var d = startDate; d <= todayUtc; d = d.AddDays(1))
+        for (var d = startDate; d <= endDate; d = d.AddDays(1))
         {
             dailyRecords.TryGetValue(d, out var rec);
             timeline.Add(new ShopTrafficPointDto

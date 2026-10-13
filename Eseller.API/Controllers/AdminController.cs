@@ -634,6 +634,8 @@ public class AdminController : ControllerBase
     public async Task<IActionResult> GetShopTrafficDetail(
         Guid id,
         [FromQuery] string range = "30d",
+        [FromQuery] DateTime? startDate = null,
+        [FromQuery] DateTime? endDate = null,
         CancellationToken cancellationToken = default)
     {
         var shop = await _context.Shops
@@ -643,7 +645,7 @@ public class AdminController : ControllerBase
         if (shop is null)
             return NotFound(new { error = "Shop not found.", errorCode = "SHOP_NOT_FOUND" });
 
-        var summary = await ShopTrafficHelper.BuildSummaryAsync(shop.Id, shop.Name, range, _context, cancellationToken, shop.LogoUrl);
+        var summary = await ShopTrafficHelper.BuildSummaryAsync(shop.Id, shop.Name, range, _context, cancellationToken, shop.LogoUrl, startDate, endDate);
         return Ok(summary);
     }
 
