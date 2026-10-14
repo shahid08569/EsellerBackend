@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
+using Eseller.Application.Features.Products;
 using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Entities.Orders;
 using Eseller.Domain.Entities.Payment;
@@ -79,74 +80,121 @@ public class CreateOrderRequestCommandHandler
             .Where(ci => ci.CartId == cart.Id)
             .ToListAsync(cancellationToken);
 
-        if (cartItems.Count == 0 && request.Items != null && request.Items.Count > 0)
+        // Resolve line items: either from request.Items (if supplied, e.g. user selected specific cart items) or from database cartItems
+        var orderLines = new List<(ProductVariant Variant, int Quantity)>();
+
+        if (request.Items != null && request.Items.Count > 0)
         {
-            foreach (var item in request.Items)
+            foreach (var inputItem in request.Items)
             {
-                var ci = new CartItem
+                var qty = inputItem.Quantity > 0 ? inputItem.Quantity : 1;
+                // 1. Try finding variant directly
+                var variant = await _context.ProductVariants
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(pv => pv.Id == inputItem.ProductVariantId
+                                            && pv.IsActive
+                                            && pv.DeletedAt == null, cancellationToken);
+
+                if (variant is null)
                 {
-                    CartId = cart.Id,
-                    ProductVariantId = item.ProductVariantId,
-                    Quantity = item.Quantity > 0 ? item.Quantity : 1
-                };
-                _context.CartItems.Add(ci);
-                cartItems.Add(ci);
+                    // 2. Check if passed ID is actually a ProductId
+                    variant = await _context.ProductVariants
+                        .IgnoreQueryFilters()
+                        .FirstOrDefaultAsync(pv => pv.ProductId == inputItem.ProductVariantId
+                                                && pv.IsActive
+                                                && pv.DeletedAt == null, cancellationToken);
+
+                    if (variant is null)
+                    {
+                        var baseProduct = await _context.Products
+                            .IgnoreQueryFilters()
+                            .FirstOrDefaultAsync(p => p.Id == inputItem.ProductVariantId && p.DeletedAt == null, cancellationToken);
+
+                        if (baseProduct is not null)
+                        {
+                            variant = new ProductVariant
+                            {
+                                ProductId = baseProduct.Id,
+                                Sku = $"SKU-{(baseProduct.Slug.Length > 8 ? baseProduct.Slug[..8] : baseProduct.Slug).ToUpperInvariant()}-{_dateTime.UtcNow.Ticks % 10000}",
+                                Price = baseProduct.BasePrice,
+                                StockQty = 100,
+                                IsActive = true
+                            };
+                            variant.SetCreatedAt(_dateTime.UtcNow);
+                            variant.SetUpdatedAt(_dateTime.UtcNow);
+                            _context.ProductVariants.Add(variant);
+                            await _context.SaveChangesAsync(cancellationToken);
+                        }
+                    }
+                }
+
+                if (variant is not null)
+                {
+                    orderLines.Add((variant, qty));
+                }
             }
-            await _context.SaveChangesAsync(cancellationToken);
+        }
+        else if (cartItems.Count > 0)
+        {
+            var variantIds = cartItems.Select(ci => ci.ProductVariantId).ToList();
+            var variantsMap = await _context.ProductVariants
+                .IgnoreQueryFilters()
+                .Where(pv => variantIds.Contains(pv.Id))
+                .ToDictionaryAsync(pv => pv.Id, cancellationToken);
+
+            foreach (var ci in cartItems)
+            {
+                var v = variantsMap.GetValueOrDefault(ci.ProductVariantId);
+                if (v is not null && v.IsActive && v.DeletedAt == null)
+                {
+                    orderLines.Add((v, ci.Quantity));
+                }
+            }
         }
 
-        if (cartItems.Count == 0)
-            return Result.Failure<Guid>("Cart is empty.", "CART_EMPTY");
+        if (orderLines.Count == 0)
+            return Result.Failure<Guid>("Your cart is empty or the selected products are no longer available.", "CART_EMPTY");
 
-        var variantIds = cartItems.Select(ci => ci.ProductVariantId).ToList();
-
-        var variants = await _context.ProductVariants
-            .IgnoreQueryFilters()
-            .Where(pv => variantIds.Contains(pv.Id))
-            .ToDictionaryAsync(pv => pv.Id, cancellationToken);
-
-        foreach (var cartItem in cartItems)
+        // Validate stock
+        foreach (var (variant, quantity) in orderLines)
         {
-            var variant = variants.GetValueOrDefault(cartItem.ProductVariantId);
-
-            if (variant is null || !variant.IsActive || variant.DeletedAt != null)
-                return Result.Failure<Guid>(
-                    "A product in your cart is no longer available.",
-                    "VARIANT_NOT_AVAILABLE");
-
-            if (cartItem.Quantity > variant.StockQty)
+            if (quantity > variant.StockQty)
                 return Result.Failure<Guid>(
                     $"Insufficient stock for SKU {variant.Sku}. Only {variant.StockQty} available.",
                     "INSUFFICIENT_STOCK");
         }
 
-        var productIds = variants.Values.Select(v => v.ProductId).Distinct().ToList();
-
+        // Load products
+        var productIds = orderLines.Select(l => l.Variant.ProductId).Distinct().ToList();
         var products = await _context.Products
             .IgnoreQueryFilters()
             .Where(p => productIds.Contains(p.Id))
             .ToDictionaryAsync(p => p.Id, cancellationToken);
 
-        foreach (var product in products.Values)
+        foreach (var line in orderLines)
         {
-            if (!product.IsActive || !product.IsApproved || product.DeletedAt != null)
-                return Result.Failure<Guid>(
-                    $"Product '{product.Name}' is no longer available.",
-                    "PRODUCT_NOT_AVAILABLE");
+            var p = products.GetValueOrDefault(line.Variant.ProductId);
+            if (p is null || !p.IsActive || p.DeletedAt != null)
+                return Result.Failure<Guid>("A product in your cart is no longer available.", "PRODUCT_NOT_AVAILABLE");
         }
 
-        var shopIds = products.Values.Select(p => p.ShopId).Distinct().ToList();
+        // Load shops with fallback to Master Warehouse
+        var masterShop = await MasterCatalog.GetOrCreateMasterShopAsync(_context, cancellationToken);
 
+        var shopIds = products.Values.Select(p => p.ShopId).Where(id => id != Guid.Empty).Distinct().ToList();
         var shops = await _context.Shops
+            .IgnoreQueryFilters()
             .Where(s => shopIds.Contains(s.Id))
             .ToDictionaryAsync(s => s.Id, cancellationToken);
 
-        foreach (var shop in shops.Values)
+        shops[masterShop.Id] = masterShop;
+
+        foreach (var prod in products.Values)
         {
-            if (!shop.IsActive)
-                return Result.Failure<Guid>(
-                    $"Shop '{shop.Name}' is no longer available.",
-                    "SHOP_NOT_AVAILABLE");
+            if (prod.ShopId == Guid.Empty || !shops.ContainsKey(prod.ShopId))
+            {
+                prod.ShopId = masterShop.Id;
+            }
         }
 
         // 9. Resolve affiliate
@@ -177,13 +225,13 @@ public class CreateOrderRequestCommandHandler
             Status = OrderStatus.Pending,
             AffiliateId = affiliateId,
             ReferralCodeSnapshot = referralCodeSnapshot,
-            CustomerName = request.CustomerName,
-            CustomerPhone = request.CustomerPhone,
-            ShippingAddress = request.ShippingAddress,
-            City = request.City,
-            State = request.State,
-            Country = request.Country,
-            OrderNotes = request.OrderNotes
+            CustomerName = !string.IsNullOrWhiteSpace(request.CustomerName) ? request.CustomerName.Trim() : user.Name,
+            CustomerPhone = !string.IsNullOrWhiteSpace(request.CustomerPhone) ? request.CustomerPhone.Trim() : user.Phone,
+            ShippingAddress = request.ShippingAddress?.Trim(),
+            City = request.City?.Trim(),
+            State = request.State?.Trim(),
+            Country = request.Country?.Trim(),
+            OrderNotes = request.OrderNotes?.Trim()
         };
 
         _context.OrderRequests.Add(orderRequest);
@@ -194,13 +242,8 @@ public class CreateOrderRequestCommandHandler
 
         var now = _dateTime.UtcNow;
 
-        var itemsByShop = cartItems
-            .GroupBy(ci =>
-            {
-                var variant = variants[ci.ProductVariantId];
-                var product = products[variant.ProductId];
-                return product.ShopId;
-            })
+        var itemsByShop = orderLines
+            .GroupBy(l => products[l.Variant.ProductId].ShopId)
             .ToList();
 
         var sellerOrders = new List<SellerOrder>();
@@ -221,7 +264,7 @@ public class CreateOrderRequestCommandHandler
         await _context.SaveChangesAsync(cancellationToken);
 
         // ═══════════════════════════════════════════════════════════
-        // ✅ AFFILIATE — Collect created items for commission (Part 4)
+        // ✅ Collect created items for commission (Part 4)
         // ═══════════════════════════════════════════════════════════
         var createdOrderItems = new List<(OrderRequestItem Item, decimal UnitPrice, int Quantity, Guid ProductId)>();
         var outOfStockProducts = new Dictionary<Guid, string>();
@@ -230,9 +273,8 @@ public class CreateOrderRequestCommandHandler
         {
             var sellerOrder = sellerOrders.First(so => so.ShopId == shopGroup.Key);
 
-            foreach (var cartItem in shopGroup)
+            foreach (var (variant, quantity) in shopGroup)
             {
-                var variant = variants[cartItem.ProductVariantId];
                 var product = products[variant.ProductId];
 
                 var attributes = await _context.VariantAttributeValues
@@ -250,30 +292,29 @@ public class CreateOrderRequestCommandHandler
                     OrderRequestId = orderRequest.Id,
                     SellerOrderId = sellerOrder.Id,
                     ProductVariantId = variant.Id,
-                    Quantity = cartItem.Quantity,
+                    Quantity = quantity,
                     PriceAtOrder = variant.Price,
                     ProductNameSnapshot = product.Name,
                     VariantAttributesSnapshot = attributesJson,
                     UnitPriceSnapshot = variant.Price,
-                    TotalPriceSnapshot = variant.Price * cartItem.Quantity,
+                    TotalPriceSnapshot = variant.Price * quantity,
                     CreatedAt = now
                 };
 
                 _context.OrderRequestItems.Add(orderItem);
 
-                // ✅ Collect for affiliate commission
-                createdOrderItems.Add((orderItem, variant.Price, cartItem.Quantity, product.Id));
+                createdOrderItems.Add((orderItem, variant.Price, quantity, product.Id));
 
                 // Decrement stock
                 var previousQty = variant.StockQty;
-                variant.StockQty -= cartItem.Quantity;
+                variant.StockQty = Math.Max(0, variant.StockQty - quantity);
                 variant.SetUpdatedAt(now);
 
                 _context.InventoryTransactions.Add(new InventoryTransaction
                 {
                     ProductVariantId = variant.Id,
                     TransactionType = InventoryTransactionType.Order,
-                    Quantity = -cartItem.Quantity,
+                    Quantity = -quantity,
                     PreviousQuantity = previousQty,
                     NewQuantity = variant.StockQty,
                     ReferenceType = "OrderRequest",
@@ -287,7 +328,7 @@ public class CreateOrderRequestCommandHandler
             }
 
             // Calculate 20% Net Commission Seller Earning
-            var grossTotal = shopGroup.Sum(ci => variants[ci.ProductVariantId].Price * ci.Quantity);
+            var grossTotal = shopGroup.Sum(line => line.Variant.Price * line.Quantity);
             var commissionAmount = Math.Round(grossTotal * 0.20m, 2);
 
             _context.SellerEarnings.Add(new SellerEarning
@@ -329,13 +370,16 @@ public class CreateOrderRequestCommandHandler
             }
         }
 
-        // Clear cart
-        _context.CartItems.RemoveRange(cartItems);
+        // Clear only ordered items from database cart
+        var orderedVariantIds = orderLines.Select(l => l.Variant.Id).ToHashSet();
+        var itemsToRemove = cartItems.Where(ci => orderedVariantIds.Contains(ci.ProductVariantId)).ToList();
+        if (itemsToRemove.Count > 0)
+        {
+            _context.CartItems.RemoveRange(itemsToRemove);
+        }
 
         // COD payment row — Super Admin marks Completed (Paid) later
         var orderGross = createdOrderItems.Sum(x => x.UnitPrice * x.Quantity);
-        if (orderGross <= 0)
-            orderGross = cartItems.Sum(ci => variants[ci.ProductVariantId].Price * ci.Quantity);
 
         var payment = new Eseller.Domain.Entities.Payment.Payment
         {
