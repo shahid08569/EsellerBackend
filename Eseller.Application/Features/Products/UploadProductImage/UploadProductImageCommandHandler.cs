@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Enums;
@@ -12,7 +12,7 @@ public class UploadProductImageCommandHandler
 {
     private const long MaxFileSize = 5 * 1024 * 1024;
     private const int MaxImagesPerProduct = 10;
-    private static readonly string[] AllowedExtensions = { ".jpg", ".jpeg", ".png", ".webp" };
+    private static readonly string[] AllowedExtensions = { ".jpg", ".jpeg", ".png", ".webp", ".gif" };
 
     private readonly IApplicationDbContext _context;
     private readonly IFileStorageService _fileStorageService;
@@ -49,12 +49,14 @@ public class UploadProductImageCommandHandler
         if (!isAdmin)
         {
             var shop = await _context.Shops
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(s => s.Id == product.ShopId, cancellationToken);
 
             var shopkeeper = shop is null ? null : await _context.Shopkeepers
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
 
-            if (shopkeeper is null || shopkeeper.AccountId != _currentUserService.AccountId.Value)
+            if (shop is null || shopkeeper is null || shopkeeper.AccountId != _currentUserService.AccountId.Value)
                 return Result.Failure<Guid>("You do not have permission.", "FORBIDDEN");
         }
 
@@ -65,7 +67,7 @@ public class UploadProductImageCommandHandler
         var extension = Path.GetExtension(request.FileName).ToLowerInvariant();
         if (!AllowedExtensions.Contains(extension))
             return Result.Failure<Guid>(
-                "Invalid file type. Allowed: jpg, jpeg, png, webp.",
+                "Invalid file type. Allowed: jpg, jpeg, png, webp, gif.",
                 "INVALID_FILE_TYPE");
 
         // Max images check

@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Enums;
@@ -46,27 +46,42 @@ public class CreateProductVariantCommandHandler
         if (!isAdmin)
         {
             var shop = await _context.Shops
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(s => s.Id == product.ShopId, cancellationToken);
 
             var shopkeeper = shop is null ? null : await _context.Shopkeepers
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
 
-            if (shopkeeper is null || shopkeeper.AccountId != _currentUserService.AccountId.Value)
+            if (shop is null || shopkeeper is null || shopkeeper.AccountId != _currentUserService.AccountId.Value)
                 return Result.Failure<Guid>("You do not have permission.", "FORBIDDEN");
         }
 
-        // Check SKU uniqueness
+        // Validate and ensure SKU uniqueness
+        var finalSku = request.Sku?.Trim();
+        if (string.IsNullOrWhiteSpace(finalSku))
+        {
+            finalSku = $"SKU-{Guid.NewGuid():N}"[..12].ToUpperInvariant();
+        }
+
         var skuExists = await _context.ProductVariants
-            .AnyAsync(pv => pv.Sku == request.Sku, cancellationToken);
+            .IgnoreQueryFilters()
+            .AnyAsync(pv => pv.Sku == finalSku, cancellationToken);
 
         if (skuExists)
-            return Result.Failure<Guid>("SKU is already taken.", "SKU_TAKEN");
+        {
+            // Auto-disambiguate SKU with a short unique suffix so the variant is never lost
+            var uniqueSuffix = Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
+            finalSku = $"{finalSku}-{uniqueSuffix}";
+            if (finalSku.Length > 100)
+                finalSku = finalSku[^100..];
+        }
 
         // Create variant
         var variant = new ProductVariant
         {
             ProductId = request.ProductId,
-            Sku = request.Sku,
+            Sku = finalSku,
             Price = request.Price,
             StockQty = request.StockQty,
             LowStockThreshold = request.LowStockThreshold,

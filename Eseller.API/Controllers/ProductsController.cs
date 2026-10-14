@@ -388,10 +388,16 @@ public class ProductsController : ControllerBase
     [RequestSizeLimit(50 * 1024 * 1024)]   // 50 MB total
     public async Task<IActionResult> UploadMultipleImages(
         Guid id,
-        [FromForm] List<IFormFile> files,
+        [FromForm] List<IFormFile>? files,
         CancellationToken cancellationToken)
     {
-        if (files is null || files.Count == 0)
+        var fileList = (files != null && files.Count > 0)
+            ? files
+            : (Request.HasFormContentType && Request.Form.Files.Count > 0)
+                ? Request.Form.Files.ToList()
+                : new List<IFormFile>();
+
+        if (fileList.Count == 0)
             return BadRequest(new { error = "At least one file is required.", errorCode = "NO_FILES" });
 
         var fileStreams = new List<ProductImageFile>();
@@ -399,7 +405,7 @@ public class ProductsController : ControllerBase
 
         try
         {
-            foreach (var file in files)
+            foreach (var file in fileList)
             {
                 var stream = file.OpenReadStream();
                 streamsToDispose.Add(stream);

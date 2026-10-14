@@ -1,9 +1,10 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Eseller.Application.Features.Products.UploadMultipleProductImages;
 
@@ -12,20 +13,23 @@ public class UploadMultipleProductImagesCommandHandler
 {
     private const long MaxFileSize = 5 * 1024 * 1024;
     private const int MaxImagesPerProduct = 10;
-    private static readonly string[] AllowedExtensions = { ".jpg", ".jpeg", ".png", ".webp" };
+    private static readonly string[] AllowedExtensions = { ".jpg", ".jpeg", ".png", ".webp", ".gif" };
 
     private readonly IApplicationDbContext _context;
     private readonly IFileStorageService _fileStorageService;
     private readonly ICurrentUserService _currentUserService;
+    private readonly ILogger<UploadMultipleProductImagesCommandHandler> _logger;
 
     public UploadMultipleProductImagesCommandHandler(
         IApplicationDbContext context,
         IFileStorageService fileStorageService,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        ILogger<UploadMultipleProductImagesCommandHandler> logger)
     {
         _context = context;
         _fileStorageService = fileStorageService;
         _currentUserService = currentUserService;
+        _logger = logger;
     }
 
     public async Task<Result<List<Guid>>> Handle(
@@ -53,12 +57,14 @@ public class UploadMultipleProductImagesCommandHandler
         if (!isAdmin)
         {
             var shop = await _context.Shops
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(s => s.Id == product.ShopId, cancellationToken);
 
             var shopkeeper = shop is null ? null : await _context.Shopkeepers
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
 
-            if (shopkeeper is null || shopkeeper.AccountId != _currentUserService.AccountId.Value)
+            if (shop is null || shopkeeper is null || shopkeeper.AccountId != _currentUserService.AccountId.Value)
                 return Result.Failure<List<Guid>>("You do not have permission.", "FORBIDDEN");
         }
 
@@ -82,7 +88,7 @@ public class UploadMultipleProductImagesCommandHandler
             var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
             if (!AllowedExtensions.Contains(ext))
                 return Result.Failure<List<Guid>>(
-                    $"File '{file.FileName}' has invalid type.",
+                    $"File '{file.FileName}' has invalid type. Allowed extensions: jpg, jpeg, png, webp, gif.",
                     "INVALID_FILE_TYPE");
         }
 
@@ -100,6 +106,9 @@ public class UploadMultipleProductImagesCommandHandler
         {
             foreach (var file in request.Files)
             {
+                if (file.FileStream.CanSeek)
+                    file.FileStream.Position = 0;
+
                 var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
                 var uniqueFileName = $"products/{product.Id}/image-{Guid.NewGuid()}{ext}";
 
@@ -133,8 +142,10 @@ public class UploadMultipleProductImagesCommandHandler
 
             return Result.Success(imageIds);
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to upload multiple images for product {ProductId}", request.ProductId);
+
             // Rollback
             foreach (var url in uploadedUrls)
             {
@@ -142,7 +153,7 @@ public class UploadMultipleProductImagesCommandHandler
                 catch { }
             }
 
-            return Result.Failure<List<Guid>>("Upload failed. Please try again.", "UPLOAD_FAILED");
+            return Result.Failure<List<Guid>>($"Upload failed: {ex.Message}", "UPLOAD_FAILED");
         }
     }
 }
