@@ -110,7 +110,17 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, R
         // 10. Save
         await _context.SaveChangesAsync(cancellationToken);
 
-        // 11. Return new tokens + account info (so frontend can restore full auth state)
+        // 11. Load partner permissions if applicable
+        string? permissions = null;
+        if (account.RoleType == Eseller.Domain.Enums.RoleType.Partner)
+        {
+            var partner = await _context.Partners
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.AccountId == account.Id, cancellationToken);
+            permissions = partner?.Permissions;
+        }
+
+        // 12. Return new tokens + account info (so frontend can restore full auth state)
         return Result.Success(new RefreshTokenResponse(
             newAccessToken,
             newRefreshToken,
@@ -118,6 +128,7 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, R
             account.Id,
             account.Username,
             account.Email,
-            account.RoleType.ToString()));
+            account.RoleType.ToString(),
+            permissions));
     }
 }

@@ -1,4 +1,4 @@
-﻿namespace Eseller.Application.Features.Auth.Login;
+namespace Eseller.Application.Features.Auth.Login;
 
 public record LoginResponse(
     Guid AccountId,
@@ -7,4 +7,5 @@ public record LoginResponse(
     string RoleType,
     string AccessToken,
     string RefreshToken,
-    DateTime AccessTokenExpiresAt);
+    DateTime AccessTokenExpiresAt,
+    string? Permissions = null);

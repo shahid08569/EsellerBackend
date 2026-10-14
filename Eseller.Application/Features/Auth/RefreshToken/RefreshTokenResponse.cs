@@ -7,4 +7,5 @@ public record RefreshTokenResponse(
     Guid AccountId,
     string Username,
     string Email,
-    string RoleType);
+    string RoleType,
+    string? Permissions = null);

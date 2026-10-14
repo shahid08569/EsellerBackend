@@ -127,7 +127,8 @@ public class AuthController : ControllerBase
             email = result.Value.Email,
             roleType = result.Value.RoleType,
             accessToken = result.Value.AccessToken,
-            accessTokenExpiresAt = result.Value.AccessTokenExpiresAt
+            accessTokenExpiresAt = result.Value.AccessTokenExpiresAt,
+            permissions = result.Value.Permissions
         });
     }
 
@@ -173,7 +174,8 @@ public class AuthController : ControllerBase
             accountId = result.Value.AccountId,
             username = result.Value.Username,
             email = result.Value.Email,
-            roleType = result.Value.RoleType
+            roleType = result.Value.RoleType,
+            permissions = result.Value.Permissions
         });
     }
 
@@ -243,7 +245,11 @@ public class AuthController : ControllerBase
             return NotFound(new { error = "Account not found.", errorCode = "ACCOUNT_NOT_FOUND" });
 
         string? permissions = null;
-        if (account.RoleType == RoleType.Partner)
+        if (account.RoleType == RoleType.SuperAdmin)
+        {
+            permissions = "[\"*\"]";
+        }
+        else if (account.RoleType == RoleType.Partner)
         {
             var partner = await context.Partners
                 .AsNoTracking()
@@ -254,6 +260,7 @@ public class AuthController : ControllerBase
         return Ok(new
         {
             id = account.Id,
+            accountId = account.Id,
             username = account.Username,
             email = account.Email,
             roleType = account.RoleType.ToString(),

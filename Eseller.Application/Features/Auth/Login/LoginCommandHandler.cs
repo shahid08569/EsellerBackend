@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Entities.Identity;
 using MediatR;
@@ -122,7 +122,17 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
             null,
             cancellationToken);
 
-        // 10. Return response — client expiry must match JWT lifetime
+        // 10. Load partner permissions if applicable
+        string? permissions = null;
+        if (account.RoleType == Eseller.Domain.Enums.RoleType.Partner)
+        {
+            var partner = await _context.Partners
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.AccountId == account.Id, cancellationToken);
+            permissions = partner?.Permissions;
+        }
+
+        // 11. Return response — client expiry must match JWT lifetime
         return Result.Success(new LoginResponse(
             account.Id,
             account.Username,
@@ -130,6 +140,7 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
             account.RoleType.ToString(),
             accessToken,
             refreshToken,
-            _dateTime.UtcNow.AddMinutes(_jwtService.AccessTokenExpirationMinutes)));
+            _dateTime.UtcNow.AddMinutes(_jwtService.AccessTokenExpirationMinutes),
+            permissions));
     }
 }
