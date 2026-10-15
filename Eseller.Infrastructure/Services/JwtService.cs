@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Domain.Enums;
 using Eseller.Infrastructure.Settings;
 using Microsoft.Extensions.Options;
@@ -20,7 +20,7 @@ public class JwtService : IJwtService
     }
 
     public int AccessTokenExpirationMinutes =>
-        _settings.AccessTokenExpirationMinutes > 0 ? _settings.AccessTokenExpirationMinutes : 15;
+        _settings.AccessTokenExpirationMinutes > 0 ? _settings.AccessTokenExpirationMinutes : 1440;
 
     public string GenerateAccessToken(Guid accountId, string username, RoleType roleType)
     {

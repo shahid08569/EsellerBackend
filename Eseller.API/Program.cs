@@ -87,7 +87,7 @@ builder.Services.AddRateLimiter(options =>
 
         var path = context.Request.Path.Value?.ToLowerInvariant() ?? "";
 
-        // Sensitive OTP / Password recovery: 5 per 2 minutes
+        // Sensitive OTP / Password recovery: 15 per 2 minutes
         if (path.Contains("/auth/send-phone-otp")
             || path.Contains("/auth/verify-phone-otp")
             || path.Contains("/auth/forgot-password")
@@ -98,13 +98,13 @@ builder.Services.AddRateLimiter(options =>
                 factory: _ => new FixedWindowRateLimiterOptions
                 {
                     AutoReplenishment = true,
-                    PermitLimit = 5,
+                    PermitLimit = 15,
                     Window = TimeSpan.FromMinutes(2),
-                    QueueLimit = 0
+                    QueueLimit = 5
                 });
         }
 
-        // Standard Auth endpoints (login, register, token refresh): 20 per minute
+        // Standard Auth endpoints (login, register, token refresh): 120 per minute
         if (path.Contains("/auth/login")
             || path.Contains("/auth/register")
             || path.Contains("/auth/refresh-token")
@@ -115,25 +115,42 @@ builder.Services.AddRateLimiter(options =>
                 factory: _ => new FixedWindowRateLimiterOptions
                 {
                     AutoReplenishment = true,
-                    PermitLimit = 20,
+                    PermitLimit = 120,
                     Window = TimeSpan.FromMinutes(1),
-                    QueueLimit = 2
+                    QueueLimit = 20
                 });
         }
 
-        // General API endpoints: 120 per minute with small queue buffer
+        // General API endpoints: 1200 per minute with generous queue buffer for SPAs
         return RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: partitionKey,
             factory: _ => new FixedWindowRateLimiterOptions
             {
                 AutoReplenishment = true,
-                PermitLimit = 120,
+                PermitLimit = 1200,
                 Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 5
+                QueueLimit = 50
             });
     });
 
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, token) =>
+    {
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        if (!context.HttpContext.Response.Headers.ContainsKey("Access-Control-Allow-Origin"))
+        {
+            var origin = context.HttpContext.Request.Headers["Origin"].ToString();
+            if (!string.IsNullOrEmpty(origin))
+            {
+                context.HttpContext.Response.Headers["Access-Control-Allow-Origin"] = origin;
+                context.HttpContext.Response.Headers["Access-Control-Allow-Credentials"] = "true";
+            }
+        }
+        await context.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            error = "Too many requests. Please wait a moment and try again.",
+            errorCode = "RATE_LIMIT_EXCEEDED"
+        }, cancellationToken: token);
+    };
 });
 
 // ─── Health Checks ──────────────────────────────────────────
@@ -403,11 +420,10 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
-app.UseRateLimiter();
-
 app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 app.MapControllers();
 
 app.MapHealthChecks("/health");

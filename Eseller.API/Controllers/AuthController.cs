@@ -424,6 +424,11 @@ public class AuthController : ControllerBase
             IsEssential = true
         };
 
+        if (isProduction && Request.Host.Host.EndsWith("esellerglobal.com", StringComparison.OrdinalIgnoreCase))
+        {
+            cookieOptions.Domain = ".esellerglobal.com";
+        }
+
         Response.Cookies.Append(RefreshTokenCookieName, refreshToken, cookieOptions);
     }
 
@@ -438,6 +443,11 @@ public class AuthController : ControllerBase
             SameSite = isProduction ? SameSiteMode.None : SameSiteMode.Lax,
             Path = "/"
         };
+
+        if (isProduction && Request.Host.Host.EndsWith("esellerglobal.com", StringComparison.OrdinalIgnoreCase))
+        {
+            cookieOptions.Domain = ".esellerglobal.com";
+        }
 
         Response.Cookies.Delete(RefreshTokenCookieName, cookieOptions);
     }

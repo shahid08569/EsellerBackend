@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -28,9 +28,24 @@ public class GetMyProductsQueryHandler
                 "User is not authenticated.", "UNAUTHENTICATED");
 
         // Verify shop ownership (include inactive pending shops)
-        var shop = await _context.Shops
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(s => s.Id == request.ShopId && s.DeletedAt == null, cancellationToken);
+        Eseller.Domain.Entities.Catalog.Shop? shop = null;
+        if (request.ShopId != Guid.Empty)
+        {
+            shop = await _context.Shops
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(s => s.Id == request.ShopId && s.DeletedAt == null, cancellationToken);
+        }
+        else
+        {
+            var sk = await _context.Shopkeepers
+                .FirstOrDefaultAsync(s => s.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+            if (sk != null)
+            {
+                shop = await _context.Shops
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(s => s.ShopkeeperId == sk.Id && s.DeletedAt == null, cancellationToken);
+            }
+        }
 
         if (shop is null)
             return Result.Failure<PagedList<ProductListDto>>(
@@ -44,9 +59,10 @@ public class GetMyProductsQueryHandler
                 "You do not have permission.", "FORBIDDEN");
 
         // Include unapproved + rejected (shopkeeper apne saare products dekhe)
+        var targetShopId = shop.Id;
         var query = _context.Products
             .IgnoreQueryFilters()
-            .Where(p => p.ShopId == request.ShopId && p.DeletedAt == null)
+            .Where(p => p.ShopId == targetShopId && p.DeletedAt == null)
             .OrderByDescending(p => p.CreatedAt);
 
         var totalCount = await query.CountAsync(cancellationToken);

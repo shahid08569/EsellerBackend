@@ -141,6 +141,26 @@ public class SeedManagementController : ControllerBase
         });
     }
 
+    [HttpGet("logs")]
+    public IActionResult GetLogs([FromQuery] int lines = 100)
+    {
+        if (!IsAuthorized()) return Unauthorized(new { error = "Invalid or missing secret key." });
+        try
+        {
+            var logDir = Path.Combine(Directory.GetCurrentDirectory(), "logs");
+            if (!Directory.Exists(logDir)) return Ok(new { error = "No logs directory found." });
+            var latestLog = Directory.GetFiles(logDir, "*.log").OrderByDescending(f => System.IO.File.GetLastWriteTimeUtc(f)).FirstOrDefault();
+            if (latestLog == null) return Ok(new { message = "No log files found." });
+            var allLines = System.IO.File.ReadAllLines(latestLog);
+            var lastLines = allLines.TakeLast(lines).ToList();
+            return Ok(new { file = Path.GetFileName(latestLog), lines = lastLines });
+        }
+        catch (Exception ex)
+        {
+            return Ok(new { error = ex.Message });
+        }
+    }
+
     [HttpPost("test-login")]
     public async Task<IActionResult> TestLogin([FromBody] TestLoginRequest req)
     {
