@@ -135,6 +135,22 @@ public class SendChatMessageCommandHandler
             message.AttachmentFileName,
             message.AttachmentContentType);
 
+        if (conversation.ParticipantId != Guid.Empty && conversation.ParticipantId != conversation.Id)
+        {
+            await _notificationService.BroadcastChatMessageAsync(
+                conversation.ParticipantId,
+                message.Id,
+                message.SenderId,
+                senderRole.ToString(),
+                string.IsNullOrWhiteSpace(text) ? preview : text,
+                now,
+                cancellationToken,
+                notifyAccountIds,
+                message.AttachmentUrl,
+                message.AttachmentFileName,
+                message.AttachmentContentType);
+        }
+
         return Result.Success(new SendChatMessageResult(message.Id, isRecipientOnline, deliveredAt));
     }
 

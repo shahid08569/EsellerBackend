@@ -78,6 +78,15 @@ public class GetConversationsQueryHandler
 
         var shopIds = shops.Select(s => s.Id).ToList();
 
+        var sellerConvos = await _context.Conversations.AsNoTracking()
+            .Where(c => c.ParticipantType == ChatParticipantType.Seller)
+            .Select(c => new { c.Id, c.ParticipantId })
+            .ToListAsync(cancellationToken);
+
+        var sellerConvoByShop = sellerConvos
+            .GroupBy(c => c.ParticipantId)
+            .ToDictionary(g => g.Key, g => g.First().Id);
+
         var customerConvoIds = await _context.Conversations.AsNoTracking()
             .Where(c => c.ParticipantType == ChatParticipantType.Customer)
             .Select(c => new CustomerRoom(c.Id, c.ParticipantId, c.CreatedAt))
@@ -99,36 +108,34 @@ public class GetConversationsQueryHandler
                 customerConvoIds.Add(new CustomerRoom(uid, uid, DateTime.UtcNow));
         }
 
-        var roomIds = shopIds
+        var allRoomIds = shopIds
+            .Concat(sellerConvos.Select(c => c.Id))
             .Concat(customerConvoIds.Select(c => c.Id))
+            .Concat(customerConvoIds.Select(c => c.ParticipantId))
             .Distinct()
             .ToList();
 
-        var recentMessages = await _context.Messages.AsNoTracking()
-            .Where(m => roomIds.Contains(m.ConversationId))
-            .OrderByDescending(m => m.SentAt)
-            .Take(Math.Max(roomIds.Count * 3, 200))
+        // Query max SentAt per ConversationId for all rooms
+        var maxDates = await _context.Messages.AsNoTracking()
+            .Where(m => allRoomIds.Contains(m.ConversationId))
+            .GroupBy(m => m.ConversationId)
+            .Select(g => new { ConversationId = g.Key, MaxSentAt = g.Max(m => m.SentAt) })
             .ToListAsync(cancellationToken);
 
-        var lastByConvo = recentMessages
-            .GroupBy(m => m.ConversationId)
-            .ToDictionary(g => g.Key, g => g.First());
+        var maxSentAts = maxDates.Select(x => x.MaxSentAt).Distinct().ToList();
 
-        // Also pull last message for rooms missing from the capped sample
-        var missingLast = roomIds.Where(id => !lastByConvo.ContainsKey(id)).ToList();
-        if (missingLast.Count > 0 && missingLast.Count <= 100)
-        {
-            var extras = await _context.Messages.AsNoTracking()
-                .Where(m => missingLast.Contains(m.ConversationId))
-                .GroupBy(m => m.ConversationId)
-                .Select(g => g.OrderByDescending(x => x.SentAt).First())
-                .ToListAsync(cancellationToken);
-            foreach (var m in extras)
-                lastByConvo[m.ConversationId] = m;
-        }
+        var latestMessages = maxSentAts.Count > 0
+            ? await _context.Messages.AsNoTracking()
+                .Where(m => allRoomIds.Contains(m.ConversationId) && maxSentAts.Contains(m.SentAt))
+                .ToListAsync(cancellationToken)
+            : new List<Eseller.Domain.Entities.Chat.Message>();
+
+        var lastByConvo = latestMessages
+            .GroupBy(m => m.ConversationId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.SentAt).First());
 
         var unreadByConvo = await _context.Messages.AsNoTracking()
-            .Where(m => roomIds.Contains(m.ConversationId)
+            .Where(m => allRoomIds.Contains(m.ConversationId)
                         && !m.IsRead
                         && (m.SenderRole == ChatSenderRole.Shopkeeper
                             || m.SenderRole == ChatSenderRole.User))
@@ -147,8 +154,24 @@ public class GetConversationsQueryHandler
             if (keeper is not null && keeper.Status == ShopkeeperApprovalStatus.Rejected)
                 continue;
 
-            lastByConvo.TryGetValue(shop.Id, out var last);
-            unreadByConvo.TryGetValue(shop.Id, out var unread);
+            var shopAssociatedRooms = new List<Guid> { shop.Id };
+            if (sellerConvoByShop.TryGetValue(shop.Id, out var sConvoId) && sConvoId != shop.Id)
+                shopAssociatedRooms.Add(sConvoId);
+
+            Eseller.Domain.Entities.Chat.Message? last = null;
+            var unread = 0;
+            foreach (var rId in shopAssociatedRooms)
+            {
+                if (lastByConvo.TryGetValue(rId, out var m))
+                {
+                    if (last is null || m.SentAt > last.SentAt)
+                        last = m;
+                }
+                if (unreadByConvo.TryGetValue(rId, out var cnt))
+                {
+                    unread += cnt;
+                }
+            }
 
             var statusLabel = keeper is null
                 ? "Merchant Support"
@@ -195,7 +218,13 @@ public class GetConversationsQueryHandler
         foreach (var convo in customerConvoIds)
         {
             lastByConvo.TryGetValue(convo.Id, out var last);
+            if (last is null && convo.ParticipantId != convo.Id)
+                lastByConvo.TryGetValue(convo.ParticipantId, out last);
+
             unreadByConvo.TryGetValue(convo.Id, out var unread);
+            if (convo.ParticipantId != convo.Id && unreadByConvo.TryGetValue(convo.ParticipantId, out var pUnread))
+                unread += pUnread;
+
             if (last is null && unread == 0)
                 continue;
 

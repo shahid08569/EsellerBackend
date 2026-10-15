@@ -86,7 +86,7 @@ public static class SupportConversationService
 
             return await context.Shops.IgnoreQueryFilters().AsNoTracking()
                 .AnyAsync(
-                    s => s.Id == conversation.ParticipantId
+                    s => (s.Id == conversation.ParticipantId || s.Id == conversation.Id)
                          && s.ShopkeeperId == shopkeeper.Id
                          && s.DeletedAt == null,
                     cancellationToken);

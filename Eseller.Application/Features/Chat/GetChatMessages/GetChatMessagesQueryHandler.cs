@@ -38,12 +38,13 @@ public class GetChatMessagesQueryHandler
         if (conversation is null)
         {
             // Lazy ensure shop/user rooms
-            var isShop = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
-                .AnyAsync(s => s.Id == request.OrderRequestId && s.DeletedAt == null, cancellationToken);
-            if (isShop)
+            var shop = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
+                .FirstOrDefaultAsync(s => (s.Id == request.OrderRequestId || s.ShopkeeperId == request.OrderRequestId) && s.DeletedAt == null, cancellationToken);
+
+            if (shop is not null)
             {
                 conversation = await SupportConversationService.GetOrCreateAsync(
-                    _context, request.OrderRequestId, ChatParticipantType.Seller,
+                    _context, shop.Id, ChatParticipantType.Seller,
                     _dateTime.UtcNow, cancellationToken);
             }
             else
@@ -100,6 +101,13 @@ public class GetChatMessagesQueryHandler
                 .Select(so => so.OrderRequestId)
                 .ToListAsync(cancellationToken);
             roomIds.AddRange(shopOrderReqIds);
+
+            // Also include any other conversation ids matching this shop
+            var otherSellerConvos = await _context.Conversations.AsNoTracking()
+                .Where(c => c.ParticipantId == conversation.ParticipantId)
+                .Select(c => c.Id)
+                .ToListAsync(cancellationToken);
+            roomIds.AddRange(otherSellerConvos);
             roomIds = roomIds.Distinct().ToList();
         }
 
@@ -168,10 +176,34 @@ public class GetChatMessagesQueryHandler
 
         var ordered = combined.OrderBy(m => m.SentAt).ToList();
         var totalCount = ordered.Count;
-        var paged = ordered
-            .Skip((request.PageNumber - 1) * request.PageSize)
-            .Take(request.PageSize)
-            .ToList();
+
+        // Chat pagination: Page 1 must return the latest messages in chronological order.
+        // Higher page numbers paginate backwards to load older message history.
+        int skip;
+        int take;
+        if (request.PageNumber <= 1)
+        {
+            skip = Math.Max(0, totalCount - request.PageSize);
+            take = Math.Min(request.PageSize, totalCount);
+        }
+        else
+        {
+            var remainingBefore = totalCount - (request.PageNumber - 1) * request.PageSize;
+            if (remainingBefore <= 0)
+            {
+                skip = 0;
+                take = 0;
+            }
+            else
+            {
+                take = Math.Min(request.PageSize, remainingBefore);
+                skip = Math.Max(0, remainingBefore - take);
+            }
+        }
+
+        var paged = take > 0
+            ? ordered.Skip(skip).Take(take).ToList()
+            : new List<ChatMessageDto>();
 
         return Result.Success(new PagedList<ChatMessageDto>(
             paged, totalCount, request.PageNumber, request.PageSize));
