@@ -98,7 +98,7 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
             AccountId = account.Id,
             TokenHash = refreshTokenHash,
             FamilyId = Guid.NewGuid(),
-            ExpiresAt = _dateTime.UtcNow.AddDays(7),
+            ExpiresAt = _dateTime.UtcNow.AddDays(30),
             CreatedAt = _dateTime.UtcNow
         };
 

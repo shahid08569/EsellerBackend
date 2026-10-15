@@ -98,7 +98,7 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, R
             AccountId = account.Id,
             TokenHash = newRefreshTokenHash,
             FamilyId = existingToken.FamilyId,
-            ExpiresAt = _dateTime.UtcNow.AddDays(7),
+            ExpiresAt = _dateTime.UtcNow.AddDays(30),
             CreatedAt = _dateTime.UtcNow
         };
 

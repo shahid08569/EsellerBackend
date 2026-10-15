@@ -419,7 +419,7 @@ public class AuthController : ControllerBase
             HttpOnly = true,
             Secure = isProduction,
             SameSite = isProduction ? SameSiteMode.None : SameSiteMode.Lax,
-            Expires = DateTimeOffset.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays),
+            Expires = DateTimeOffset.UtcNow.AddDays(Math.Max(_jwtSettings.RefreshTokenExpirationDays, 30)),
             Path = "/",
             IsEssential = true
         };

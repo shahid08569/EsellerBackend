@@ -20,7 +20,7 @@ public class JwtService : IJwtService
     }
 
     public int AccessTokenExpirationMinutes =>
-        _settings.AccessTokenExpirationMinutes > 0 ? _settings.AccessTokenExpirationMinutes : 1440;
+        Math.Max(_settings.AccessTokenExpirationMinutes, 1440);
 
     public string GenerateAccessToken(Guid accountId, string username, RoleType roleType)
     {
@@ -39,7 +39,7 @@ public class JwtService : IJwtService
             issuer: _settings.Issuer,
             audience: _settings.Audience,
             claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(_settings.AccessTokenExpirationMinutes),
+            expires: DateTime.UtcNow.AddMinutes(AccessTokenExpirationMinutes),
             signingCredentials: credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
