@@ -111,6 +111,7 @@ public class ChatController : ControllerBase
             return NotFound(new { error = "Shopkeeper not found.", errorCode = "SHOPKEEPER_NOT_FOUND" });
 
         var shop = await _context.Shops
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null, cancellationToken);
         if (shop is null)
             return NotFound(new { error = "Shop not found.", errorCode = "SHOP_NOT_FOUND" });
