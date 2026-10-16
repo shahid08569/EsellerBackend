@@ -14,6 +14,7 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 
 namespace Eseller.API.Controllers;
 
@@ -290,7 +291,7 @@ public class ChatController : ControllerBase
                 threadType,
                 shopId = sid == Guid.Empty ? (Guid?)null : sid,
                 shopName,
-                lastMessage = lm?.Message,
+                lastMessage = CleanReplyPreview(lm?.Message),
                 lastMessageTime = lm?.SentAt ?? o.UpdatedAt,
                 unreadCount = lm?.Unread ?? 0
             };
@@ -817,6 +818,27 @@ public class ChatController : ControllerBase
             error = "Seller–customer chat is disabled. Use shop support to chat with Super Admin.",
             errorCode = "CHAT_DISABLED"
         });
+    }
+
+    private static readonly Regex ReplyTagRegex = new(
+        @"^\[reply:[^:]+:[^\]]+\][\s\S]*?\[/reply\]\s*",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static string? CleanReplyPreview(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return raw;
+        var cleaned = ReplyTagRegex.Replace(raw, string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(cleaned))
+        {
+            var match = Regex.Match(raw, @"^\[reply:[^:]+:([^\]]+)\]", RegexOptions.IgnoreCase);
+            if (match.Success)
+            {
+                var sender = match.Groups[1].Value.Trim();
+                return !string.IsNullOrWhiteSpace(sender) ? $"Replied to {sender}" : "Reply";
+            }
+            return "Reply";
+        }
+        return cleaned;
     }
 }
 

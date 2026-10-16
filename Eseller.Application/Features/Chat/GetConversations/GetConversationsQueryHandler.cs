@@ -187,7 +187,7 @@ public class GetConversationsQueryHandler
                 ? "Direct support channel"
                 : string.IsNullOrWhiteSpace(last.Content)
                     ? (last.AttachmentFileName is not null ? $"📎 {last.AttachmentFileName}" : "Attachment")
-                    : last.Content;
+                    : CleanReplyPreview(last.Content);
 
             conversations.Add(new ConversationDto(
                 shop.Id,
@@ -234,7 +234,7 @@ public class GetConversationsQueryHandler
                 ? null
                 : string.IsNullOrWhiteSpace(last.Content)
                     ? (last.AttachmentFileName is not null ? $"📎 {last.AttachmentFileName}" : "Attachment")
-                    : last.Content;
+                    : CleanReplyPreview(last.Content);
 
             conversations.Add(new ConversationDto(
                 convo.Id,
@@ -263,6 +263,27 @@ public class GetConversationsQueryHandler
 
         return Result.Success(new PagedList<ConversationDto>(
             page, sorted.Count, request.PageNumber, request.PageSize));
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex ReplyTagRegex = new(
+        @"^\[reply:[^:]+:[^\]]+\][\s\S]*?\[/reply\]\s*",
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    private static string? CleanReplyPreview(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return raw;
+        var cleaned = ReplyTagRegex.Replace(raw, string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(cleaned))
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(raw, @"^\[reply:[^:]+:([^\]]+)\]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (match.Success)
+            {
+                var sender = match.Groups[1].Value.Trim();
+                return !string.IsNullOrWhiteSpace(sender) ? $"Replied to {sender}" : "Reply";
+            }
+            return "Reply";
+        }
+        return cleaned;
     }
 
     private sealed record CustomerRoom(Guid Id, Guid ParticipantId, DateTime CreatedAt);
