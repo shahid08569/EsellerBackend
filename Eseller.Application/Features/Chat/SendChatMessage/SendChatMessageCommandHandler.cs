@@ -90,9 +90,10 @@ public class SendChatMessageCommandHandler
         conversation.SetUpdatedAt(now);
         await _context.SaveChangesAsync(cancellationToken);
 
-        var preview = string.IsNullOrWhiteSpace(text)
+        var cleanPreviewText = System.Text.RegularExpressions.Regex.Replace(text, @"^\[reply:[^:]+:[^\]]+\][\s\S]*?\[/reply\]\s*", string.Empty).Trim();
+        var preview = string.IsNullOrWhiteSpace(cleanPreviewText)
             ? (message.AttachmentFileName is not null ? $"📎 {message.AttachmentFileName}" : "Attachment")
-            : (text.Length > 120 ? text[..117] + "..." : text);
+            : (cleanPreviewText.Length > 120 ? cleanPreviewText[..117] + "..." : cleanPreviewText);
 
         var senderLabel = SupportConversationService.IsAdminRole(senderRole) ? "Admin"
             : senderRole == ChatSenderRole.Shopkeeper ? "Seller" : "Customer";

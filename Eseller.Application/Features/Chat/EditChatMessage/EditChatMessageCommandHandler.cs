@@ -55,7 +55,15 @@ public class EditChatMessageCommandHandler
             if (message.SenderId != callerAccountId)
                 return Result.Failure<EditChatMessageResult>("You can only edit your own messages.", "FORBIDDEN");
 
-            message.Content = text;
+            var replyPrefixMatch = System.Text.RegularExpressions.Regex.Match(message.Content, @"^(\[reply:[^:]+:[^\]]+\][\s\S]*?\[/reply\]\s*)");
+            if (replyPrefixMatch.Success && !text.StartsWith("[reply:"))
+            {
+                message.Content = replyPrefixMatch.Groups[1].Value + text;
+            }
+            else
+            {
+                message.Content = text;
+            }
             message.IsEdited = true;
             message.EditedAt = now;
 

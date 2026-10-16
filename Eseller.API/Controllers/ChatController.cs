@@ -586,21 +586,67 @@ public class ChatController : ControllerBase
         var role = _currentUserService.RoleType;
         var isAdmin = role == RoleType.SuperAdmin || role == RoleType.Partner;
         var now = _dateTime.UtcNow;
+        var accountId = _currentUserService.AccountId.Value;
+
+        // Collect all related room IDs (conversation ID, participant ID, order request ID)
+        var roomIds = new HashSet<Guid> { orderRequestId, conversation.Id };
+        if (conversation.ParticipantId != Guid.Empty)
+        {
+            roomIds.Add(conversation.ParticipantId);
+        }
+
+        if (role == RoleType.Shopkeeper)
+        {
+            var shopkeeper = await _context.Shopkeepers.AsNoTracking()
+                .FirstOrDefaultAsync(sk => sk.AccountId == accountId, cancellationToken);
+            if (shopkeeper != null)
+            {
+                var shopIds = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
+                    .Where(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null)
+                    .Select(s => s.Id)
+                    .ToListAsync(cancellationToken);
+                foreach (var sid in shopIds)
+                {
+                    roomIds.Add(sid);
+                }
+                var relatedConvoIds = await _context.Conversations.AsNoTracking()
+                    .Where(c => c.ParticipantType == ChatParticipantType.Seller && shopIds.Contains(c.ParticipantId))
+                    .Select(c => c.Id)
+                    .ToListAsync(cancellationToken);
+                foreach (var cid in relatedConvoIds)
+                {
+                    roomIds.Add(cid);
+                }
+            }
+        }
+        else if (role == RoleType.User)
+        {
+            var userOrders = await _context.OrderRequests.AsNoTracking()
+                .Where(o => o.UserId == conversation.ParticipantId)
+                .Select(o => o.Id)
+                .ToListAsync(cancellationToken);
+            foreach (var oid in userOrders)
+            {
+                roomIds.Add(oid);
+            }
+        }
+
+        var roomIdList = roomIds.ToList();
 
         var query = _context.Messages
-            .Where(m => m.ConversationId == conversation.Id
+            .Where(m => roomIdList.Contains(m.ConversationId)
                         && !m.IsRead
-                        && m.SenderId != _currentUserService.AccountId.Value);
+                        && m.SenderId != accountId);
 
         if (isAdmin)
         {
             query = query.Where(m =>
-                m.SenderRole == ChatSenderRole.Shopkeeper || m.SenderRole == ChatSenderRole.User);
+                m.SenderRole != ChatSenderRole.SuperAdmin && m.SenderRole != ChatSenderRole.Partner);
         }
         else
         {
             query = query.Where(m =>
-                m.SenderRole == ChatSenderRole.SuperAdmin || m.SenderRole == ChatSenderRole.Partner);
+                m.SenderRole != ChatSenderRole.Shopkeeper);
         }
 
         var unread = await query.ToListAsync(cancellationToken);
@@ -614,14 +660,42 @@ public class ChatController : ControllerBase
             }
         }
 
+        // Also mark any legacy ChatMessages as read
+        var legacyQuery = _context.ChatMessages
+            .Where(cm => roomIdList.Contains(cm.OrderRequestId)
+                        && !cm.IsRead
+                        && cm.SenderAccountId != accountId);
+
+        if (isAdmin)
+        {
+            legacyQuery = legacyQuery.Where(cm =>
+                cm.SenderRole != ChatSenderRole.SuperAdmin && cm.SenderRole != ChatSenderRole.Partner);
+        }
+        else
+        {
+            legacyQuery = legacyQuery.Where(cm =>
+                cm.SenderRole != ChatSenderRole.Shopkeeper);
+        }
+
+        var legacyUnread = await legacyQuery.ToListAsync(cancellationToken);
+        foreach (var cm in legacyUnread)
+        {
+            cm.IsRead = true;
+            cm.ReadAt = now;
+            if (cm.DeliveredAt == null)
+            {
+                cm.DeliveredAt = now;
+            }
+        }
+
         // Clear bell notifications for this conversation so they disappear after opening/reading
-        var accountId = _currentUserService.AccountId.Value;
         var chatNotifs = await _context.Notifications
             .Where(n => n.RecipientUserId == accountId
                         && !n.IsRead
                         && n.Type == NotificationType.NewMessage
                         && n.EntityType == NotificationEntityType.Conversation
-                        && n.EntityId == conversation.Id)
+                        && n.EntityId.HasValue
+                        && roomIdList.Contains(n.EntityId.Value))
             .ToListAsync(cancellationToken);
 
         foreach (var n in chatNotifs)
@@ -630,7 +704,7 @@ public class ChatController : ControllerBase
             n.SetUpdatedAt(now);
         }
 
-        if (unread.Count > 0 || chatNotifs.Count > 0)
+        if (unread.Count > 0 || legacyUnread.Count > 0 || chatNotifs.Count > 0)
             await _context.SaveChangesAsync(cancellationToken);
 
         if (unread.Count > 0)
