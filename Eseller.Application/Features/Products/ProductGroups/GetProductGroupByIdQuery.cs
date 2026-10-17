@@ -22,6 +22,7 @@ public class GetProductGroupByIdQueryHandler
         CancellationToken cancellationToken)
     {
         var group = await _context.ProductGroupListings
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(g => g.Id == request.BatchId && g.DeletedAt == null, cancellationToken);
 
         if (group is null)

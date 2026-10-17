@@ -30,7 +30,7 @@ public class AdminProductGroupsController : ControllerBase
         if (!result.IsSuccess)
             return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
 
-        return Ok(result.Value);
+        return Ok(new { items = result.Value, totalCount = result.Value.Count });
     }
 
     /// <summary>

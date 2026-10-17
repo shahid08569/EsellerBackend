@@ -25,6 +25,7 @@ public class GetProductGroupsQueryHandler
         CancellationToken cancellationToken)
     {
         var query = _context.ProductGroupListings
+            .IgnoreQueryFilters()
             .Where(g => g.DeletedAt == null);
 
         if (request.ShopId.HasValue && request.ShopId.Value != Guid.Empty)
