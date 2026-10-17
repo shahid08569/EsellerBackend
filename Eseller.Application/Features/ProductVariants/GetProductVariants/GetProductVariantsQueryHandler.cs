@@ -21,6 +21,7 @@ public class GetProductVariantsQueryHandler
     {
         // Verify product exists and is not deleted
         var product = await _context.Products
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(p => p.Id == request.ProductId && p.DeletedAt == null,
                 cancellationToken);
 
@@ -30,6 +31,7 @@ public class GetProductVariantsQueryHandler
 
         // Get variants with attributes
         var variants = await _context.ProductVariants
+            .IgnoreQueryFilters()
             .Where(pv => pv.ProductId == request.ProductId && pv.DeletedAt == null)
             .OrderBy(pv => pv.Sku)
             .ToListAsync(cancellationToken);
@@ -37,24 +39,38 @@ public class GetProductVariantsQueryHandler
         // If product has no variants in DB, auto-provision a default variant so orders and catalog views never break
         if (variants.Count == 0)
         {
-            var defaultSku = !string.IsNullOrWhiteSpace(product.Slug)
-                ? $"{product.Slug.ToUpper()}-DEF"
-                : $"SKU-{product.Id.ToString()[..8].ToUpper()}";
-
-            var defaultVariant = new Domain.Entities.Catalog.ProductVariant
+            try
             {
-                Id = Guid.NewGuid(),
-                ProductId = product.Id,
-                Sku = defaultSku,
-                Price = product.BasePrice > 0 ? product.BasePrice : 1,
-                StockQty = 100,
-                LowStockThreshold = 5,
-                IsActive = true
-            };
+                var uniqueSuffix = Guid.NewGuid().ToString("N")[..6].ToUpper();
+                var cleanSlug = !string.IsNullOrWhiteSpace(product.Slug)
+                    ? product.Slug.ToUpper()[..Math.Min(product.Slug.Length, 60)]
+                    : $"PROD-{product.Id.ToString()[..8].ToUpper()}";
+                var defaultSku = $"{cleanSlug}-{uniqueSuffix}-DEF";
 
-            _context.ProductVariants.Add(defaultVariant);
-            await _context.SaveChangesAsync(cancellationToken);
-            variants.Add(defaultVariant);
+                var defaultVariant = new Domain.Entities.Catalog.ProductVariant
+                {
+                    Id = Guid.NewGuid(),
+                    ProductId = product.Id,
+                    Sku = defaultSku,
+                    Price = product.BasePrice > 0 ? product.BasePrice : 1,
+                    StockQty = 100,
+                    LowStockThreshold = 5,
+                    IsActive = true
+                };
+
+                _context.ProductVariants.Add(defaultVariant);
+                await _context.SaveChangesAsync(cancellationToken);
+                variants.Add(defaultVariant);
+            }
+            catch (Exception)
+            {
+                // In case of race condition or collision, re-fetch existing variants
+                variants = await _context.ProductVariants
+                    .IgnoreQueryFilters()
+                    .Where(pv => pv.ProductId == request.ProductId && pv.DeletedAt == null)
+                    .OrderBy(pv => pv.Sku)
+                    .ToListAsync(cancellationToken);
+            }
         }
 
         var variantIds = variants.Select(v => v.Id).ToList();
