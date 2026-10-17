@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -35,6 +35,16 @@ public class RejectShopkeeperCommandHandler
 
         if (shopkeeper is null)
             return Result.Failure("Shopkeeper not found.", "SHOPKEEPER_NOT_FOUND");
+
+        if (_currentUserService.RoleType == RoleType.Partner)
+        {
+            var partner = await _context.Partners.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+            if (partner == null || shopkeeper.PartnerId != partner.Id)
+            {
+                return Result.Failure("Partners can only reject merchants that registered through their own referral link.", "FORBIDDEN");
+            }
+        }
 
         if (shopkeeper.Status != ShopkeeperApprovalStatus.Pending)
             return Result.Failure(

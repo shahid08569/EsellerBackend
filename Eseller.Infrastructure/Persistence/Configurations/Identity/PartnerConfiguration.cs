@@ -1,4 +1,4 @@
-﻿using Eseller.Domain.Entities.Identity;
+using Eseller.Domain.Entities.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -18,6 +18,11 @@ public class PartnerConfiguration : IEntityTypeConfiguration<Partner>
         builder.Property(p => p.Permissions)
             .HasColumnType("nvarchar(max)")
             .IsRequired(false);
+
+        builder.Property(p => p.ReferralCode)
+            .HasMaxLength(50)
+            .IsRequired()
+            .HasDefaultValue(string.Empty);
 
         builder.Property(p => p.CreatedAt)
             .IsRequired();

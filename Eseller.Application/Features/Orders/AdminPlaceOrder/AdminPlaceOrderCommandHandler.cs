@@ -192,6 +192,23 @@ public class AdminPlaceOrderCommandHandler
                 return Result.Failure<Guid>("One or more seller shops are not active.", "SHOP_NOT_AVAILABLE");
         }
 
+        if (role == RoleType.Partner)
+        {
+            var partner = await _context.Partners.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+            var partnerId = partner?.Id ?? Guid.Empty;
+
+            foreach (var shopId in shopIds)
+            {
+                if (!shops.TryGetValue(shopId, out var targetShop) || targetShop.PartnerId != partnerId)
+                {
+                    return Result.Failure<Guid>(
+                        "Partners can only place orders to shops that registered through their own referral link.",
+                        "FORBIDDEN");
+                }
+            }
+        }
+
         // 5. Create OrderRequest
         var orderRequest = new OrderRequestEntity
         {

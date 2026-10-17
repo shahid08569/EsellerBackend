@@ -18,6 +18,7 @@ public class Shop : AuditableEntity, ISoftDelete
     public int TotalProducts { get; set; }
     public Guid? ShopCategoryId { get; set; }
     public string? CustomBadgeText { get; set; }
+    public Guid? PartnerId { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime? DeletedAt { get; set; }
 }

@@ -52,6 +52,13 @@ public class GetPartnersQueryHandler
             .Where(a => allIds.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, a => a, cancellationToken);
 
+        var partnerIds = partners.Select(p => p.Id).ToList();
+        var shopCounts = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
+            .Where(s => s.PartnerId.HasValue && partnerIds.Contains(s.PartnerId.Value) && s.DeletedAt == null)
+            .GroupBy(s => s.PartnerId!.Value)
+            .Select(g => new { PartnerId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.PartnerId, x => x.Count, cancellationToken);
+
         var result = partners.Select(p =>
         {
             var account = accounts.GetValueOrDefault(p.AccountId);
@@ -66,7 +73,9 @@ public class GetPartnersQueryHandler
                 p.AddedAt,
                 p.Permissions,
                 p.CreatedAt,
-                account?.IsActive ?? true);
+                account?.IsActive ?? true,
+                p.ReferralCode ?? string.Empty,
+                shopCounts.GetValueOrDefault(p.Id, 0));
         }).ToList();
 
         var pagedList = new PagedList<PartnerDto>(

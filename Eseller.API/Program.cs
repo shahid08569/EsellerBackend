@@ -392,7 +392,49 @@ if (shouldMigrate || shouldSeed)
                 IF COL_LENGTH('ProductGroupListings', 'IsActive') IS NULL
                     ALTER TABLE [ProductGroupListings] ADD [IsActive] bit NOT NULL CONSTRAINT [DF_ProductGroupListings_IsActive] DEFAULT 1;
             END
+
+            IF COL_LENGTH('Partners', 'ReferralCode') IS NULL
+            BEGIN
+                ALTER TABLE [Partners] ADD [ReferralCode] nvarchar(50) NOT NULL CONSTRAINT [DF_Partners_ReferralCode] DEFAULT '';
+                CREATE NONCLUSTERED INDEX [IX_Partners_ReferralCode] ON [Partners]([ReferralCode]);
+            END
+
+            IF COL_LENGTH('Shops', 'PartnerId') IS NULL
+            BEGIN
+                ALTER TABLE [Shops] ADD [PartnerId] uniqueidentifier NULL;
+                CREATE NONCLUSTERED INDEX [IX_Shops_PartnerId] ON [Shops]([PartnerId]);
+            END
+
+            IF COL_LENGTH('Shopkeepers', 'PartnerId') IS NULL
+            BEGIN
+                ALTER TABLE [Shopkeepers] ADD [PartnerId] uniqueidentifier NULL;
+                CREATE NONCLUSTERED INDEX [IX_Shopkeepers_PartnerId] ON [Shopkeepers]([PartnerId]);
+            END
             """);
+
+        // Backfill referral codes for any existing partners missing one
+        try
+        {
+            var partnersWithoutCode = await db.Partners
+                .Where(p => string.IsNullOrEmpty(p.ReferralCode))
+                .ToListAsync();
+
+            if (partnersWithoutCode.Count > 0)
+            {
+                var rand = new Random();
+                const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+                foreach (var partner in partnersWithoutCode)
+                {
+                    var codeSuffix = new string(Enumerable.Repeat(chars, 6).Select(s => s[rand.Next(s.Length)]).ToArray());
+                    partner.ReferralCode = $"PRT-{codeSuffix}";
+                }
+                await db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to backfill partner referral codes.");
+        }
 
         if (shouldSeed)
         {

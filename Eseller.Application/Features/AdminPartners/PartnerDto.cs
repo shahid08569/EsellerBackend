@@ -9,4 +9,6 @@ public record PartnerDto(
     DateTime AddedAt,
     string? Permissions,
     DateTime CreatedAt,
-    bool IsActive = true);
+    bool IsActive = true,
+    string ReferralCode = "",
+    int ReferredShopsCount = 0);

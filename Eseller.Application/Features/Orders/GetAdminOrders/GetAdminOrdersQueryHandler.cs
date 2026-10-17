@@ -43,6 +43,24 @@ public class GetAdminOrdersQueryHandler
             .Where(o => _context.SellerOrders.Any(so => so.OrderRequestId == o.Id)
                         || _context.OrderRequestItems.Any(i => i.OrderRequestId == o.Id));
 
+        // Strict isolation: Partner can ONLY see orders for shops that joined via their own referral link
+        if (role == RoleType.Partner)
+        {
+            var partner = await _context.Partners.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+            var partnerId = partner?.Id ?? Guid.Empty;
+
+            var partnerShopIds = _context.Shops.IgnoreQueryFilters()
+                .Where(s => s.PartnerId == partnerId && s.DeletedAt == null)
+                .Select(s => s.Id);
+
+            var partnerOrderIds = _context.SellerOrders
+                .Where(so => partnerShopIds.Contains(so.ShopId))
+                .Select(so => so.OrderRequestId);
+
+            query = query.Where(o => partnerOrderIds.Contains(o.Id));
+        }
+
         if (request.Status.HasValue)
         {
             query = query.Where(o => o.Status == request.Status.Value);

@@ -1,5 +1,6 @@
 using Eseller.Application.Features.AdminPartners.AddPartner;
 using Eseller.Application.Features.AdminPartners.DeactivatePartner;
+using Eseller.Application.Features.AdminPartners.GetPartnerReferrals;
 using Eseller.Application.Features.AdminPartners.GetPartners;
 using Eseller.Application.Features.AdminPartners.UpdatePartner;
 using MediatR;
@@ -18,6 +19,27 @@ public class AdminPartnersController : ControllerBase
     public AdminPartnersController(ISender sender)
     {
         _sender = sender;
+    }
+
+    [HttpGet("referrals")]
+    public async Task<IActionResult> GetMyReferrals(CancellationToken cancellationToken)
+    {
+        var query = new GetPartnerReferralsQuery();
+        var result = await _sender.Send(query, cancellationToken);
+        if (!result.IsSuccess)
+            return HandleError(result);
+        return Ok(result.Value);
+    }
+
+    [HttpGet("{id:guid}/referrals")]
+    [Authorize(Roles = "SuperAdmin")]
+    public async Task<IActionResult> GetPartnerReferralsById(Guid id, CancellationToken cancellationToken)
+    {
+        var query = new GetPartnerReferralsQuery(id);
+        var result = await _sender.Send(query, cancellationToken);
+        if (!result.IsSuccess)
+            return HandleError(result);
+        return Ok(result.Value);
     }
 
     [HttpGet]

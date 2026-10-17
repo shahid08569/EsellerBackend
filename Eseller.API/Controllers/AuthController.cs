@@ -245,6 +245,7 @@ public class AuthController : ControllerBase
             return NotFound(new { error = "Account not found.", errorCode = "ACCOUNT_NOT_FOUND" });
 
         string? permissions = null;
+        string? referralCode = null;
         if (account.RoleType == RoleType.SuperAdmin)
         {
             permissions = "[\"*\"]";
@@ -255,6 +256,7 @@ public class AuthController : ControllerBase
                 .AsNoTracking()
                 .FirstOrDefaultAsync(p => p.AccountId == account.Id, cancellationToken);
             permissions = partner?.Permissions;
+            referralCode = partner?.ReferralCode;
         }
 
         return Ok(new
@@ -265,6 +267,7 @@ public class AuthController : ControllerBase
             email = account.Email,
             roleType = account.RoleType.ToString(),
             permissions,
+            referralCode,
             createdAt = account.CreatedAt
         });
     }

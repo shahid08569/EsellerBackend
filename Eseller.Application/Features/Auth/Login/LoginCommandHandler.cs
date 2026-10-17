@@ -122,14 +122,16 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
             null,
             cancellationToken);
 
-        // 10. Load partner permissions if applicable
+        // 10. Load partner permissions & referral code if applicable
         string? permissions = null;
+        string? referralCode = null;
         if (account.RoleType == Eseller.Domain.Enums.RoleType.Partner)
         {
             var partner = await _context.Partners
                 .AsNoTracking()
                 .FirstOrDefaultAsync(p => p.AccountId == account.Id, cancellationToken);
             permissions = partner?.Permissions;
+            referralCode = partner?.ReferralCode;
         }
 
         // 11. Return response — client expiry must match JWT lifetime
@@ -141,6 +143,7 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
             accessToken,
             refreshToken,
             _dateTime.UtcNow.AddMinutes(_jwtService.AccessTokenExpirationMinutes),
-            permissions));
+            permissions,
+            referralCode));
     }
 }

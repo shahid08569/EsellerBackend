@@ -1,4 +1,4 @@
-﻿using Eseller.Domain.Entities.Catalog;
+using Eseller.Domain.Entities.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -22,6 +22,7 @@ public class ShopConfiguration : IEntityTypeConfiguration<Shop>
         builder.Property(s => s.Country).HasMaxLength(100);
         builder.Property(s => s.Rating).HasPrecision(3, 2);
         builder.Property(s => s.TotalProducts).IsRequired().HasDefaultValue(0);
+        builder.Property(s => s.PartnerId).IsRequired(false);
         builder.Property(s => s.IsActive).IsRequired().HasDefaultValue(true);
         builder.Property(s => s.CreatedAt).IsRequired();
         builder.Property(s => s.UpdatedAt).IsRequired();
@@ -33,6 +34,7 @@ public class ShopConfiguration : IEntityTypeConfiguration<Shop>
 
         builder.HasIndex(s => s.Slug).IsUnique();
         builder.HasIndex(s => s.ShopkeeperId);
+        builder.HasIndex(s => s.PartnerId);
         builder.HasIndex(s => s.IsActive);
 
         builder.HasQueryFilter(s => s.DeletedAt == null);

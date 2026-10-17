@@ -17,4 +17,5 @@ public class Shopkeeper : AuditableEntity
     public Guid? ApprovedByAccountId { get; set; }
     public DateTime? ApprovedAt { get; set; }
     public string? RejectionReason { get; set; }
+    public Guid? PartnerId { get; set; }
 }

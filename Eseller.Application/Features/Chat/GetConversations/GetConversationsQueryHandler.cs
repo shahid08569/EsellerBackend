@@ -60,13 +60,23 @@ public class GetConversationsQueryHandler
 
         // Seller directory: Shop.Id is the conversation room key (created lazily on first message)
         // Skip Platform Master Warehouse — not a real merchant chat target
-        var shops = await _context.Shops
+        var shopsQuery = _context.Shops
             .AsNoTracking()
             .IgnoreQueryFilters()
             .Where(s => s.DeletedAt == null
                         && s.Slug != MasterCatalog.ShopSlug
-                        && s.Name != MasterCatalog.ShopName)
-            .ToListAsync(cancellationToken);
+                        && s.Name != MasterCatalog.ShopName);
+
+        var isPartner = _currentUserService.RoleType == RoleType.Partner;
+        if (isPartner && _currentUserService.AccountId.HasValue)
+        {
+            var partner = await _context.Partners.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+            var partnerId = partner?.Id ?? Guid.Empty;
+            shopsQuery = shopsQuery.Where(s => s.PartnerId == partnerId);
+        }
+
+        var shops = await shopsQuery.ToListAsync(cancellationToken);
 
         var keeperIds = shops.Select(s => s.ShopkeeperId).Distinct().ToList();
         var shopkeepers = keeperIds.Count == 0
@@ -79,7 +89,7 @@ public class GetConversationsQueryHandler
         var shopIds = shops.Select(s => s.Id).ToList();
 
         var sellerConvos = await _context.Conversations.AsNoTracking()
-            .Where(c => c.ParticipantType == ChatParticipantType.Seller)
+            .Where(c => c.ParticipantType == ChatParticipantType.Seller && (shopIds.Contains(c.ParticipantId) || !isPartner))
             .Select(c => new { c.Id, c.ParticipantId })
             .ToListAsync(cancellationToken);
 
@@ -87,25 +97,31 @@ public class GetConversationsQueryHandler
             .GroupBy(c => c.ParticipantId)
             .ToDictionary(g => g.Key, g => g.First().Id);
 
-        var customerConvoIds = await _context.Conversations.AsNoTracking()
-            .Where(c => c.ParticipantType == ChatParticipantType.Customer)
-            .Select(c => new CustomerRoom(c.Id, c.ParticipantId, c.CreatedAt))
-            .ToListAsync(cancellationToken);
+        var customerConvoIds = new List<CustomerRoom>();
 
-        // Legacy customer support orders → room key = User.Id
-        var legacyUserIds = await _context.OrderRequests.AsNoTracking()
-            .Where(o => o.ShippingAddress != null
-                        && (o.ShippingAddress.StartsWith("CUSTOMER_SUPPORT_")
-                            || o.ShippingAddress == "Live Support Inquiry")
-                        && o.UserId != Guid.Empty)
-            .Select(o => o.UserId)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-
-        foreach (var uid in legacyUserIds)
+        // Only SuperAdmin sees platform customer support channels
+        if (!isPartner)
         {
-            if (customerConvoIds.All(c => c.ParticipantId != uid))
-                customerConvoIds.Add(new CustomerRoom(uid, uid, DateTime.UtcNow));
+            customerConvoIds = await _context.Conversations.AsNoTracking()
+                .Where(c => c.ParticipantType == ChatParticipantType.Customer)
+                .Select(c => new CustomerRoom(c.Id, c.ParticipantId, c.CreatedAt))
+                .ToListAsync(cancellationToken);
+
+            // Legacy customer support orders → room key = User.Id
+            var legacyUserIds = await _context.OrderRequests.AsNoTracking()
+                .Where(o => o.ShippingAddress != null
+                            && (o.ShippingAddress.StartsWith("CUSTOMER_SUPPORT_")
+                                || o.ShippingAddress == "Live Support Inquiry")
+                            && o.UserId != Guid.Empty)
+                .Select(o => o.UserId)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+
+            foreach (var uid in legacyUserIds)
+            {
+                if (customerConvoIds.All(c => c.ParticipantId != uid))
+                    customerConvoIds.Add(new CustomerRoom(uid, uid, DateTime.UtcNow));
+            }
         }
 
         var allRoomIds = shopIds

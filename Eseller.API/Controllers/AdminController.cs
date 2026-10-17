@@ -32,11 +32,20 @@ public class AdminController : ControllerBase
     [HttpGet("shopkeepers")]
     public async Task<IActionResult> GetShopkeepers(
         [FromQuery] ShopkeeperApprovalStatus? status,
+        [FromServices] ICurrentUserService currentUserService,
         CancellationToken cancellationToken)
     {
         try
         {
             var query = _context.Shopkeepers.AsNoTracking().AsQueryable();
+
+            if (currentUserService.RoleType == RoleType.Partner)
+            {
+                var partnerId = await PartnerScopeHelper.GetCurrentPartnerIdAsync(_context, currentUserService, cancellationToken);
+                if (!partnerId.HasValue)
+                    return Ok(Array.Empty<object>());
+                query = query.Where(s => s.PartnerId == partnerId.Value);
+            }
 
             if (status.HasValue)
                 query = query.Where(s => s.Status == status.Value);
@@ -269,9 +278,10 @@ public class AdminController : ControllerBase
     [HttpGet("sellers")]
     public Task<IActionResult> GetSellers(
         [FromQuery] ShopkeeperApprovalStatus? status,
+        [FromServices] ICurrentUserService currentUserService,
         CancellationToken cancellationToken)
     {
-        return GetShopkeepers(status, cancellationToken);
+        return GetShopkeepers(status, currentUserService, cancellationToken);
     }
 
     /// <summary>
@@ -379,6 +389,7 @@ public class AdminController : ControllerBase
     public async Task<IActionResult> DeleteShopkeeper(
         Guid id,
         [FromQuery] string? reason,
+        [FromServices] ICurrentUserService currentUserService,
         CancellationToken cancellationToken)
     {
         var shopkeeper = await _context.Shopkeepers.FirstOrDefaultAsync(s => s.Id == id || s.AccountId == id, cancellationToken);
@@ -397,6 +408,15 @@ public class AdminController : ControllerBase
         }
 
         if (shopkeeper == null && shop == null) return NotFound(new { error = "Shop or seller profile not found." });
+
+        if (currentUserService.RoleType == RoleType.Partner)
+        {
+            var partnerId = await PartnerScopeHelper.GetCurrentPartnerIdAsync(_context, currentUserService, cancellationToken);
+            if (!partnerId.HasValue || (shopkeeper != null && shopkeeper.PartnerId != partnerId.Value) || (shop != null && shop.PartnerId != partnerId.Value))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { error = "Partners can only remove merchants that joined via their own referral link." });
+            }
+        }
 
         if (shopkeeper != null)
         {
@@ -436,9 +456,10 @@ public class AdminController : ControllerBase
     public Task<IActionResult> DeleteSeller(
         Guid id,
         [FromQuery] string? reason,
+        [FromServices] ICurrentUserService currentUserService,
         CancellationToken cancellationToken)
     {
-        return DeleteShopkeeper(id, reason, cancellationToken);
+        return DeleteShopkeeper(id, reason, currentUserService, cancellationToken);
     }
 
     /// <summary>

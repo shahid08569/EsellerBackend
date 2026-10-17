@@ -76,13 +76,26 @@ public class AddPartnerCommandHandler
 
         _context.Accounts.Add(account);
 
+        // Generate unique Referral Code (e.g. PRT-7A8B9C)
+        var rand = new Random();
+        const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        string refCode;
+        while (true)
+        {
+            var suffix = new string(Enumerable.Repeat(chars, 6).Select(s => s[rand.Next(s.Length)]).ToArray());
+            refCode = $"PRT-{suffix}";
+            if (!await _context.Partners.AnyAsync(p => p.ReferralCode == refCode, cancellationToken))
+                break;
+        }
+
         // Create Partner
         var partner = new Partner
         {
             AccountId = account.Id,
             AddedBySuperAdminId = _currentUserService.AccountId.Value,
             AddedAt = now,
-            Permissions = request.Permissions
+            Permissions = request.Permissions,
+            ReferralCode = refCode
         };
 
         partner.SetCreatedAt(now);

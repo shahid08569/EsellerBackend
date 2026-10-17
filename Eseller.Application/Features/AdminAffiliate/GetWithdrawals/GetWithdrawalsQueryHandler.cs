@@ -38,6 +38,20 @@ public class GetWithdrawalsQueryHandler
         // 3. Query
         var query = _context.Withdrawals.AsQueryable();
 
+        if (role == RoleType.Partner)
+        {
+            var partner = await _context.Partners.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+            var partnerId = partner?.Id ?? Guid.Empty;
+
+            var partnerAccountIds = await _context.Shopkeepers.AsNoTracking()
+                .Where(sk => sk.PartnerId == partnerId)
+                .Select(sk => sk.AccountId)
+                .ToListAsync(cancellationToken);
+
+            query = query.Where(w => partnerAccountIds.Contains(w.AccountId));
+        }
+
         if (!string.IsNullOrWhiteSpace(request.Status)
             && Enum.TryParse<WithdrawalStatus>(request.Status, true, out var status))
         {

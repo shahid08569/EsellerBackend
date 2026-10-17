@@ -35,32 +35,55 @@ public class GetPlatformDashboardQueryHandler
             return Result.Failure<PlatformDashboardDto>(
                 "Only admins can view platform dashboard.", "FORBIDDEN");
 
+        Guid? partnerId = null;
+        if (role == RoleType.Partner)
+        {
+            var partner = await _context.Partners.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+            partnerId = partner?.Id ?? Guid.Empty;
+        }
+
         // ═══════════════════════════════════════════════════════════
         // SHOPS
         // ═══════════════════════════════════════════════════════════
-        var totalShops = await _context.Shops.CountAsync(cancellationToken);
-        var activeShops = await _context.Shops
+        var shopsQuery = _context.Shops.AsQueryable();
+        var shopkeepersQuery = _context.Shopkeepers.AsQueryable();
+        if (partnerId.HasValue)
+        {
+            shopsQuery = shopsQuery.Where(s => s.PartnerId == partnerId.Value);
+            shopkeepersQuery = shopkeepersQuery.Where(sk => sk.PartnerId == partnerId.Value);
+        }
+
+        var totalShops = await shopsQuery.CountAsync(cancellationToken);
+        var activeShops = await shopsQuery
             .CountAsync(s => s.IsActive, cancellationToken);
 
-        var pendingShops = await _context.Shopkeepers
+        var pendingShops = await shopkeepersQuery
             .CountAsync(sk => sk.Status == ShopkeeperApprovalStatus.Pending, cancellationToken);
 
         // ═══════════════════════════════════════════════════════════
         // PRODUCTS
         // ═══════════════════════════════════════════════════════════
-        var totalProducts = await _context.Products
+        var productsQuery = _context.Products
             .IgnoreQueryFilters()
-            .CountAsync(p => p.DeletedAt == null, cancellationToken);
+            .Where(p => p.DeletedAt == null);
 
-        var approvedProducts = await _context.Products
-            .IgnoreQueryFilters()
-            .CountAsync(p => p.IsApproved && p.DeletedAt == null, cancellationToken);
+        if (partnerId.HasValue)
+        {
+            var partnerShopIds = _context.Shops.IgnoreQueryFilters()
+                .Where(s => s.PartnerId == partnerId.Value && s.DeletedAt == null)
+                .Select(s => s.Id);
+            productsQuery = productsQuery.Where(p => partnerShopIds.Contains(p.ShopId));
+        }
 
-        var rejectedProducts = await _context.Products
-            .IgnoreQueryFilters()
+        var totalProducts = await productsQuery.CountAsync(cancellationToken);
+
+        var approvedProducts = await productsQuery
+            .CountAsync(p => p.IsApproved, cancellationToken);
+
+        var rejectedProducts = await productsQuery
             .CountAsync(p => !p.IsApproved
-                          && p.RejectionReason != null
-                          && p.DeletedAt == null, cancellationToken);
+                          && p.RejectionReason != null, cancellationToken);
 
         var pendingProducts = totalProducts - approvedProducts - rejectedProducts;
 
@@ -68,7 +91,7 @@ public class GetPlatformDashboardQueryHandler
         // ORDERS — commerce only (same filter as Orders Hub)
         // Single load → in-memory counts (fast + matches /orders list).
         // ═══════════════════════════════════════════════════════════
-        var commerceRows = await _context.OrderRequests
+        var commerceOrderQuery = _context.OrderRequests
             .AsNoTracking()
             .Where(o => o.ShippingAddress == null
                 || (!o.ShippingAddress.StartsWith("SHOP_SUPPORT_")
@@ -76,7 +99,20 @@ public class GetPlatformDashboardQueryHandler
                     && !o.ShippingAddress.StartsWith("CUSTOMER_SUPPORT_")
                     && o.ShippingAddress != "Live Support Inquiry"))
             .Where(o => _context.SellerOrders.Any(so => so.OrderRequestId == o.Id)
-                        || _context.OrderRequestItems.Any(i => i.OrderRequestId == o.Id))
+                        || _context.OrderRequestItems.Any(i => i.OrderRequestId == o.Id));
+
+        if (partnerId.HasValue)
+        {
+            var partnerShopIds = _context.Shops.IgnoreQueryFilters()
+                .Where(s => s.PartnerId == partnerId.Value && s.DeletedAt == null)
+                .Select(s => s.Id);
+            var partnerOrderIds = _context.SellerOrders
+                .Where(so => partnerShopIds.Contains(so.ShopId))
+                .Select(so => so.OrderRequestId);
+            commerceOrderQuery = commerceOrderQuery.Where(o => partnerOrderIds.Contains(o.Id));
+        }
+
+        var commerceRows = await commerceOrderQuery
             .Select(o => new { o.Id, o.Status, o.CreatedAt })
             .ToListAsync(cancellationToken);
 

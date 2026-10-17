@@ -1,4 +1,4 @@
-﻿using Eseller.Domain.Entities.Identity;
+using Eseller.Domain.Entities.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -38,6 +38,9 @@ public class ShopkeeperConfiguration : IEntityTypeConfiguration<Shopkeeper>
 
         builder.Property(s => s.RejectionReason)
             .HasMaxLength(500)
+            .IsRequired(false);
+
+        builder.Property(s => s.PartnerId)
             .IsRequired(false);
 
         builder.Property(s => s.CreatedAt)

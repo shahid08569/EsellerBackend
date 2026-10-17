@@ -25,12 +25,23 @@ public class AdminSellerWalletsController : ControllerBase
 
     /// <summary>All shopkeepers with shop name, wallet balance, and earning totals.</summary>
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken cancellationToken)
+    public async Task<IActionResult> List(
+        [FromServices] ICurrentUserService currentUserService,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var shopkeepers = await _context.Shopkeepers
-                .AsNoTracking()
+            var query = _context.Shopkeepers.AsNoTracking().AsQueryable();
+
+            if (currentUserService.RoleType == RoleType.Partner)
+            {
+                var partnerId = await PartnerScopeHelper.GetCurrentPartnerIdAsync(_context, currentUserService, cancellationToken);
+                if (!partnerId.HasValue)
+                    return Ok(new { items = Array.Empty<object>() });
+                query = query.Where(s => s.PartnerId == partnerId.Value);
+            }
+
+            var shopkeepers = await query
                 .Select(sk => new { sk.Id, sk.AccountId, sk.Name, sk.Status })
                 .ToListAsync(cancellationToken);
 

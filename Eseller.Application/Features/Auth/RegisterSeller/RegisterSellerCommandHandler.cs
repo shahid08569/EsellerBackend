@@ -152,12 +152,41 @@ public class RegisterSellerCommandHandler
             null,
             cancellationToken);
 
-        // 8b. Track referral if registered with an Invitation / Referral Code
+        // 8b. Track referral if registered with an Invitation / Referral Code (Partner or Affiliate)
         if (!string.IsNullOrWhiteSpace(request.ReferralCode))
         {
             try
             {
                 var normalizedRef = request.ReferralCode.Trim().ToUpperInvariant();
+
+                // 1. Check if referral code belongs to a Partner ("Option A" Partner Link)
+                var partner = await _context.Partners
+                    .FirstOrDefaultAsync(p => p.ReferralCode == normalizedRef, cancellationToken);
+
+                if (partner != null)
+                {
+                    shop.PartnerId = partner.Id;
+                    shopkeeper.PartnerId = partner.Id;
+                    await _context.SaveChangesAsync(cancellationToken);
+
+                    try
+                    {
+                        await _notifications.NotifyAsync(
+                            partner.AccountId,
+                            RoleType.Partner,
+                            NotificationType.NewSeller,
+                            "New Store Joined via Your Partner Link!",
+                            $"Store \"{shop.Name}\" joined using your Partner referral code.",
+                            NotificationEntityType.Seller,
+                            shop.Id,
+                            "/partner-referrals",
+                            $"PartnerReferralJoined:{shop.Id:N}",
+                            cancellationToken);
+                    }
+                    catch { /* best-effort notification */ }
+                }
+
+                // 2. Check if referral code belongs to an Affiliate
                 var referrerAffiliate = await _context.Affiliates
                     .FirstOrDefaultAsync(a => a.ReferralCode == normalizedRef, cancellationToken);
 

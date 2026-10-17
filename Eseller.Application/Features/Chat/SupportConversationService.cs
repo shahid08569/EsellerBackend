@@ -65,8 +65,25 @@ public static class SupportConversationService
             return false;
 
         var role = currentUser.RoleType;
-        if (role == RoleType.SuperAdmin || role == RoleType.Partner)
+        if (role == RoleType.SuperAdmin)
             return true;
+
+        if (role == RoleType.Partner)
+        {
+            // Partner can ONLY access seller chat if the shop registered via this partner's referral code
+            if (conversation.ParticipantType != ChatParticipantType.Seller)
+                return false;
+
+            var partner = await context.Partners.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.AccountId == currentUser.AccountId.Value, cancellationToken);
+            if (partner == null)
+                return false;
+
+            return await context.Shops.IgnoreQueryFilters().AsNoTracking()
+                .AnyAsync(s => (s.Id == conversation.ParticipantId || s.Id == conversation.Id)
+                            && s.PartnerId == partner.Id
+                            && s.DeletedAt == null, cancellationToken);
+        }
 
         if (role == RoleType.User && conversation.ParticipantType == ChatParticipantType.Customer)
         {

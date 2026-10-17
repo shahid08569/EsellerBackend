@@ -8,4 +8,5 @@ public record LoginResponse(
     string AccessToken,
     string RefreshToken,
     DateTime AccessTokenExpiresAt,
-    string? Permissions = null);
+    string? Permissions = null,
+    string? ReferralCode = null);
