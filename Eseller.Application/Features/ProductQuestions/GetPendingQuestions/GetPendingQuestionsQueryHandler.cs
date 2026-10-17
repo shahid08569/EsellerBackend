@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -34,8 +34,18 @@ public class GetPendingQuestionsQueryHandler
                 "Only admins can view pending questions.", "FORBIDDEN");
 
         var query = _context.ProductQuestions
-            .Where(q => !q.IsApproved && !q.IsApproved)
-            .OrderByDescending(q => q.CreatedAt);
+            .Where(q => !q.IsApproved);
+
+        var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
+        if (partnerShopIds != null)
+        {
+            var permittedProductIds = _context.Products.IgnoreQueryFilters().AsNoTracking()
+                .Where(p => partnerShopIds.Contains(p.ShopId) && p.DeletedAt == null)
+                .Select(p => p.Id);
+            query = query.Where(q => permittedProductIds.Contains(q.ProductId));
+        }
+
+        query = query.OrderByDescending(q => q.CreatedAt);
 
         var totalCount = await query.CountAsync(cancellationToken);
 

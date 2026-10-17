@@ -10,10 +10,14 @@ public class GetRejectedProductsQueryHandler
     : IRequestHandler<GetRejectedProductsQuery, Result<PagedList<ProductListDto>>>
 {
     private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
 
-    public GetRejectedProductsQueryHandler(IApplicationDbContext context)
+    public GetRejectedProductsQueryHandler(
+        IApplicationDbContext context,
+        ICurrentUserService currentUserService)
     {
         _context = context;
+        _currentUserService = currentUserService;
     }
 
     public async Task<Result<PagedList<ProductListDto>>> Handle(
@@ -29,8 +33,15 @@ public class GetRejectedProductsQueryHandler
                 !p.IsApproved
                 && p.DeletedAt == null
                 && p.RejectionReason != null
-                && (!masterShopId.HasValue || p.ShopId != masterShopId.Value))
-            .OrderByDescending(p => p.UpdatedAt);
+                && (!masterShopId.HasValue || p.ShopId != masterShopId.Value));
+
+        var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
+        if (partnerShopIds != null)
+        {
+            query = query.Where(p => partnerShopIds.Contains(p.ShopId));
+        }
+
+        query = query.OrderByDescending(p => p.UpdatedAt);
 
         var totalCount = await query.CountAsync(cancellationToken);
         if (totalCount == 0)

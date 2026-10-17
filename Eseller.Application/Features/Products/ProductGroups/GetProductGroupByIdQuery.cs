@@ -11,10 +11,14 @@ public class GetProductGroupByIdQueryHandler
     : IRequestHandler<GetProductGroupByIdQuery, Result<ProductGroupDetailDto>>
 {
     private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
 
-    public GetProductGroupByIdQueryHandler(IApplicationDbContext context)
+    public GetProductGroupByIdQueryHandler(
+        IApplicationDbContext context,
+        ICurrentUserService currentUserService)
     {
         _context = context;
+        _currentUserService = currentUserService;
     }
 
     public async Task<Result<ProductGroupDetailDto>> Handle(
@@ -27,6 +31,9 @@ public class GetProductGroupByIdQueryHandler
 
         if (group is null)
             return Result.Failure<ProductGroupDetailDto>("Product group not found.", "GROUP_NOT_FOUND");
+
+        if (!await PartnerScopeHelper.IsShopPermittedForPartnerAsync(_context, _currentUserService, group.ShopId, cancellationToken))
+            return Result.Failure<ProductGroupDetailDto>("Forbidden: You can only view product groups for shops registered through your referral link.", "FORBIDDEN");
 
         var shop = await _context.Shops
             .IgnoreQueryFilters()

@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -39,6 +39,11 @@ public class RejectQuestionCommandHandler
 
         if (question is null)
             return Result.Failure("Question not found.", "QUESTION_NOT_FOUND");
+
+        var product = await _context.Products.IgnoreQueryFilters().AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == question.ProductId, cancellationToken);
+        if (product != null && !await PartnerScopeHelper.IsShopPermittedForPartnerAsync(_context, _currentUserService, product.ShopId, cancellationToken))
+            return Result.Failure("Forbidden: You can only reject questions for shops registered through your referral link.", "FORBIDDEN");
 
         // ✅ SOFT DELETE (reject = soft delete)
         question.IsDeleted = true;

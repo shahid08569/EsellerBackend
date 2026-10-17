@@ -47,7 +47,40 @@ public class GetUnreadCountQueryHandler
         if (_currentUserService.AccountId is null) return 0;
         var accountId = _currentUserService.AccountId.Value;
 
-        if (role == RoleType.SuperAdmin || role == RoleType.Partner)
+        if (role == RoleType.Partner)
+        {
+            var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
+            if (partnerShopIds == null || partnerShopIds.Count == 0)
+                return 0;
+
+            var convoIds = await _context.Conversations.AsNoTracking()
+                .Where(c => c.ParticipantType == ChatParticipantType.Seller
+                            && partnerShopIds.Contains(c.ParticipantId))
+                .Select(c => c.Id)
+                .ToListAsync(cancellationToken);
+
+            var allRoomIds = partnerShopIds.Concat(convoIds).Distinct().ToList();
+
+            var unreadMsg = await _context.Messages.AsNoTracking()
+                .CountAsync(m => allRoomIds.Contains(m.ConversationId)
+                                 && !m.IsRead
+                                 && m.SenderId != accountId
+                                 && m.SenderRole != ChatSenderRole.SuperAdmin
+                                 && m.SenderRole != ChatSenderRole.Partner,
+                    cancellationToken);
+
+            var unreadLegacy = await _context.ChatMessages.AsNoTracking()
+                .CountAsync(cm => allRoomIds.Contains(cm.OrderRequestId)
+                                  && !cm.IsRead
+                                  && cm.SenderAccountId != accountId
+                                  && cm.SenderRole != ChatSenderRole.SuperAdmin
+                                  && cm.SenderRole != ChatSenderRole.Partner,
+                    cancellationToken);
+
+            return unreadMsg + unreadLegacy;
+        }
+
+        if (role == RoleType.SuperAdmin)
         {
             var unreadMsg = await _context.Messages.AsNoTracking()
                 .CountAsync(m => !m.IsRead

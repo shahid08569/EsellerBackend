@@ -1,4 +1,5 @@
 using Eseller.Application.Abstractions;
+using Eseller.Application.Common;
 using Eseller.Application.Features.ShopCategories.CreateShopCategory;
 using Eseller.Application.Features.ShopCategories.DeleteShopCategory;
 using Eseller.Application.Features.ShopCategories.GetShopCategories;
@@ -19,11 +20,16 @@ public class AdminShopCategoriesController : ControllerBase
 {
     private readonly ISender _sender;
     private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
 
-    public AdminShopCategoriesController(ISender sender, IApplicationDbContext context)
+    public AdminShopCategoriesController(
+        ISender sender,
+        IApplicationDbContext context,
+        ICurrentUserService currentUserService)
     {
         _sender = sender;
         _context = context;
+        _currentUserService = currentUserService;
     }
 
     /// <summary>
@@ -230,8 +236,14 @@ public class AdminShopCategoriesController : ControllerBase
             // Never bind to RequestAborted — admin list must always complete.
             var ct = CancellationToken.None;
 
-            var rows = await _context.TierUpgradeRequests
-                .AsNoTracking()
+            var query = _context.TierUpgradeRequests.AsNoTracking();
+            var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, ct);
+            if (partnerShopIds != null)
+            {
+                query = query.Where(r => partnerShopIds.Contains(r.ShopId));
+            }
+
+            var rows = await query
                 .OrderByDescending(r => r.RequestedAt)
                 .Select(req => new
                 {
@@ -355,6 +367,9 @@ public class AdminShopCategoriesController : ControllerBase
 
         if (shop == null)
             return BadRequest(new { error = $"Shop linked to this request was not found (ShopId: {req.ShopId})." });
+
+        if (!await PartnerScopeHelper.IsShopPermittedForPartnerAsync(_context, _currentUserService, shop.Id, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden: You can only approve tier upgrade requests for shops registered through your referral link." });
 
         var categories = await _context.ShopCategories.Where(sc => sc.DeletedAt == null).ToListAsync(cancellationToken);
         var matchedCat = ResolveRequestedCategory(req, categories);
@@ -480,6 +495,9 @@ public class AdminShopCategoriesController : ControllerBase
     {
         var req = await _context.TierUpgradeRequests.FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
         if (req == null) return NotFound(new { error = "Tier upgrade request not found." });
+
+        if (req.ShopId != Guid.Empty && !await PartnerScopeHelper.IsShopPermittedForPartnerAsync(_context, _currentUserService, req.ShopId, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden: You can only reject tier upgrade requests for shops registered through your referral link." });
 
         req.Status = "Rejected";
         req.ReviewNotes = body.Reason ?? "Payment verification could not be completed.";

@@ -10,10 +10,14 @@ public class GetApprovedSellerProductsQueryHandler
     : IRequestHandler<GetApprovedSellerProductsQuery, Result<PagedList<ProductListDto>>>
 {
     private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
 
-    public GetApprovedSellerProductsQueryHandler(IApplicationDbContext context)
+    public GetApprovedSellerProductsQueryHandler(
+        IApplicationDbContext context,
+        ICurrentUserService currentUserService)
     {
         _context = context;
+        _currentUserService = currentUserService;
     }
 
     public async Task<Result<PagedList<ProductListDto>>> Handle(
@@ -29,6 +33,12 @@ public class GetApprovedSellerProductsQueryHandler
                 p.IsApproved
                 && p.DeletedAt == null
                 && (!masterShopId.HasValue || request.ShopId.HasValue || p.ShopId != masterShopId.Value));
+
+        var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
+        if (partnerShopIds != null)
+        {
+            query = query.Where(p => partnerShopIds.Contains(p.ShopId));
+        }
 
         if (request.ShopId.HasValue)
         {

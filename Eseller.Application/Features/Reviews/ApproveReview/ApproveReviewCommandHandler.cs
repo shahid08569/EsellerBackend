@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -39,6 +39,11 @@ public class ApproveReviewCommandHandler
 
         if (review is null)
             return Result.Failure("Review not found.", "REVIEW_NOT_FOUND");
+
+        var product = await _context.Products.IgnoreQueryFilters().AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == review.ProductId, cancellationToken);
+        if (product != null && !await PartnerScopeHelper.IsShopPermittedForPartnerAsync(_context, _currentUserService, product.ShopId, cancellationToken))
+            return Result.Failure("Forbidden: You can only approve reviews for shops registered through your referral link.", "FORBIDDEN");
 
         review.IsApproved = true;
 

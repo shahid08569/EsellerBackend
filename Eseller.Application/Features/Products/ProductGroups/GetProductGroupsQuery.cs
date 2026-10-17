@@ -14,10 +14,14 @@ public class GetProductGroupsQueryHandler
     : IRequestHandler<GetProductGroupsQuery, Result<List<ProductGroupDto>>>
 {
     private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
 
-    public GetProductGroupsQueryHandler(IApplicationDbContext context)
+    public GetProductGroupsQueryHandler(
+        IApplicationDbContext context,
+        ICurrentUserService currentUserService)
     {
         _context = context;
+        _currentUserService = currentUserService;
     }
 
     public async Task<Result<List<ProductGroupDto>>> Handle(
@@ -27,6 +31,12 @@ public class GetProductGroupsQueryHandler
         var query = _context.ProductGroupListings
             .IgnoreQueryFilters()
             .Where(g => g.DeletedAt == null);
+
+        var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
+        if (partnerShopIds != null)
+        {
+            query = query.Where(g => partnerShopIds.Contains(g.ShopId));
+        }
 
         if (request.ShopId.HasValue && request.ShopId.Value != Guid.Empty)
         {

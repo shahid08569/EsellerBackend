@@ -68,12 +68,17 @@ public class GetConversationsQueryHandler
                         && s.Name != MasterCatalog.ShopName);
 
         var isPartner = _currentUserService.RoleType == RoleType.Partner;
-        if (isPartner && _currentUserService.AccountId.HasValue)
+        HashSet<Guid>? partnerShopIds = null;
+        if (isPartner)
         {
-            var partner = await _context.Partners.AsNoTracking()
-                .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
-            var partnerId = partner?.Id ?? Guid.Empty;
-            shopsQuery = shopsQuery.Where(s => s.PartnerId == partnerId);
+            partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
+            if (partnerShopIds == null || partnerShopIds.Count == 0)
+            {
+                // Partner has 0 referred shops -> strictly 0 conversations!
+                return Result.Success(new PagedList<ConversationDto>(
+                    Array.Empty<ConversationDto>(), 0, request.PageNumber, request.PageSize));
+            }
+            shopsQuery = shopsQuery.Where(s => partnerShopIds.Contains(s.Id));
         }
 
         var shops = await shopsQuery.ToListAsync(cancellationToken);

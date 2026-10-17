@@ -10,10 +10,14 @@ public class GetPendingProductsQueryHandler
     : IRequestHandler<GetPendingProductsQuery, Result<PagedList<ProductListDto>>>
 {
     private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
 
-    public GetPendingProductsQueryHandler(IApplicationDbContext context)
+    public GetPendingProductsQueryHandler(
+        IApplicationDbContext context,
+        ICurrentUserService currentUserService)
     {
         _context = context;
+        _currentUserService = currentUserService;
     }
 
     public async Task<Result<PagedList<ProductListDto>>> Handle(
@@ -31,6 +35,12 @@ public class GetPendingProductsQueryHandler
                 && p.DeletedAt == null
                 && p.RejectionReason == null
                 && (!masterShopId.HasValue || p.ShopId != masterShopId.Value));
+
+        var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
+        if (partnerShopIds != null)
+        {
+            query = query.Where(p => partnerShopIds.Contains(p.ShopId));
+        }
 
         var kind = request.Kind?.Trim().ToLowerInvariant();
         if (kind is "global" or "warehouse" or "listing")

@@ -10,15 +10,18 @@ public class ApproveProductCommandHandler
     : IRequestHandler<ApproveProductCommand, Result>
 {
     private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
     private readonly IAppNotificationService _notifications;
 
     public ApproveProductCommandHandler(
         IApplicationDbContext context,
+        ICurrentUserService currentUserService,
         IDateTime dateTime,
         IAppNotificationService notifications)
     {
         _context = context;
+        _currentUserService = currentUserService;
         _dateTime = dateTime;
         _notifications = notifications;
     }
@@ -35,6 +38,9 @@ public class ApproveProductCommandHandler
 
         if (product.IsApproved)
             return Result.Failure("Product is already approved.", "ALREADY_APPROVED");
+
+        if (!await PartnerScopeHelper.IsShopPermittedForPartnerAsync(_context, _currentUserService, product.ShopId, cancellationToken))
+            return Result.Failure("Forbidden: You can only approve products for shops registered through your referral link.", "FORBIDDEN");
 
         product.Approve();
         product.SetUpdatedAt(_dateTime.UtcNow);

@@ -10,15 +10,18 @@ public class RejectProductCommandHandler
     : IRequestHandler<RejectProductCommand, Result>
 {
     private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
     private readonly IAppNotificationService _notifications;
 
     public RejectProductCommandHandler(
         IApplicationDbContext context,
+        ICurrentUserService currentUserService,
         IDateTime dateTime,
         IAppNotificationService notifications)
     {
         _context = context;
+        _currentUserService = currentUserService;
         _dateTime = dateTime;
         _notifications = notifications;
     }
@@ -33,6 +36,9 @@ public class RejectProductCommandHandler
 
         if (product is null)
             return Result.Failure("Product not found.", "PRODUCT_NOT_FOUND");
+
+        if (!await PartnerScopeHelper.IsShopPermittedForPartnerAsync(_context, _currentUserService, product.ShopId, cancellationToken))
+            return Result.Failure("Forbidden: You can only reject products for shops registered through your referral link.", "FORBIDDEN");
 
         product.Reject(request.Reason);
         product.SetUpdatedAt(_dateTime.UtcNow);
