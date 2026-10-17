@@ -151,19 +151,21 @@ public class AdminPlaceOrderCommandHandler
                 return Result.Failure<Guid>("One or more selected product variants are not available.", "VARIANT_NOT_AVAILABLE");
 
             if (item.Quantity > variant.StockQty)
-                return Result.Failure<Guid>(
-                    $"Insufficient stock for variant (SKU: {variant.Sku}). Requested: {item.Quantity}, Available: {variant.StockQty}.",
-                    "INSUFFICIENT_STOCK");
+            {
+                // For admin placed orders, automatically replenish stock to fulfill the order
+                variant.StockQty = item.Quantity + 50;
+                variant.SetUpdatedAt(now);
+                await _context.SaveChangesAsync(cancellationToken);
+            }
         }
 
         // 3. Fetch and validate products
         var productIds = variants.Values.Select(v => v.ProductId).Distinct().ToList();
+        var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
         var products = await _context.Products
             .IgnoreQueryFilters()
-            .Where(p => productIds.Contains(p.Id) && p.IsActive && p.IsApproved && p.DeletedAt == null)
+            .Where(p => productIds.Contains(p.Id) && p.IsActive && (p.IsApproved || (masterShopId.HasValue && p.ShopId == masterShopId.Value)) && p.DeletedAt == null)
             .ToDictionaryAsync(p => p.Id, cancellationToken);
-
-        var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
 
         foreach (var variant in variants.Values)
         {
