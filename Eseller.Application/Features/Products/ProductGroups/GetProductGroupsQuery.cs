@@ -50,17 +50,28 @@ public class GetProductGroupsQueryHandler
             .ToDictionaryAsync(s => s.Id, cancellationToken);
 
         var batchIds = groups.Select(g => g.Id).ToList();
-        var currentCounts = await _context.Products
+        var productStats = await _context.Products
             .IgnoreQueryFilters()
             .Where(p => p.ListingBatchId.HasValue && batchIds.Contains(p.ListingBatchId.Value) && p.DeletedAt == null)
             .GroupBy(p => p.ListingBatchId!.Value)
-            .Select(g => new { BatchId = g.Key, Count = g.Count() })
-            .ToDictionaryAsync(x => x.BatchId, x => x.Count, cancellationToken);
+            .Select(g => new
+            {
+                BatchId = g.Key,
+                TotalCount = g.Count(),
+                ApprovedCount = g.Count(p => p.IsApproved),
+                PendingCount = g.Count(p => !p.IsApproved)
+            })
+            .ToDictionaryAsync(x => x.BatchId, cancellationToken);
 
         var dtos = groups.Select(g =>
         {
             shops.TryGetValue(g.ShopId, out var shop);
-            currentCounts.TryGetValue(g.Id, out var count);
+            productStats.TryGetValue(g.Id, out var stats);
+
+            var total = stats?.TotalCount ?? 0;
+            var approved = stats?.ApprovedCount ?? 0;
+            var pending = stats?.PendingCount ?? 0;
+            var isApproved = total > 0 && pending == 0;
 
             return new ProductGroupDto(
                 g.Id,
@@ -70,7 +81,10 @@ public class GetProductGroupsQueryHandler
                 g.BatchName,
                 g.RequestedCount,
                 g.DeliveredCount,
-                count,
+                total,
+                approved,
+                pending,
+                isApproved,
                 g.CategoryFilter,
                 g.BrandFilter,
                 g.MinPrice,

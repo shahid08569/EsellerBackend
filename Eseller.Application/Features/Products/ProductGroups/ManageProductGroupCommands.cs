@@ -374,3 +374,112 @@ public class DeleteProductGroupCommandHandler : IRequestHandler<DeleteProductGro
         return Result.Success();
     }
 }
+
+// ─── APPROVE PRODUCT GROUP / BATCH ──────────────────────────────────────────
+public record ApproveProductGroupCommand(Guid BatchId) : IRequest<Result<int>>;
+
+public class ApproveProductGroupCommandHandler : IRequestHandler<ApproveProductGroupCommand, Result<int>>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
+    private readonly IDateTime _dateTime;
+
+    public ApproveProductGroupCommandHandler(
+        IApplicationDbContext context,
+        ICurrentUserService currentUserService,
+        IDateTime dateTime)
+    {
+        _context = context;
+        _currentUserService = currentUserService;
+        _dateTime = dateTime;
+    }
+
+    public async Task<Result<int>> Handle(ApproveProductGroupCommand request, CancellationToken cancellationToken)
+    {
+        var role = _currentUserService.RoleType;
+        if (role != RoleType.SuperAdmin && role != RoleType.Partner)
+            return Result.Failure<int>("Only admins can approve group listings.", "FORBIDDEN");
+
+        var group = await _context.ProductGroupListings
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(g => g.Id == request.BatchId && g.DeletedAt == null, cancellationToken);
+
+        if (group is null)
+            return Result.Failure<int>("Product group not found.", "GROUP_NOT_FOUND");
+
+        var products = await _context.Products
+            .IgnoreQueryFilters()
+            .Where(p => p.ListingBatchId == group.Id && p.DeletedAt == null)
+            .ToListAsync(cancellationToken);
+
+        var now = _dateTime.UtcNow;
+        int approvedCount = 0;
+        foreach (var p in products)
+        {
+            if (!p.IsApproved || !p.IsActive)
+            {
+                p.Approve();
+                p.SetUpdatedAt(now);
+                approvedCount++;
+            }
+        }
+
+        group.SetUpdatedAt(now);
+
+        var shop = await _context.Shops
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(s => s.Id == group.ShopId, cancellationToken);
+        if (shop is not null)
+        {
+            var activeCount = await _context.Products
+                .IgnoreQueryFilters()
+                .CountAsync(p => p.ShopId == shop.Id && p.DeletedAt == null && p.IsApproved, cancellationToken);
+            shop.TotalProducts = activeCount;
+            shop.SetUpdatedAt(now);
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+        return Result.Success(approvedCount);
+    }
+}
+
+// ─── APPROVE INDIVIDUAL PRODUCT IN GROUP ────────────────────────────────────
+public record ApproveGroupProductCommand(Guid BatchId, Guid ProductId) : IRequest<Result>;
+
+public class ApproveGroupProductCommandHandler : IRequestHandler<ApproveGroupProductCommand, Result>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
+    private readonly IDateTime _dateTime;
+
+    public ApproveGroupProductCommandHandler(
+        IApplicationDbContext context,
+        ICurrentUserService currentUserService,
+        IDateTime dateTime)
+    {
+        _context = context;
+        _currentUserService = currentUserService;
+        _dateTime = dateTime;
+    }
+
+    public async Task<Result> Handle(ApproveGroupProductCommand request, CancellationToken cancellationToken)
+    {
+        var role = _currentUserService.RoleType;
+        if (role != RoleType.SuperAdmin && role != RoleType.Partner)
+            return Result.Failure("Only admins can approve group listings.", "FORBIDDEN");
+
+        var product = await _context.Products
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p => p.Id == request.ProductId && p.ListingBatchId == request.BatchId && p.DeletedAt == null, cancellationToken);
+
+        if (product is null)
+            return Result.Failure("Product not found in this group.", "PRODUCT_NOT_FOUND");
+
+        var now = _dateTime.UtcNow;
+        product.Approve();
+        product.SetUpdatedAt(now);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        return Result.Success();
+    }
+}

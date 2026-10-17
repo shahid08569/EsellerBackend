@@ -100,6 +100,10 @@ public class GetProductGroupByIdQueryHandler
             );
         }).ToList();
 
+        var approvedCount = cardDtos.Count(p => p.IsApproved);
+        var pendingCount = cardDtos.Count(p => !p.IsApproved);
+        var isApproved = cardDtos.Count > 0 && pendingCount == 0;
+
         var detail = new ProductGroupDetailDto(
             group.Id,
             group.ShopId,
@@ -109,6 +113,9 @@ public class GetProductGroupByIdQueryHandler
             group.RequestedCount,
             group.DeliveredCount,
             cardDtos.Count,
+            approvedCount,
+            pendingCount,
+            isApproved,
             group.CategoryFilter,
             group.BrandFilter,
             group.MinPrice,

@@ -87,10 +87,10 @@ public class AddGroupToStoreCommandHandler
 
         var query = _context.Products
             .IgnoreQueryFilters()
-            .Where(p => p.ShopId == masterShop.Id
+            .Where(p => (p.ShopId == masterShop.Id || p.SourceProductId == null)
+                        && p.ShopId != shop.Id
                         && p.SourceProductId == null
                         && p.IsActive
-                        && p.IsApproved
                         && p.DeletedAt == null
                         && !existingSet.Contains(p.Id));
 
@@ -117,21 +117,58 @@ public class AddGroupToStoreCommandHandler
         var candidateIds = await query.Select(p => p.Id).ToListAsync(cancellationToken);
         if (candidateIds.Count == 0)
         {
+            // If all matching products are already in shop, allow broader candidates so seller can fulfill quota
+            candidateIds = await _context.Products
+                .IgnoreQueryFilters()
+                .Where(p => (p.ShopId == masterShop.Id || p.SourceProductId == null)
+                            && p.ShopId != shop.Id
+                            && p.SourceProductId == null
+                            && p.IsActive
+                            && p.DeletedAt == null)
+                .Select(p => p.Id)
+                .ToListAsync(cancellationToken);
+        }
+
+        if (candidateIds.Count == 0)
+        {
             return Result.Failure<AddGroupToStoreResultDto>(
-                "No available warehouse products match your selected category, brand, or price criteria (or all matching products are already in your shop).",
+                "No available warehouse products match your selected criteria.",
                 "NO_MATCHING_PRODUCTS");
         }
 
         var rand = new Random();
-        var selectedSourceIds = candidateIds
-            .OrderBy(_ => rand.Next())
-            .Take(targetCount)
-            .ToList();
+        var selectedSourceIds = new List<Guid>();
 
-        var sourceProducts = await _context.Products
+        if (candidateIds.Count >= targetCount)
+        {
+            selectedSourceIds = candidateIds
+                .OrderBy(_ => rand.Next())
+                .Take(targetCount)
+                .ToList();
+        }
+        else
+        {
+            // If candidate catalog products are fewer than requested, cycle candidates to deliver exact targetCount
+            selectedSourceIds.AddRange(candidateIds.OrderBy(_ => rand.Next()));
+            while (selectedSourceIds.Count < targetCount && candidateIds.Count > 0)
+            {
+                var needed = targetCount - selectedSourceIds.Count;
+                var refill = candidateIds.OrderBy(_ => rand.Next()).Take(needed).ToList();
+                selectedSourceIds.AddRange(refill);
+            }
+        }
+
+        var distinctSourceIds = selectedSourceIds.Distinct().ToList();
+        var sourceProductsDict = await _context.Products
             .IgnoreQueryFilters()
-            .Where(p => selectedSourceIds.Contains(p.Id))
-            .ToListAsync(cancellationToken);
+            .Where(p => distinctSourceIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, cancellationToken);
+
+        var sourceProducts = selectedSourceIds
+            .Select(id => sourceProductsDict.TryGetValue(id, out var sp) ? sp : null)
+            .Where(sp => sp is not null)
+            .Select(sp => sp!)
+            .ToList();
 
         var batchId = Guid.NewGuid();
         var now = _dateTime.UtcNow;

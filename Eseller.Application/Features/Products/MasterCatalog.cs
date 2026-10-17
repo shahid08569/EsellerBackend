@@ -10,7 +10,7 @@ public static class MasterCatalog
 {
     public const string ShopSlug = "master-warehouse";
     public const string ShopName = "Platform Master Warehouse";
-    public const int DefaultFreeProductLimit = 200;
+    public const int DefaultFreeProductLimit = 1000;
     private const string SellerListingDescriptionPrefix = "Warehouse listing for";
 
     public static async Task<Shop> GetOrCreateMasterShopAsync(

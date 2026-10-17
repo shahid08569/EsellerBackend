@@ -124,6 +124,37 @@ public class AdminProductGroupsController : ControllerBase
 
         return Ok(new { message = "Product group and all its listings deleted successfully." });
     }
+
+    /// <summary>
+    /// Approve all products in a group batch.
+    /// </summary>
+    [HttpPost("{batchId:guid}/approve")]
+    public async Task<IActionResult> ApproveGroup(
+        Guid batchId,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _sender.Send(new ApproveProductGroupCommand(batchId), cancellationToken);
+        if (!result.IsSuccess)
+            return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
+
+        return Ok(new { approvedCount = result.Value, message = $"Successfully approved {result.Value} products in the group batch." });
+    }
+
+    /// <summary>
+    /// Approve a single product within a group batch.
+    /// </summary>
+    [HttpPost("{batchId:guid}/products/{productId:guid}/approve")]
+    public async Task<IActionResult> ApproveProduct(
+        Guid batchId,
+        Guid productId,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _sender.Send(new ApproveGroupProductCommand(batchId, productId), cancellationToken);
+        if (!result.IsSuccess)
+            return BadRequest(new { error = result.Error, errorCode = result.ErrorCode });
+
+        return Ok(new { message = "Product in group approved successfully." });
+    }
 }
 
 public record ReplaceGroupProductRequest(Guid OldProductId, Guid NewWarehouseProductId);
