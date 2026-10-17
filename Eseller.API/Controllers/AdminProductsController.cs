@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Features.Products;
 using Eseller.Application.Features.Products.ApproveProduct;
 using Eseller.Application.Features.Products.GetApprovedSellerProducts;
@@ -70,12 +70,16 @@ public class AdminProductsController : ControllerBase
     [HttpGet("approved")]
     public async Task<IActionResult> GetApproved(
         [FromQuery] int pageNumber = 1,
-        [FromQuery] int pageSize = 20,
+        [FromQuery] int pageSize = 50,
         /// <summary>global|warehouse|listing = warehouse clones; own|seller|new = seller-created.</summary>
         [FromQuery] string? kind = null,
+        [FromQuery] Guid? shopId = null,
+        [FromQuery] Guid? categoryId = null,
+        [FromQuery] Guid? brandId = null,
+        [FromQuery] string? search = null,
         CancellationToken cancellationToken = default)
     {
-        var query = new GetApprovedSellerProductsQuery(pageNumber, pageSize, kind);
+        var query = new GetApprovedSellerProductsQuery(pageNumber, pageSize, kind, shopId, categoryId, brandId, search);
         var result = await _sender.Send(query, cancellationToken);
 
         if (!result.IsSuccess)

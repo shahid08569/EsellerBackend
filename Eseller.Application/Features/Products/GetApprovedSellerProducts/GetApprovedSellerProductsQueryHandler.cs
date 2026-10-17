@@ -28,7 +28,32 @@ public class GetApprovedSellerProductsQueryHandler
             .Where(p =>
                 p.IsApproved
                 && p.DeletedAt == null
-                && (!masterShopId.HasValue || p.ShopId != masterShopId.Value));
+                && (!masterShopId.HasValue || request.ShopId.HasValue || p.ShopId != masterShopId.Value));
+
+        if (request.ShopId.HasValue)
+        {
+            query = query.Where(p => p.ShopId == request.ShopId.Value);
+        }
+
+        if (request.CategoryId.HasValue)
+        {
+            query = query.Where(p => p.CategoryId == request.CategoryId.Value);
+        }
+
+        if (request.BrandId.HasValue)
+        {
+            query = query.Where(p => p.BrandId == request.BrandId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Search))
+        {
+            var search = request.Search.Trim().ToLower();
+            query = query.Where(p =>
+                p.Name.ToLower().Contains(search) ||
+                p.Slug.ToLower().Contains(search) ||
+                (p.Description != null && p.Description.ToLower().Contains(search)) ||
+                _context.ProductVariants.Any(v => v.ProductId == p.Id && v.Sku.ToLower().Contains(search)));
+        }
 
         var kind = request.Kind?.Trim().ToLowerInvariant();
         if (kind is "global" or "warehouse" or "listing")
