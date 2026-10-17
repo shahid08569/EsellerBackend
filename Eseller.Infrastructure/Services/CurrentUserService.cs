@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Domain.Enums;
 using Microsoft.AspNetCore.Http;
 using System.Security.Claims;
@@ -32,7 +32,9 @@ public class CurrentUserService : ICurrentUserService
         get
         {
             var claim = _httpContextAccessor.HttpContext?.User?
-                .FindFirst(ClaimTypes.Role)?.Value;
+                .FindFirst(ClaimTypes.Role)?.Value
+                ?? _httpContextAccessor.HttpContext?.User?
+                .FindFirst("role")?.Value;
 
             return Enum.TryParse<RoleType>(claim, out var role) ? role : null;
         }

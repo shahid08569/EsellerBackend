@@ -32,9 +32,25 @@ public class RemoveProductFromGroupCommandHandler : IRequestHandler<RemoveProduc
         if (role != RoleType.SuperAdmin && role != RoleType.Partner)
             return Result.Failure("Only admins can manage group listings.", "FORBIDDEN");
 
+        var group = await _context.ProductGroupListings
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(g => g.Id == request.BatchId && g.DeletedAt == null, cancellationToken);
+
         var product = await _context.Products
             .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(p => p.Id == request.ProductId && p.ListingBatchId == request.BatchId && p.DeletedAt == null, cancellationToken);
+            .FirstOrDefaultAsync(p => 
+                (p.Id == request.ProductId || p.SourceProductId == request.ProductId) &&
+                (p.ListingBatchId == request.BatchId || (group != null && p.ShopId == group.ShopId && (p.ListingBatchId == group.Id || p.BatchName == group.BatchName))) &&
+                p.DeletedAt == null, 
+                cancellationToken);
+
+        if (product is null && group != null)
+        {
+            // Fallback: check if the product belongs to this group's shop with this ID
+            product = await _context.Products
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(p => (p.Id == request.ProductId || p.SourceProductId == request.ProductId) && p.ShopId == group.ShopId && p.DeletedAt == null, cancellationToken);
+        }
 
         if (product is null)
             return Result.Failure("Product not found in this group.", "PRODUCT_NOT_FOUND");
@@ -42,8 +58,28 @@ public class RemoveProductFromGroupCommandHandler : IRequestHandler<RemoveProduc
         var now = _dateTime.UtcNow;
         product.DeletedAt = now;
         product.IsActive = false;
+        product.ListingBatchId = null;
         product.SetUpdatedAt(now);
 
+        // Also soft-delete product variants
+        var variants = await _context.ProductVariants
+            .IgnoreQueryFilters()
+            .Where(v => v.ProductId == product.Id && v.DeletedAt == null)
+            .ToListAsync(cancellationToken);
+        foreach (var v in variants)
+        {
+            v.DeletedAt = now;
+            v.SetUpdatedAt(now);
+        }
+
+        // Decrement group delivered count
+        if (group != null && group.DeliveredCount > 0)
+        {
+            group.DeliveredCount--;
+            group.SetUpdatedAt(now);
+        }
+
+        // Decrement shop total product count
         var shop = await _context.Shops
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(s => s.Id == product.ShopId, cancellationToken);
