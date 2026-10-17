@@ -25,9 +25,6 @@ public static class PartnerPermissionChecker
         if (perms.Contains("*") || perms.Contains("all")) return true;
         if (perms.Contains(requiredPermission)) return true;
 
-        var prefix = requiredPermission.Split(':')[0];
-        if (perms.Contains(prefix)) return true;
-
         return false;
     }
 
