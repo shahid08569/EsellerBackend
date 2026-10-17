@@ -1,4 +1,4 @@
-﻿using Eseller.Domain.Common;
+using Eseller.Domain.Common;
 
 namespace Eseller.Domain.Entities.Catalog;
 
@@ -9,6 +9,11 @@ public class Product : AuditableEntity, ISoftDelete
     /// When set, this product is a seller listing cloned from a Super Admin catalog product.
     /// </summary>
     public Guid? SourceProductId { get; set; }
+    /// <summary>
+    /// When set, this product was imported/listed as part of a bulk group listing batch.
+    /// </summary>
+    public Guid? ListingBatchId { get; set; }
+    public string? BatchName { get; set; }
     public Guid CategoryId { get; set; }
     public Guid? BrandId { get; set; }
     public string Name { get; set; } = string.Empty;

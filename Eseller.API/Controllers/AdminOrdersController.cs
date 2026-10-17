@@ -130,6 +130,47 @@ public class AdminOrdersController : ControllerBase
     }
 
     /// <summary>
+    /// Super Admin batch updates status for multiple orders at once.
+    /// </summary>
+    [HttpPut("batch-status")]
+    public async Task<IActionResult> BatchUpdateStatus(
+        [FromBody] BatchUpdateOrderStatusRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.OrderIds == null || request.OrderIds.Count == 0)
+            return BadRequest(new { error = "No orders specified for status update.", errorCode = "NO_ORDERS_SELECTED" });
+
+        int successCount = 0;
+        int failedCount = 0;
+        var errors = new List<string>();
+
+        foreach (var orderId in request.OrderIds.Distinct())
+        {
+            var command = new UpdateOrderStatusCommand(orderId, request.NewStatus);
+            var result = await _sender.Send(command, cancellationToken);
+            if (result.IsSuccess)
+            {
+                successCount++;
+            }
+            else
+            {
+                failedCount++;
+                errors.Add($"Order {orderId}: {result.Error}");
+            }
+        }
+
+        return Ok(new
+        {
+            updatedCount = successCount,
+            failedCount = failedCount,
+            errors = errors.Take(5).ToList(),
+            message = successCount > 0
+                ? $"Successfully updated status of {successCount} orders to {request.NewStatus}." + (failedCount > 0 ? $" ({failedCount} orders could not be transitioned)." : "")
+                : $"Failed to update orders: {errors.FirstOrDefault() ?? "Invalid status transition"}"
+        });
+    }
+
+    /// <summary>
     /// Delete an order (SuperAdmin/Partner).
     /// </summary>
     [HttpDelete("{id:guid}")]
@@ -207,6 +248,8 @@ public class AdminOrdersController : ControllerBase
 }
 
 public record UpdateOrderStatusRequest(OrderStatus NewStatus);
+
+public record BatchUpdateOrderStatusRequest(List<Guid> OrderIds, OrderStatus NewStatus);
 
 public record UpdateOrderPaymentStatusRequest(PaymentStatus NewStatus);
 

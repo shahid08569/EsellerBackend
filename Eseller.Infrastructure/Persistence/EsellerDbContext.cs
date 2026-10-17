@@ -48,6 +48,7 @@ public class EsellerDbContext : DbContext,IApplicationDbContext
     public DbSet<Shop> Shops => Set<Shop>();
     public DbSet<ShopImage> ShopImages => Set<ShopImage>();
     public DbSet<Product> Products => Set<Product>();
+    public DbSet<ProductGroupListing> ProductGroupListings => Set<ProductGroupListing>();
     public DbSet<ProductImage> ProductImages => Set<ProductImage>();
     public DbSet<ProductVariant> ProductVariants => Set<ProductVariant>();
     public DbSet<VariantAttributeValue> VariantAttributeValues => Set<VariantAttributeValue>();

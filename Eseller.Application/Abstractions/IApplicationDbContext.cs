@@ -39,6 +39,7 @@ public interface IApplicationDbContext
     DbSet<ShopTraffic> ShopTraffics { get; }
     DbSet<ShopImage> ShopImages { get; }
     DbSet<Product> Products { get; }
+    DbSet<ProductGroupListing> ProductGroupListings { get; }
     DbSet<ProductImage> ProductImages { get; }
     DbSet<ProductVariant> ProductVariants { get; }
     DbSet<VariantAttributeValue> VariantAttributeValues { get; }

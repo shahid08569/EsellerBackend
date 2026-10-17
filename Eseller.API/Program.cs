@@ -357,6 +357,41 @@ if (shouldMigrate || shouldSeed)
                 CREATE NONCLUSTERED INDEX [IX_PaymentShowcaseLogos_IsActive] ON [PaymentShowcaseLogos]([IsActive]);
                 CREATE NONCLUSTERED INDEX [IX_PaymentShowcaseLogos_SortOrder] ON [PaymentShowcaseLogos]([SortOrder]);
             END
+
+            IF COL_LENGTH('Products', 'ListingBatchId') IS NULL
+            BEGIN
+                ALTER TABLE [Products] ADD [ListingBatchId] uniqueidentifier NULL;
+                CREATE NONCLUSTERED INDEX [IX_Products_ListingBatchId] ON [Products]([ListingBatchId]);
+            END
+            IF COL_LENGTH('Products', 'BatchName') IS NULL
+                ALTER TABLE [Products] ADD [BatchName] nvarchar(200) NULL;
+
+            IF OBJECT_ID(N'[ProductGroupListings]', N'U') IS NULL
+            BEGIN
+                CREATE TABLE [ProductGroupListings] (
+                    [Id] uniqueidentifier NOT NULL,
+                    [ShopId] uniqueidentifier NOT NULL,
+                    [BatchName] nvarchar(200) NOT NULL,
+                    [RequestedCount] int NOT NULL,
+                    [DeliveredCount] int NOT NULL,
+                    [CategoryFilter] nvarchar(1000) NULL,
+                    [BrandFilter] nvarchar(200) NULL,
+                    [MinPrice] decimal(18,2) NULL,
+                    [MaxPrice] decimal(18,2) NULL,
+                    [IsActive] bit NOT NULL CONSTRAINT [DF_ProductGroupListings_IsActive] DEFAULT 1,
+                    [DeletedAt] datetime2 NULL,
+                    [CreatedAt] datetime2 NOT NULL,
+                    [UpdatedAt] datetime2 NOT NULL,
+                    CONSTRAINT [PK_ProductGroupListings] PRIMARY KEY ([Id])
+                );
+                CREATE NONCLUSTERED INDEX [IX_ProductGroupListings_ShopId] ON [ProductGroupListings]([ShopId]);
+                CREATE NONCLUSTERED INDEX [IX_ProductGroupListings_IsActive] ON [ProductGroupListings]([IsActive]);
+            END
+            ELSE
+            BEGIN
+                IF COL_LENGTH('ProductGroupListings', 'IsActive') IS NULL
+                    ALTER TABLE [ProductGroupListings] ADD [IsActive] bit NOT NULL CONSTRAINT [DF_ProductGroupListings_IsActive] DEFAULT 1;
+            END
             """);
 
         if (shouldSeed)

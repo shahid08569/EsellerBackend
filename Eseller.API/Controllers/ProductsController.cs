@@ -1,4 +1,5 @@
 using Eseller.Application.Features.Products.AddCatalogProductToShop;
+using Eseller.Application.Features.Products.AddGroupToStore;
 using Eseller.Application.Features.Products.CreateProduct;
 using Eseller.Application.Features.Products.DeleteAllProductImages;
 using Eseller.Application.Features.Products.DeleteProduct;
@@ -166,6 +167,40 @@ public class ProductsController : ControllerBase
             status = "pending_approval",
             message = "Listing request submitted. Status: Approval In Progress. The product will go live on your shop after Super Admin approval."
         });
+    }
+
+    /// <summary>
+    /// Seller requests to add a group of products randomly selected from the warehouse catalog (1..200).
+    /// </summary>
+    [HttpPost("add-group-to-store")]
+    [Authorize(Roles = "Shopkeeper")]
+    public async Task<IActionResult> AddGroupToStore(
+        [FromBody] AddGroupToStoreRequest request,
+        CancellationToken cancellationToken)
+    {
+        var command = new AddGroupToStoreCommand(
+            request.ShopId,
+            request.Count,
+            request.CategoryIds,
+            request.BrandId,
+            request.MinPrice,
+            request.MaxPrice,
+            request.CustomBatchName);
+
+        var result = await _sender.Send(command, cancellationToken);
+        if (!result.IsSuccess)
+        {
+            return result.ErrorCode switch
+            {
+                "SHOP_NOT_FOUND" => NotFound(new { error = result.Error, errorCode = result.ErrorCode }),
+                "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Error, errorCode = result.ErrorCode }),
+                "PACKAGE_LIMIT_EXCEEDED" or "STORE_NOT_VERIFIED" or "INVALID_COUNT" or "NO_MATCHING_PRODUCTS" =>
+                    BadRequest(new { error = result.Error, errorCode = result.ErrorCode }),
+                _ => BadRequest(new { error = result.Error, errorCode = result.ErrorCode })
+            };
+        }
+
+        return Ok(result.Value);
     }
 
     /// <summary>
@@ -558,5 +593,15 @@ public record UpdateProductRequest(
     string? SeoDescription);
 
 public record AddToStoreRequest(Guid SourceProductId, Guid ShopId);
+
+public record AddGroupToStoreRequest(
+    Guid ShopId,
+    int Count,
+    List<Guid>? CategoryIds = null,
+    Guid? BrandId = null,
+    decimal? MinPrice = null,
+    decimal? MaxPrice = null,
+    string? CustomBatchName = null
+);
 
 public record UpdateImageSortRequest(int SortOrder);
