@@ -248,9 +248,9 @@ public class GetConversationsQueryHandler
             {
                 partnerConvoByPartnerId.TryGetValue(currentPartner.Id, out var partnerConvo);
                 var targetRoomId = partnerConvo?.Id ?? currentPartner.Id;
-                var associatedRooms = new List<Guid> { targetRoomId };
-                if (partnerConvo != null && partnerConvo.Id != currentPartner.Id)
-                    associatedRooms.Add(currentPartner.Id);
+                var associatedRooms = new HashSet<Guid> { currentPartner.Id };
+                if (partnerConvo != null)
+                    associatedRooms.Add(partnerConvo.Id);
 
                 Eseller.Domain.Entities.Chat.Message? last = null;
                 var unread = 0;
@@ -299,9 +299,9 @@ public class GetConversationsQueryHandler
 
                 sellerPartnerConvoByShop.TryGetValue(shop.Id, out var spConvo);
                 var targetRoomId = spConvo?.Id ?? shop.Id;
-                var associatedRooms = new List<Guid> { targetRoomId };
-                if (spConvo != null && spConvo.Id != shop.Id)
-                    associatedRooms.Add(shop.Id);
+                var associatedRooms = new HashSet<Guid> { shop.Id };
+                if (spConvo != null)
+                    associatedRooms.Add(spConvo.Id);
 
                 Eseller.Domain.Entities.Chat.Message? last = null;
                 var unread = 0;
@@ -356,8 +356,8 @@ public class GetConversationsQueryHandler
                     continue;
 
                 var targetRoomId = sellerConvoByShop.TryGetValue(shop.Id, out var sConvoId) ? sConvoId : shop.Id;
-                var shopAssociatedRooms = new List<Guid> { targetRoomId };
-                if (sConvoId != Guid.Empty && sConvoId != shop.Id)
+                var shopAssociatedRooms = new HashSet<Guid> { shop.Id };
+                if (sConvoId != Guid.Empty)
                     shopAssociatedRooms.Add(sConvoId);
 
                 Eseller.Domain.Entities.Chat.Message? last = null;
@@ -474,9 +474,9 @@ public class GetConversationsQueryHandler
 
                 partnerConvoByPartnerId.TryGetValue(partner.Id, out var pConvo);
                 var targetRoomId = pConvo?.Id ?? partner.Id;
-                var associatedRooms = new List<Guid> { targetRoomId };
-                if (pConvo != null && pConvo.Id != partner.Id)
-                    associatedRooms.Add(partner.Id);
+                var associatedRooms = new HashSet<Guid> { partner.Id };
+                if (pConvo != null)
+                    associatedRooms.Add(pConvo.Id);
 
                 Eseller.Domain.Entities.Chat.Message? last = null;
                 var unread = 0;

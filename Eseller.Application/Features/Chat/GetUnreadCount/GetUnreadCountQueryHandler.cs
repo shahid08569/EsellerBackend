@@ -85,13 +85,19 @@ public class GetUnreadCountQueryHandler
 
         if (role == RoleType.SuperAdmin)
         {
-            var sellerPartnerConvoIds = await _context.Conversations.AsNoTracking()
+            var sellerPartnerConvos = await _context.Conversations.AsNoTracking()
                 .Where(c => c.ParticipantType == ChatParticipantType.SellerPartner)
-                .Select(c => c.Id)
+                .Select(c => new { c.Id, c.ParticipantId })
                 .ToListAsync(cancellationToken);
 
+            var excludedRoomIds = sellerPartnerConvos.Select(c => c.Id)
+                .Concat(sellerPartnerConvos.Select(c => c.ParticipantId))
+                .Where(id => id != Guid.Empty)
+                .Distinct()
+                .ToList();
+
             var unreadMsg = await _context.Messages.AsNoTracking()
-                .CountAsync(m => !sellerPartnerConvoIds.Contains(m.ConversationId)
+                .CountAsync(m => !excludedRoomIds.Contains(m.ConversationId)
                                  && !m.IsRead
                                  && m.SenderId != accountId
                                  && m.SenderRole != ChatSenderRole.SuperAdmin,

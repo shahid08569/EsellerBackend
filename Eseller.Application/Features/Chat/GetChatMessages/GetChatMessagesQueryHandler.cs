@@ -12,15 +12,18 @@ public class GetChatMessagesQueryHandler
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IDateTime _dateTime;
+    private readonly ISignalRNotificationService _signalR;
 
     public GetChatMessagesQueryHandler(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
-        IDateTime dateTime)
+        IDateTime dateTime,
+        ISignalRNotificationService signalR)
     {
         _context = context;
         _currentUserService = currentUserService;
         _dateTime = dateTime;
+        _signalR = signalR;
     }
 
     public async Task<Result<PagedList<ChatMessageDto>>> Handle(
@@ -168,7 +171,61 @@ public class GetChatMessagesQueryHandler
             roomIds = new List<Guid> { conversation.Id };
         }
 
-        var accountIdStr = _currentUserService.AccountId.Value.ToString();
+        var accountId = _currentUserService.AccountId.Value;
+        var accountIdStr = accountId.ToString();
+
+        // Automatically mark unread inbound messages as read when opening conversation (unless SuperAdmin read-only audit)
+        var isReadOnlyAudit = role == RoleType.SuperAdmin && conversation.ParticipantType == ChatParticipantType.SellerPartner;
+        if (!isReadOnlyAudit)
+        {
+            var unreadEntities = await _context.Messages
+                .Where(m => roomIds.Contains(m.ConversationId)
+                            && !m.IsRead
+                            && m.SenderId != accountId)
+                .ToListAsync(cancellationToken);
+
+            if (unreadEntities.Count > 0)
+            {
+                var now = _dateTime.UtcNow;
+                foreach (var msg in unreadEntities)
+                {
+                    msg.IsRead = true;
+                    msg.ReadAt = now;
+                    if (msg.DeliveredAt == null)
+                    {
+                        msg.DeliveredAt = now;
+                    }
+                }
+                await _context.SaveChangesAsync(cancellationToken);
+
+                try
+                {
+                    foreach (var msg in unreadEntities)
+                    {
+                        await _signalR.BroadcastMessageReadAsync(
+                            conversation.Id,
+                            msg.Id,
+                            now,
+                            cancellationToken,
+                            notifyAccountIds: new[] { msg.SenderId });
+
+                        if (conversation.ParticipantId != Guid.Empty && conversation.ParticipantId != conversation.Id)
+                        {
+                            await _signalR.BroadcastMessageReadAsync(
+                                conversation.ParticipantId,
+                                msg.Id,
+                                now,
+                                cancellationToken,
+                                notifyAccountIds: new[] { msg.SenderId });
+                        }
+                    }
+                }
+                catch
+                {
+                    // best-effort realtime
+                }
+            }
+        }
 
         // 1. Modern Messages table
         var modernQuery = _context.Messages

@@ -636,26 +636,67 @@ public class ChatController : ControllerBase
         if (_currentUserService.AccountId is null)
             return Unauthorized(new { error = "User is not authenticated.", errorCode = "UNAUTHENTICATED" });
 
+        var role = _currentUserService.RoleType;
         var conversation = await _context.Conversations
             .FirstOrDefaultAsync(c => c.Id == orderRequestId, cancellationToken);
 
         if (conversation is null)
         {
-            var isShop = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
-                .AnyAsync(s => s.Id == orderRequestId && s.DeletedAt == null, cancellationToken);
-            if (isShop)
+            var targetType = role == RoleType.Partner ? ChatParticipantType.SellerPartner : ChatParticipantType.Seller;
+            conversation = await _context.Conversations
+                .FirstOrDefaultAsync(c => c.ParticipantId == orderRequestId && c.ParticipantType == targetType, cancellationToken);
+        }
+
+        if (conversation is null)
+        {
+            var shop = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
+                .FirstOrDefaultAsync(s => (s.Id == orderRequestId || s.ShopkeeperId == orderRequestId) && s.DeletedAt == null, cancellationToken);
+
+            if (shop is not null)
             {
+                var targetType = role == RoleType.Partner ? ChatParticipantType.SellerPartner : ChatParticipantType.Seller;
                 conversation = await SupportConversationService.GetOrCreateAsync(
-                    _context, orderRequestId, ChatParticipantType.Seller, _dateTime.UtcNow, cancellationToken);
+                    _context, shop.Id, targetType, _dateTime.UtcNow, cancellationToken);
             }
             else
             {
-                var isUser = await _context.Users.AsNoTracking()
-                    .AnyAsync(u => u.Id == orderRequestId, cancellationToken);
-                if (isUser)
+                var partner = await _context.Partners.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == orderRequestId || p.AccountId == orderRequestId, cancellationToken);
+
+                if (partner is null && role == RoleType.Partner && _currentUserService.AccountId.HasValue)
+                {
+                    var myPartner = await _context.Partners.AsNoTracking()
+                        .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+                    if (myPartner != null && (orderRequestId == myPartner.Id || orderRequestId == myPartner.AccountId))
+                    {
+                        partner = myPartner;
+                    }
+                }
+
+                if (partner is not null)
                 {
                     conversation = await SupportConversationService.GetOrCreateAsync(
-                        _context, orderRequestId, ChatParticipantType.Customer, _dateTime.UtcNow, cancellationToken);
+                        _context, partner.Id, ChatParticipantType.Partner, _dateTime.UtcNow, cancellationToken);
+                }
+                else
+                {
+                    var isUser = await _context.Users.AsNoTracking()
+                        .AnyAsync(u => u.Id == orderRequestId, cancellationToken);
+                    if (isUser)
+                    {
+                        conversation = await SupportConversationService.GetOrCreateAsync(
+                            _context, orderRequestId, ChatParticipantType.Customer, _dateTime.UtcNow, cancellationToken);
+                    }
+                    else
+                    {
+                        var order = await _context.OrderRequests.AsNoTracking()
+                            .FirstOrDefaultAsync(o => o.Id == orderRequestId, cancellationToken);
+                        if (order is not null && order.UserId != Guid.Empty)
+                        {
+                            conversation = await SupportConversationService.GetOrCreateAsync(
+                                _context, order.UserId, ChatParticipantType.Customer, _dateTime.UtcNow, cancellationToken);
+                        }
+                    }
                 }
             }
         }
@@ -667,59 +708,59 @@ public class ChatController : ControllerBase
                 _context, _currentUserService, conversation, cancellationToken))
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden.", errorCode = "FORBIDDEN" });
 
-        var role = _currentUserService.RoleType;
-        var isAdmin = role == RoleType.SuperAdmin || role == RoleType.Partner;
+        // If SuperAdmin is viewing a SellerPartner conversation, SuperAdmin is strictly in read-only audit mode!
+        if (role == RoleType.SuperAdmin && conversation.ParticipantType == ChatParticipantType.SellerPartner)
+        {
+            return Ok(new { message = "Read-only audit.", markedCount = 0 });
+        }
+
         var now = _dateTime.UtcNow;
         var accountId = _currentUserService.AccountId.Value;
 
         // Collect all related room IDs (conversation ID, participant ID, order request ID)
-        HashSet<Guid> roomIds;
-        if (conversation.ParticipantType == ChatParticipantType.SellerPartner || conversation.ParticipantType == ChatParticipantType.Partner)
+        var roomIds = new HashSet<Guid> { conversation.Id };
+        if (orderRequestId != Guid.Empty)
         {
-            // Strictly isolated room!
-            roomIds = new HashSet<Guid> { conversation.Id };
+            roomIds.Add(orderRequestId);
         }
-        else
+        if (conversation.ParticipantId != Guid.Empty)
         {
-            roomIds = new HashSet<Guid> { orderRequestId, conversation.Id };
-            if (conversation.ParticipantId != Guid.Empty)
-            {
-                roomIds.Add(conversation.ParticipantId);
-            }
+            roomIds.Add(conversation.ParticipantId);
+        }
 
-            if (role == RoleType.Shopkeeper)
+        if (conversation.ParticipantType == ChatParticipantType.Customer)
+        {
+            var userOrders = await _context.OrderRequests.AsNoTracking()
+                .Where(o => o.UserId == conversation.ParticipantId)
+                .Select(o => o.Id)
+                .ToListAsync(cancellationToken);
+            foreach (var oid in userOrders)
             {
-                var shopkeeper = await _context.Shopkeepers.AsNoTracking()
-                    .FirstOrDefaultAsync(sk => sk.AccountId == accountId, cancellationToken);
-                if (shopkeeper != null)
-                {
-                    var shopIds = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
-                        .Where(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null)
-                        .Select(s => s.Id)
-                        .ToListAsync(cancellationToken);
-                    foreach (var sid in shopIds)
-                    {
-                        roomIds.Add(sid);
-                    }
-                    var relatedConvoIds = await _context.Conversations.AsNoTracking()
-                        .Where(c => c.ParticipantType == ChatParticipantType.Seller && shopIds.Contains(c.ParticipantId))
-                        .Select(c => c.Id)
-                        .ToListAsync(cancellationToken);
-                    foreach (var cid in relatedConvoIds)
-                    {
-                        roomIds.Add(cid);
-                    }
-                }
+                roomIds.Add(oid);
             }
-            else if (role == RoleType.User)
+        }
+        else if (role == RoleType.Shopkeeper)
+        {
+            var shopkeeper = await _context.Shopkeepers.AsNoTracking()
+                .FirstOrDefaultAsync(sk => sk.AccountId == accountId, cancellationToken);
+            if (shopkeeper != null)
             {
-                var userOrders = await _context.OrderRequests.AsNoTracking()
-                    .Where(o => o.UserId == conversation.ParticipantId)
-                    .Select(o => o.Id)
+                var shopIds = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
+                    .Where(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null)
+                    .Select(s => s.Id)
                     .ToListAsync(cancellationToken);
-                foreach (var oid in userOrders)
+                foreach (var sid in shopIds)
                 {
-                    roomIds.Add(oid);
+                    roomIds.Add(sid);
+                }
+                var relatedConvoIds = await _context.Conversations.AsNoTracking()
+                    .Where(c => (c.ParticipantType == ChatParticipantType.Seller || c.ParticipantType == ChatParticipantType.SellerPartner)
+                                && shopIds.Contains(c.ParticipantId))
+                    .Select(c => c.Id)
+                    .ToListAsync(cancellationToken);
+                foreach (var cid in relatedConvoIds)
+                {
+                    roomIds.Add(cid);
                 }
             }
         }
@@ -730,17 +771,6 @@ public class ChatController : ControllerBase
             .Where(m => roomIdList.Contains(m.ConversationId)
                         && !m.IsRead
                         && m.SenderId != accountId);
-
-        if (isAdmin)
-        {
-            query = query.Where(m =>
-                m.SenderRole != ChatSenderRole.SuperAdmin && m.SenderRole != ChatSenderRole.Partner);
-        }
-        else
-        {
-            query = query.Where(m =>
-                m.SenderRole != ChatSenderRole.Shopkeeper);
-        }
 
         var unread = await query.ToListAsync(cancellationToken);
         foreach (var msg in unread)
@@ -758,17 +788,6 @@ public class ChatController : ControllerBase
             .Where(cm => roomIdList.Contains(cm.OrderRequestId)
                         && !cm.IsRead
                         && cm.SenderAccountId != accountId);
-
-        if (isAdmin)
-        {
-            legacyQuery = legacyQuery.Where(cm =>
-                cm.SenderRole != ChatSenderRole.SuperAdmin && cm.SenderRole != ChatSenderRole.Partner);
-        }
-        else
-        {
-            legacyQuery = legacyQuery.Where(cm =>
-                cm.SenderRole != ChatSenderRole.Shopkeeper);
-        }
 
         var legacyUnread = await legacyQuery.ToListAsync(cancellationToken);
         foreach (var cm in legacyUnread)
@@ -812,6 +831,36 @@ public class ChatController : ControllerBase
                         msg.ReadAt ?? now,
                         cancellationToken,
                         notifyAccountIds: new[] { msg.SenderId });
+
+                    if (conversation.ParticipantId != Guid.Empty && conversation.ParticipantId != conversation.Id)
+                    {
+                        await _signalR.BroadcastMessageReadAsync(
+                            conversation.ParticipantId,
+                            msg.Id,
+                            msg.ReadAt ?? now,
+                            cancellationToken,
+                            notifyAccountIds: new[] { msg.SenderId });
+                    }
+                }
+            }
+            catch
+            {
+                // best-effort realtime
+            }
+        }
+
+        if (legacyUnread.Count > 0)
+        {
+            try
+            {
+                foreach (var cm in legacyUnread)
+                {
+                    await _signalR.BroadcastMessageReadAsync(
+                        cm.OrderRequestId,
+                        cm.Id,
+                        cm.ReadAt ?? now,
+                        cancellationToken,
+                        notifyAccountIds: new[] { cm.SenderAccountId });
                 }
             }
             catch
@@ -837,7 +886,7 @@ public class ChatController : ControllerBase
         return Ok(new
         {
             message = "Conversation marked as read.",
-            markedCount = unread.Count,
+            markedCount = unread.Count + legacyUnread.Count,
             notificationsCleared = chatNotifs.Count
         });
     }
