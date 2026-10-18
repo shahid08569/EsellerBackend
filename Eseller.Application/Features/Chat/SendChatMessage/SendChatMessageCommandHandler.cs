@@ -60,18 +60,18 @@ public class SendChatMessageCommandHandler
         if (role == RoleType.Shopkeeper &&
             conversation.ParticipantType != ChatParticipantType.Seller &&
             conversation.ParticipantType != ChatParticipantType.SellerPartner)
-            return Result.Failure<SendChatMessageResult>("Sellers can only message Super Admin or their Partner.", "FORBIDDEN");
+            return Result.Failure<SendChatMessageResult>("Sellers can only message Management Support or their Partner.", "FORBIDDEN");
 
         if (role == RoleType.Partner &&
             conversation.ParticipantType != ChatParticipantType.Partner &&
             conversation.ParticipantType != ChatParticipantType.SellerPartner)
-            return Result.Failure<SendChatMessageResult>("Partners can only message Super Admin or their referred shops.", "FORBIDDEN");
+            return Result.Failure<SendChatMessageResult>("Partners can only message Management Support or their referred shops.", "FORBIDDEN");
 
         if (role == RoleType.User && conversation.ParticipantType != ChatParticipantType.Customer)
-            return Result.Failure<SendChatMessageResult>("Customers can only message Super Admin.", "FORBIDDEN");
+            return Result.Failure<SendChatMessageResult>("Customers can only message Management Support.", "FORBIDDEN");
 
         if (role == RoleType.SuperAdmin && conversation.ParticipantType == ChatParticipantType.SellerPartner)
-            return Result.Failure<SendChatMessageResult>("This conversation between the partner and referred merchant is read-only for Super Admin.", "READ_ONLY_CONVERSATION");
+            return Result.Failure<SendChatMessageResult>("This conversation between the partner and referred merchant is read-only for Management.", "READ_ONLY_CONVERSATION");
 
         var senderRole = SupportConversationService.MapSenderRole(role.Value);
         var now = _dateTime.UtcNow;

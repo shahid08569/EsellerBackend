@@ -112,11 +112,21 @@ public class GetChatMessagesQueryHandler
 
         List<Guid> roomIds;
 
-        if (conversation.ParticipantType == ChatParticipantType.SellerPartner ||
-            conversation.ParticipantType == ChatParticipantType.Partner)
+        if (conversation.ParticipantType == ChatParticipantType.SellerPartner)
         {
-            // Strictly isolated room: only this conversation ID!
             roomIds = new List<Guid> { conversation.Id };
+            if (conversation.ParticipantId != Guid.Empty && conversation.ParticipantId != conversation.Id)
+            {
+                roomIds.Add(conversation.ParticipantId);
+            }
+        }
+        else if (conversation.ParticipantType == ChatParticipantType.Partner)
+        {
+            roomIds = new List<Guid> { conversation.Id };
+            if (conversation.ParticipantId != Guid.Empty && conversation.ParticipantId != conversation.Id)
+            {
+                roomIds.Add(conversation.ParticipantId);
+            }
         }
         else if (conversation.ParticipantType == ChatParticipantType.Customer)
         {
@@ -161,10 +171,21 @@ public class GetChatMessagesQueryHandler
         var accountIdStr = _currentUserService.AccountId.Value.ToString();
 
         // 1. Modern Messages table
-        var modernList = await _context.Messages
+        var modernQuery = _context.Messages
             .AsNoTracking()
             .Where(m => roomIds.Contains(m.ConversationId)
-                && (m.DeletedForAccountIds == null || !m.DeletedForAccountIds.Contains(accountIdStr)))
+                && (m.DeletedForAccountIds == null || !m.DeletedForAccountIds.Contains(accountIdStr)));
+
+        if (conversation.ParticipantType == ChatParticipantType.SellerPartner)
+        {
+            modernQuery = modernQuery.Where(m => m.SenderRole != ChatSenderRole.SuperAdmin);
+        }
+        else if (conversation.ParticipantType == ChatParticipantType.Seller)
+        {
+            modernQuery = modernQuery.Where(m => m.SenderRole != ChatSenderRole.Partner);
+        }
+
+        var modernList = await modernQuery
             .Select(m => new ChatMessageDto(
                 m.Id,
                 m.ConversationId,
@@ -185,10 +206,21 @@ public class GetChatMessagesQueryHandler
             .ToListAsync(cancellationToken);
 
         // 2. Legacy ChatMessages table
-        var legacyList = await _context.ChatMessages
+        var legacyQuery = _context.ChatMessages
             .AsNoTracking()
             .Where(cm => roomIds.Contains(cm.OrderRequestId)
-                && (cm.DeletedForAccountIds == null || !cm.DeletedForAccountIds.Contains(accountIdStr)))
+                && (cm.DeletedForAccountIds == null || !cm.DeletedForAccountIds.Contains(accountIdStr)));
+
+        if (conversation.ParticipantType == ChatParticipantType.SellerPartner)
+        {
+            legacyQuery = legacyQuery.Where(cm => cm.SenderRole != ChatSenderRole.SuperAdmin);
+        }
+        else if (conversation.ParticipantType == ChatParticipantType.Seller)
+        {
+            legacyQuery = legacyQuery.Where(cm => cm.SenderRole != ChatSenderRole.Partner);
+        }
+
+        var legacyList = await legacyQuery
             .Select(cm => new ChatMessageDto(
                 cm.Id,
                 cm.OrderRequestId,

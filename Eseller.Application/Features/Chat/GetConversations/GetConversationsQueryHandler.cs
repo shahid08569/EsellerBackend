@@ -272,7 +272,7 @@ public class GetConversationsQueryHandler
                 conversations.Add(new ConversationDto(
                     targetRoomId,
                     currentPartner.Id,
-                    "Platform Management (Super Admin)",
+                    "Partner Service",
                     "support@platform.local",
                     "Official Support Channel",
                     0,
