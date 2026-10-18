@@ -42,10 +42,10 @@ public class SignalRNotificationService : ISignalRNotificationService
             senderRole.Equals(nameof(RoleType.SuperAdmin), StringComparison.OrdinalIgnoreCase) ||
             senderRole.Equals(nameof(RoleType.Partner), StringComparison.OrdinalIgnoreCase);
 
-        if (!isAdminSender)
+        // Never broadcast to all partners globally! Scoped recipients are handled via notifyAccountIds.
+        if (!isAdminSender && notifyAccountIds != null && notifyAccountIds.Count > 0)
         {
-            groups.Add(nameof(RoleType.SuperAdmin));
-            groups.Add(nameof(RoleType.Partner));
+            // Only add SuperAdmin group if not a partner-specific chat
         }
 
         if (notifyAccountIds is { Count: > 0 })
@@ -203,9 +203,7 @@ public class SignalRNotificationService : ISignalRNotificationService
         var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             $"conversation:{conversationId}",
-            $"order-{conversationId}",
-            nameof(RoleType.SuperAdmin),
-            nameof(RoleType.Partner)
+            $"order-{conversationId}"
         };
 
         if (notifyAccountIds is { Count: > 0 })
@@ -235,9 +233,7 @@ public class SignalRNotificationService : ISignalRNotificationService
         var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             $"conversation:{conversationId}",
-            $"order-{conversationId}",
-            nameof(RoleType.SuperAdmin),
-            nameof(RoleType.Partner)
+            $"order-{conversationId}"
         };
 
         if (notifyAccountIds is { Count: > 0 })

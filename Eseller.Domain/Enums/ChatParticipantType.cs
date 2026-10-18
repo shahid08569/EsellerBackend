@@ -7,5 +7,7 @@ namespace Eseller.Domain.Enums;
 public enum ChatParticipantType
 {
     Customer = 1,
-    Seller = 2
+    Seller = 2,
+    Partner = 3,
+    SellerPartner = 4
 }

@@ -27,9 +27,12 @@ public static class SupportConversationService
 
         // Preserve legacy room keys so Angular/SignalR keep working after migration:
         // Seller → Conversation.Id = Shop.Id; Customer → Conversation.Id = User.Id
+        // SellerPartner & Partner → unique Conversation.Id
         var conversation = new Conversation
         {
-            Id = participantId,
+            Id = (participantType == ChatParticipantType.Seller || participantType == ChatParticipantType.Customer)
+                ? participantId
+                : Guid.NewGuid(),
             ParticipantId = participantId,
             ParticipantType = participantType,
             LastMessageAt = null
@@ -70,19 +73,28 @@ public static class SupportConversationService
 
         if (role == RoleType.Partner)
         {
-            // Partner can ONLY access seller chat if the shop registered via this partner's referral code
-            if (conversation.ParticipantType != ChatParticipantType.Seller)
-                return false;
-
             var partner = await context.Partners.AsNoTracking()
                 .FirstOrDefaultAsync(p => p.AccountId == currentUser.AccountId.Value, cancellationToken);
             if (partner == null)
                 return false;
 
-            return await context.Shops.IgnoreQueryFilters().AsNoTracking()
-                .AnyAsync(s => (s.Id == conversation.ParticipantId || s.Id == conversation.Id)
-                            && s.PartnerId == partner.Id
-                            && s.DeletedAt == null, cancellationToken);
+            // Partner direct channel with SuperAdmin
+            if (conversation.ParticipantType == ChatParticipantType.Partner)
+            {
+                return conversation.ParticipantId == partner.Id;
+            }
+
+            // Partner can ONLY access SellerPartner chat if the shop registered via this partner's referral code
+            if (conversation.ParticipantType == ChatParticipantType.SellerPartner)
+            {
+                return await context.Shops.IgnoreQueryFilters().AsNoTracking()
+                    .AnyAsync(s => (s.Id == conversation.ParticipantId || s.Id == conversation.Id)
+                                && s.PartnerId == partner.Id
+                                && s.DeletedAt == null, cancellationToken);
+            }
+
+            // Partner strictly forbidden from customer chats and normal seller-superadmin chats
+            return false;
         }
 
         if (role == RoleType.User && conversation.ParticipantType == ChatParticipantType.Customer)
@@ -94,19 +106,34 @@ public static class SupportConversationService
             return userId.HasValue && userId.Value == conversation.ParticipantId;
         }
 
-        if (role == RoleType.Shopkeeper && conversation.ParticipantType == ChatParticipantType.Seller)
+        if (role == RoleType.Shopkeeper)
         {
+            if (conversation.ParticipantType != ChatParticipantType.Seller &&
+                conversation.ParticipantType != ChatParticipantType.SellerPartner)
+                return false;
+
             var shopkeeper = await context.Shopkeepers.AsNoTracking()
                 .FirstOrDefaultAsync(sk => sk.AccountId == currentUser.AccountId.Value, cancellationToken);
             if (shopkeeper is null)
                 return false;
 
-            return await context.Shops.IgnoreQueryFilters().AsNoTracking()
-                .AnyAsync(
+            var shop = await context.Shops.IgnoreQueryFilters().AsNoTracking()
+                .FirstOrDefaultAsync(
                     s => (s.Id == conversation.ParticipantId || s.Id == conversation.Id)
                          && s.ShopkeeperId == shopkeeper.Id
                          && s.DeletedAt == null,
                     cancellationToken);
+
+            if (shop is null)
+                return false;
+
+            // If SellerPartner, shop must have this partner referral
+            if (conversation.ParticipantType == ChatParticipantType.SellerPartner)
+            {
+                return shop.PartnerId != null;
+            }
+
+            return true;
         }
 
         return false;

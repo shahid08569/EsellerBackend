@@ -53,7 +53,21 @@ public class RemoveProductFromGroupCommandHandler : IRequestHandler<RemoveProduc
         }
 
         if (product is null)
+        {
+            // Fallback 2: Any active product matching request.ProductId directly
+            product = await _context.Products
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(p => (p.Id == request.ProductId || p.SourceProductId == request.ProductId) && p.DeletedAt == null, cancellationToken);
+        }
+
+        if (product is null)
             return Result.Failure("Product not found in this group.", "PRODUCT_NOT_FOUND");
+
+        if (group == null && product.ListingBatchId.HasValue)
+        {
+            group = await _context.ProductGroupListings.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(g => g.Id == product.ListingBatchId.Value && g.DeletedAt == null, cancellationToken);
+        }
 
         var now = _dateTime.UtcNow;
         product.DeletedAt = now;

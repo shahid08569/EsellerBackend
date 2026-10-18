@@ -17,6 +17,10 @@ public record ConversationDto(
     string? ContextProductName = null,
     string? ContextProductImageUrl = null,
     decimal? ContextProductPrice = null,
-    /// <summary>"Seller" (shop support) or "Customer" (buyer support).</summary>
+    /// <summary>"Seller" (shop support), "Customer" (buyer support), "Partner", or "SellerPartner".</summary>
     string? ParticipantType = null,
-    string? LogoUrl = null);
+    string? LogoUrl = null,
+    bool IsReferred = false,
+    Guid? PartnerId = null,
+    string? PartnerName = null,
+    bool IsReadOnly = false);

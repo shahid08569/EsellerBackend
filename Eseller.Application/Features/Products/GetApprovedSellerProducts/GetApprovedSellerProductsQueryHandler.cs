@@ -24,15 +24,17 @@ public class GetApprovedSellerProductsQueryHandler
         GetApprovedSellerProductsQuery request,
         CancellationToken cancellationToken)
     {
-        // Approved seller store listings (clones + seller-created originals; exclude master warehouse)
+        // Approved seller store listings (clones + seller-created originals; include master catalog when requested)
         var masterShopId = await MasterCatalog.TryGetMasterShopIdAsync(_context, cancellationToken);
+        var kind = request.Kind?.Trim().ToLowerInvariant();
+        var includeWarehouse = kind is "all" or "catalog" or "any" or null || request.ShopId.HasValue;
 
         var query = _context.Products
             .IgnoreQueryFilters()
             .Where(p =>
                 p.IsApproved
                 && p.DeletedAt == null
-                && (!masterShopId.HasValue || request.ShopId.HasValue || p.ShopId != masterShopId.Value));
+                && (includeWarehouse || !masterShopId.HasValue || p.ShopId != masterShopId.Value));
 
         var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
         if (partnerShopIds != null)
@@ -65,7 +67,6 @@ public class GetApprovedSellerProductsQueryHandler
                 _context.ProductVariants.Any(v => v.ProductId == p.Id && v.Sku.ToLower().Contains(search)));
         }
 
-        var kind = request.Kind?.Trim().ToLowerInvariant();
         if (kind is "global" or "warehouse" or "listing")
             query = query.Where(p => p.SourceProductId != null);
         else if (kind is "own" or "seller" or "new")

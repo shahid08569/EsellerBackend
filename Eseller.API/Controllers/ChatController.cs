@@ -187,6 +187,89 @@ public class ChatController : ControllerBase
     }
 
     /// <summary>
+    /// Seller: open Partner support chat (only available for shops registered via a partner referral).
+    /// </summary>
+    [HttpGet("shop-partner-session")]
+    [Authorize(Roles = "Shopkeeper")]
+    public async Task<IActionResult> GetOrCreateShopPartnerSession(CancellationToken cancellationToken)
+    {
+        if (_currentUserService.AccountId is null)
+            return Unauthorized();
+
+        var shopkeeper = await _context.Shopkeepers
+            .FirstOrDefaultAsync(sk => sk.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+        if (shopkeeper is null)
+            return NotFound(new { error = "Shopkeeper not found.", errorCode = "SHOPKEEPER_NOT_FOUND" });
+
+        var shop = await _context.Shops
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null, cancellationToken);
+        if (shop is null)
+            return NotFound(new { error = "Shop not found.", errorCode = "SHOP_NOT_FOUND" });
+
+        if (!shop.PartnerId.HasValue)
+        {
+            return NotFound(new { error = "This shop does not have a partner referral.", errorCode = "NO_PARTNER_REFERRAL" });
+        }
+
+        var partner = await _context.Partners.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == shop.PartnerId.Value, cancellationToken);
+        if (partner is null)
+        {
+            return NotFound(new { error = "Referring partner not found.", errorCode = "PARTNER_NOT_FOUND" });
+        }
+
+        var partnerAccount = await _context.Accounts.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == partner.AccountId, cancellationToken);
+        var partnerName = !string.IsNullOrWhiteSpace(partnerAccount?.Username)
+            ? partnerAccount.Username
+            : (!string.IsNullOrWhiteSpace(partnerAccount?.Email) ? partnerAccount.Email : "Partner Support");
+
+        var conversation = await SupportConversationService.GetOrCreateAsync(
+            _context, shop.Id, ChatParticipantType.SellerPartner, _dateTime.UtcNow, cancellationToken);
+
+        return Ok(new
+        {
+            conversationId = conversation.Id,
+            orderRequestId = conversation.Id,
+            orderRef = conversation.Id.ToString(),
+            shopId = shop.Id,
+            shopName = shop.Name,
+            partnerId = partner.Id,
+            partnerName,
+            partnerCode = partner.ReferralCode
+        });
+    }
+
+    /// <summary>
+    /// Partner: dedicated platform support channel with Super Admin.
+    /// </summary>
+    [HttpGet("partner-support-session")]
+    [Authorize(Roles = "Partner")]
+    public async Task<IActionResult> GetOrCreatePartnerSupportSession(CancellationToken cancellationToken)
+    {
+        if (_currentUserService.AccountId is null)
+            return Unauthorized();
+
+        var partner = await _context.Partners
+            .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+        if (partner is null)
+            return NotFound(new { error = "Partner profile not found.", errorCode = "PARTNER_NOT_FOUND" });
+
+        var conversation = await SupportConversationService.GetOrCreateAsync(
+            _context, partner.Id, ChatParticipantType.Partner, _dateTime.UtcNow, cancellationToken);
+
+        return Ok(new
+        {
+            conversationId = conversation.Id,
+            orderRequestId = conversation.Id,
+            orderRef = conversation.Id.ToString(),
+            partnerId = partner.Id,
+            partnerCode = partner.ReferralCode
+        });
+    }
+
+    /// <summary>
     /// Customer: WhatsApp-style inbox — separate history per shop + order chats with messages.
     /// Shop threads use marker SHOP_CHAT_{shopId}_{userId}.
     /// </summary>
@@ -590,45 +673,54 @@ public class ChatController : ControllerBase
         var accountId = _currentUserService.AccountId.Value;
 
         // Collect all related room IDs (conversation ID, participant ID, order request ID)
-        var roomIds = new HashSet<Guid> { orderRequestId, conversation.Id };
-        if (conversation.ParticipantId != Guid.Empty)
+        HashSet<Guid> roomIds;
+        if (conversation.ParticipantType == ChatParticipantType.SellerPartner || conversation.ParticipantType == ChatParticipantType.Partner)
         {
-            roomIds.Add(conversation.ParticipantId);
+            // Strictly isolated room!
+            roomIds = new HashSet<Guid> { conversation.Id };
         }
-
-        if (role == RoleType.Shopkeeper)
+        else
         {
-            var shopkeeper = await _context.Shopkeepers.AsNoTracking()
-                .FirstOrDefaultAsync(sk => sk.AccountId == accountId, cancellationToken);
-            if (shopkeeper != null)
+            roomIds = new HashSet<Guid> { orderRequestId, conversation.Id };
+            if (conversation.ParticipantId != Guid.Empty)
             {
-                var shopIds = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
-                    .Where(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null)
-                    .Select(s => s.Id)
-                    .ToListAsync(cancellationToken);
-                foreach (var sid in shopIds)
+                roomIds.Add(conversation.ParticipantId);
+            }
+
+            if (role == RoleType.Shopkeeper)
+            {
+                var shopkeeper = await _context.Shopkeepers.AsNoTracking()
+                    .FirstOrDefaultAsync(sk => sk.AccountId == accountId, cancellationToken);
+                if (shopkeeper != null)
                 {
-                    roomIds.Add(sid);
-                }
-                var relatedConvoIds = await _context.Conversations.AsNoTracking()
-                    .Where(c => c.ParticipantType == ChatParticipantType.Seller && shopIds.Contains(c.ParticipantId))
-                    .Select(c => c.Id)
-                    .ToListAsync(cancellationToken);
-                foreach (var cid in relatedConvoIds)
-                {
-                    roomIds.Add(cid);
+                    var shopIds = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
+                        .Where(s => s.ShopkeeperId == shopkeeper.Id && s.DeletedAt == null)
+                        .Select(s => s.Id)
+                        .ToListAsync(cancellationToken);
+                    foreach (var sid in shopIds)
+                    {
+                        roomIds.Add(sid);
+                    }
+                    var relatedConvoIds = await _context.Conversations.AsNoTracking()
+                        .Where(c => c.ParticipantType == ChatParticipantType.Seller && shopIds.Contains(c.ParticipantId))
+                        .Select(c => c.Id)
+                        .ToListAsync(cancellationToken);
+                    foreach (var cid in relatedConvoIds)
+                    {
+                        roomIds.Add(cid);
+                    }
                 }
             }
-        }
-        else if (role == RoleType.User)
-        {
-            var userOrders = await _context.OrderRequests.AsNoTracking()
-                .Where(o => o.UserId == conversation.ParticipantId)
-                .Select(o => o.Id)
-                .ToListAsync(cancellationToken);
-            foreach (var oid in userOrders)
+            else if (role == RoleType.User)
             {
-                roomIds.Add(oid);
+                var userOrders = await _context.OrderRequests.AsNoTracking()
+                    .Where(o => o.UserId == conversation.ParticipantId)
+                    .Select(o => o.Id)
+                    .ToListAsync(cancellationToken);
+                foreach (var oid in userOrders)
+                {
+                    roomIds.Add(oid);
+                }
             }
         }
 

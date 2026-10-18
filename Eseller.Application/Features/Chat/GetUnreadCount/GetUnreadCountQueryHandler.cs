@@ -49,51 +49,58 @@ public class GetUnreadCountQueryHandler
 
         if (role == RoleType.Partner)
         {
-            var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
-            if (partnerShopIds == null || partnerShopIds.Count == 0)
-                return 0;
+            var partner = await _context.Partners.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.AccountId == accountId, cancellationToken);
+            if (partner is null) return 0;
 
-            var convoIds = await _context.Conversations.AsNoTracking()
-                .Where(c => c.ParticipantType == ChatParticipantType.Seller
-                            && partnerShopIds.Contains(c.ParticipantId))
+            var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken) ?? new HashSet<Guid>();
+
+            var sellerPartnerConvos = partnerShopIds.Count > 0
+                ? await _context.Conversations.AsNoTracking()
+                    .Where(c => c.ParticipantType == ChatParticipantType.SellerPartner && partnerShopIds.Contains(c.ParticipantId))
+                    .Select(c => c.Id)
+                    .ToListAsync(cancellationToken)
+                : new List<Guid>();
+
+            var partnerDirectConvos = await _context.Conversations.AsNoTracking()
+                .Where(c => c.ParticipantType == ChatParticipantType.Partner && c.ParticipantId == partner.Id)
                 .Select(c => c.Id)
                 .ToListAsync(cancellationToken);
 
-            var allRoomIds = partnerShopIds.Concat(convoIds).Distinct().ToList();
+            var allRoomIds = partnerShopIds
+                .Concat(sellerPartnerConvos)
+                .Concat(partnerDirectConvos)
+                .Concat(new[] { partner.Id })
+                .Distinct()
+                .ToList();
 
             var unreadMsg = await _context.Messages.AsNoTracking()
                 .CountAsync(m => allRoomIds.Contains(m.ConversationId)
                                  && !m.IsRead
-                                 && m.SenderId != accountId
-                                 && m.SenderRole != ChatSenderRole.SuperAdmin
-                                 && m.SenderRole != ChatSenderRole.Partner,
+                                 && m.SenderId != accountId,
                     cancellationToken);
 
-            var unreadLegacy = await _context.ChatMessages.AsNoTracking()
-                .CountAsync(cm => allRoomIds.Contains(cm.OrderRequestId)
-                                  && !cm.IsRead
-                                  && cm.SenderAccountId != accountId
-                                  && cm.SenderRole != ChatSenderRole.SuperAdmin
-                                  && cm.SenderRole != ChatSenderRole.Partner,
-                    cancellationToken);
-
-            return unreadMsg + unreadLegacy;
+            return unreadMsg;
         }
 
         if (role == RoleType.SuperAdmin)
         {
+            var sellerPartnerConvoIds = await _context.Conversations.AsNoTracking()
+                .Where(c => c.ParticipantType == ChatParticipantType.SellerPartner)
+                .Select(c => c.Id)
+                .ToListAsync(cancellationToken);
+
             var unreadMsg = await _context.Messages.AsNoTracking()
-                .CountAsync(m => !m.IsRead
+                .CountAsync(m => !sellerPartnerConvoIds.Contains(m.ConversationId)
+                                 && !m.IsRead
                                  && m.SenderId != accountId
-                                 && m.SenderRole != ChatSenderRole.SuperAdmin
-                                 && m.SenderRole != ChatSenderRole.Partner,
+                                 && m.SenderRole != ChatSenderRole.SuperAdmin,
                     cancellationToken);
 
             var unreadLegacy = await _context.ChatMessages.AsNoTracking()
                 .CountAsync(cm => !cm.IsRead
                                   && cm.SenderAccountId != accountId
-                                  && cm.SenderRole != ChatSenderRole.SuperAdmin
-                                  && cm.SenderRole != ChatSenderRole.Partner,
+                                  && cm.SenderRole != ChatSenderRole.SuperAdmin,
                     cancellationToken);
 
             return unreadMsg + unreadLegacy;
@@ -114,7 +121,7 @@ public class GetUnreadCountQueryHandler
             if (shopIds.Count == 0) return 0;
 
             var convoIds = await _context.Conversations.AsNoTracking()
-                .Where(c => c.ParticipantType == ChatParticipantType.Seller
+                .Where(c => (c.ParticipantType == ChatParticipantType.Seller || c.ParticipantType == ChatParticipantType.SellerPartner)
                             && shopIds.Contains(c.ParticipantId))
                 .Select(c => c.Id)
                 .ToListAsync(cancellationToken);

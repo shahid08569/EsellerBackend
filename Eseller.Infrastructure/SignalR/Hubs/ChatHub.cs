@@ -74,6 +74,12 @@ public class ChatHub : Hub<IChatClient>
         {
             var now = DateTime.UtcNow;
 
+            var isSuperAdmin = await _context.Accounts.AsNoTracking()
+                .AnyAsync(a => a.Id == accountId && a.RoleType == Domain.Enums.RoleType.SuperAdmin, Context.ConnectionAborted);
+
+            var partner = await _context.Partners.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.AccountId == accountId, Context.ConnectionAborted);
+
             var shopIds = await (
                 from s in _context.Shops.IgnoreQueryFilters().AsNoTracking()
                 join sk in _context.Shopkeepers.AsNoTracking() on s.ShopkeeperId equals sk.Id
@@ -86,14 +92,50 @@ public class ChatHub : Hub<IChatClient>
                 .Select(u => u.Id)
                 .ToListAsync(Context.ConnectionAborted);
 
-            var participantIds = shopIds.Concat(userIds).Distinct().ToList();
+            var conversationIds = new List<Guid>();
 
-            var conversationIds = await _context.Conversations.AsNoTracking()
-                .Where(c => participantIds.Contains(c.ParticipantId) || participantIds.Contains(c.Id) || c.Id == accountId)
-                .Select(c => c.Id)
-                .ToListAsync(Context.ConnectionAborted);
+            if (isSuperAdmin)
+            {
+                // SuperAdmin receives messages from Seller, Customer, Partner
+                var adminConvoIds = await _context.Conversations.AsNoTracking()
+                    .Where(c => c.ParticipantType == Domain.Enums.ChatParticipantType.Seller
+                             || c.ParticipantType == Domain.Enums.ChatParticipantType.Customer
+                             || c.ParticipantType == Domain.Enums.ChatParticipantType.Partner)
+                    .Select(c => c.Id)
+                    .ToListAsync(Context.ConnectionAborted);
+                conversationIds.AddRange(adminConvoIds);
+            }
+            else if (partner != null)
+            {
+                // Partner receives messages from SuperAdmin in their Partner chat,
+                // and from Shopkeepers in SellerPartner chats for their referred shops.
+                var partnerConvos = await (
+                    from c in _context.Conversations.AsNoTracking()
+                    join s in _context.Shops.IgnoreQueryFilters().AsNoTracking() on c.ParticipantId equals s.Id
+                    where c.ParticipantType == Domain.Enums.ChatParticipantType.SellerPartner && s.PartnerId == partner.Id
+                    select c.Id
+                ).ToListAsync(Context.ConnectionAborted);
 
-            var allRoomIds = conversationIds.Concat(participantIds).Distinct().ToList();
+                var directPartnerConvo = await _context.Conversations.AsNoTracking()
+                    .Where(c => c.ParticipantId == partner.Id && c.ParticipantType == Domain.Enums.ChatParticipantType.Partner)
+                    .Select(c => c.Id)
+                    .ToListAsync(Context.ConnectionAborted);
+
+                conversationIds.AddRange(partnerConvos);
+                conversationIds.AddRange(directPartnerConvo);
+            }
+            else
+            {
+                var participantIds = shopIds.Concat(userIds).Distinct().ToList();
+                var userConvoIds = await _context.Conversations.AsNoTracking()
+                    .Where(c => participantIds.Contains(c.ParticipantId) || participantIds.Contains(c.Id))
+                    .Select(c => c.Id)
+                    .ToListAsync(Context.ConnectionAborted);
+                conversationIds.AddRange(userConvoIds);
+                conversationIds.AddRange(participantIds);
+            }
+
+            var allRoomIds = conversationIds.Distinct().ToList();
             if (allRoomIds.Count == 0) return;
 
             var undelivered = await _context.Messages
@@ -131,7 +173,14 @@ public class ChatHub : Hub<IChatClient>
     public async Task JoinConversation(Guid conversationId)
     {
         var conversation = await _context.Conversations.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Id == conversationId || c.ParticipantId == conversationId, Context.ConnectionAborted);
+            .FirstOrDefaultAsync(c => c.Id == conversationId, Context.ConnectionAborted);
+
+        if (conversation is null)
+        {
+            // Only search by ParticipantId if not SellerPartner to prevent cross-channel contamination
+            conversation = await _context.Conversations.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.ParticipantId == conversationId && c.ParticipantType != Domain.Enums.ChatParticipantType.SellerPartner, Context.ConnectionAborted);
+        }
 
         if (conversation is null)
         {
@@ -144,8 +193,17 @@ public class ChatHub : Hub<IChatClient>
             }
             else
             {
-                var isUser = await _context.Users.AsNoTracking()
-                    .AnyAsync(u => u.Id == conversationId, Context.ConnectionAborted);
+                var isPartner = await _context.Partners.AsNoTracking()
+                    .AnyAsync(p => p.Id == conversationId, Context.ConnectionAborted);
+                if (isPartner)
+                {
+                    conversation = await SupportConversationService.GetOrCreateAsync(
+                        _context, conversationId, Domain.Enums.ChatParticipantType.Partner, DateTime.UtcNow, Context.ConnectionAborted);
+                }
+                else
+                {
+                    var isUser = await _context.Users.AsNoTracking()
+                        .AnyAsync(u => u.Id == conversationId, Context.ConnectionAborted);
                 if (isUser)
                 {
                     conversation = await SupportConversationService.GetOrCreateAsync(
@@ -163,6 +221,7 @@ public class ChatHub : Hub<IChatClient>
                 }
             }
         }
+    }
 
         if (conversation is not null)
         {
@@ -174,15 +233,23 @@ public class ChatHub : Hub<IChatClient>
 
             await Groups.AddToGroupAsync(Context.ConnectionId, $"conversation:{conversation.Id}");
             await Groups.AddToGroupAsync(Context.ConnectionId, $"order-{conversation.Id}");
-            if (conversation.ParticipantId != conversation.Id && conversation.ParticipantId != Guid.Empty)
+
+            // Strictly prevent joining ParticipantId group for SellerPartner and Partner
+            if (conversation.ParticipantType != Domain.Enums.ChatParticipantType.SellerPartner
+                && conversation.ParticipantType != Domain.Enums.ChatParticipantType.Partner
+                && conversation.ParticipantId != conversation.Id
+                && conversation.ParticipantId != Guid.Empty)
             {
                 await Groups.AddToGroupAsync(Context.ConnectionId, $"conversation:{conversation.ParticipantId}");
                 await Groups.AddToGroupAsync(Context.ConnectionId, $"order-{conversation.ParticipantId}");
             }
         }
+        else
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"conversation:{conversationId}");
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"order-{conversationId}");
+        }
 
-        await Groups.AddToGroupAsync(Context.ConnectionId, $"conversation:{conversationId}");
-        await Groups.AddToGroupAsync(Context.ConnectionId, $"order-{conversationId}");
         _logger.LogInformation(
             "ConnectionId {ConnectionId} joined conversation:{ConversationId}",
             Context.ConnectionId, conversationId);

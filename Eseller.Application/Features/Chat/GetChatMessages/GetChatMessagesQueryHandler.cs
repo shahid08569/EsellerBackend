@@ -31,9 +31,16 @@ public class GetChatMessagesQueryHandler
             return Result.Failure<PagedList<ChatMessageDto>>(
                 "User is not authenticated.", "UNAUTHENTICATED");
 
+        var role = _currentUserService.RoleType;
         var conversation = await _context.Conversations
-            .FirstOrDefaultAsync(c => c.Id == request.OrderRequestId
-                                   || c.ParticipantId == request.OrderRequestId, cancellationToken);
+            .FirstOrDefaultAsync(c => c.Id == request.OrderRequestId, cancellationToken);
+
+        if (conversation is null)
+        {
+            var targetType = role == RoleType.Partner ? ChatParticipantType.SellerPartner : ChatParticipantType.Seller;
+            conversation = await _context.Conversations
+                .FirstOrDefaultAsync(c => c.ParticipantId == request.OrderRequestId && c.ParticipantType == targetType, cancellationToken);
+        }
 
         if (conversation is null)
         {
@@ -43,14 +50,36 @@ public class GetChatMessagesQueryHandler
 
             if (shop is not null)
             {
+                var targetType = role == RoleType.Partner ? ChatParticipantType.SellerPartner : ChatParticipantType.Seller;
                 conversation = await SupportConversationService.GetOrCreateAsync(
-                    _context, shop.Id, ChatParticipantType.Seller,
+                    _context, shop.Id, targetType,
                     _dateTime.UtcNow, cancellationToken);
             }
             else
             {
-                var isUser = await _context.Users.AsNoTracking()
-                    .AnyAsync(u => u.Id == request.OrderRequestId, cancellationToken);
+                var partner = await _context.Partners.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == request.OrderRequestId || p.AccountId == request.OrderRequestId, cancellationToken);
+
+                if (partner is null && role == RoleType.Partner && _currentUserService.AccountId.HasValue)
+                {
+                    var myPartner = await _context.Partners.AsNoTracking()
+                        .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
+                    if (myPartner != null && (request.OrderRequestId == myPartner.Id || request.OrderRequestId == myPartner.AccountId))
+                    {
+                        partner = myPartner;
+                    }
+                }
+
+                if (partner is not null)
+                {
+                    conversation = await SupportConversationService.GetOrCreateAsync(
+                        _context, partner.Id, ChatParticipantType.Partner,
+                        _dateTime.UtcNow, cancellationToken);
+                }
+                else
+                {
+                    var isUser = await _context.Users.AsNoTracking()
+                        .AnyAsync(u => u.Id == request.OrderRequestId, cancellationToken);
                 if (isUser)
                 {
                     conversation = await SupportConversationService.GetOrCreateAsync(
@@ -70,6 +99,7 @@ public class GetChatMessagesQueryHandler
                 }
             }
         }
+    }
 
         if (conversation is null)
             return Result.Failure<PagedList<ChatMessageDto>>(
@@ -80,13 +110,21 @@ public class GetChatMessagesQueryHandler
             return Result.Failure<PagedList<ChatMessageDto>>(
                 "You do not have permission.", "FORBIDDEN");
 
-        var roomIds = new[] { conversation.Id, conversation.ParticipantId, request.OrderRequestId }
-            .Where(id => id != Guid.Empty)
-            .Distinct()
-            .ToList();
+        List<Guid> roomIds;
 
-        if (conversation.ParticipantType == ChatParticipantType.Customer)
+        if (conversation.ParticipantType == ChatParticipantType.SellerPartner ||
+            conversation.ParticipantType == ChatParticipantType.Partner)
         {
+            // Strictly isolated room: only this conversation ID!
+            roomIds = new List<Guid> { conversation.Id };
+        }
+        else if (conversation.ParticipantType == ChatParticipantType.Customer)
+        {
+            roomIds = new[] { conversation.Id, conversation.ParticipantId, request.OrderRequestId }
+                .Where(id => id != Guid.Empty)
+                .Distinct()
+                .ToList();
+
             var userOrders = await _context.OrderRequests.AsNoTracking()
                 .Where(o => o.UserId == conversation.ParticipantId)
                 .Select(o => o.Id)
@@ -96,19 +134,28 @@ public class GetChatMessagesQueryHandler
         }
         else if (conversation.ParticipantType == ChatParticipantType.Seller)
         {
+            roomIds = new[] { conversation.Id, conversation.ParticipantId, request.OrderRequestId }
+                .Where(id => id != Guid.Empty)
+                .Distinct()
+                .ToList();
+
             var shopOrderReqIds = await _context.SellerOrders.AsNoTracking()
                 .Where(so => so.ShopId == conversation.ParticipantId)
                 .Select(so => so.OrderRequestId)
                 .ToListAsync(cancellationToken);
             roomIds.AddRange(shopOrderReqIds);
 
-            // Also include any other conversation ids matching this shop
+            // ONLY include other conversations with the EXACT SAME ParticipantType (Seller)! NEVER SellerPartner!
             var otherSellerConvos = await _context.Conversations.AsNoTracking()
-                .Where(c => c.ParticipantId == conversation.ParticipantId)
+                .Where(c => c.ParticipantId == conversation.ParticipantId && c.ParticipantType == ChatParticipantType.Seller)
                 .Select(c => c.Id)
                 .ToListAsync(cancellationToken);
             roomIds.AddRange(otherSellerConvos);
             roomIds = roomIds.Distinct().ToList();
+        }
+        else
+        {
+            roomIds = new List<Guid> { conversation.Id };
         }
 
         var accountIdStr = _currentUserService.AccountId.Value.ToString();

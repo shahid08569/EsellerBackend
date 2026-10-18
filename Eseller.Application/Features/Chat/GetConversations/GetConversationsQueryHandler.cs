@@ -57,6 +57,34 @@ public class GetConversationsQueryHandler
         CancellationToken cancellationToken)
     {
         var conversations = new List<ConversationDto>();
+        var isPartner = _currentUserService.RoleType == RoleType.Partner;
+
+        // Load all partners & accounts for referral metadata resolution
+        var allPartners = await _context.Partners.AsNoTracking().ToListAsync(cancellationToken);
+        var partnerAccountIds = allPartners.Select(p => p.AccountId).Distinct().ToList();
+        var partnerAccounts = await _context.Accounts.AsNoTracking()
+            .Where(a => partnerAccountIds.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, cancellationToken);
+        var partnerMap = allPartners.ToDictionary(p => p.Id);
+
+        string GetPartnerName(Guid? partnerId)
+        {
+            if (partnerId.HasValue && partnerMap.TryGetValue(partnerId.Value, out var p))
+            {
+                if (partnerAccounts.TryGetValue(p.AccountId, out var acc))
+                {
+                    return !string.IsNullOrWhiteSpace(acc.Username) ? acc.Username : acc.Email;
+                }
+                return p.ReferralCode;
+            }
+            return "Partner";
+        }
+
+        Partner? currentPartner = null;
+        if (isPartner && _currentUserService.AccountId.HasValue)
+        {
+            currentPartner = allPartners.FirstOrDefault(p => p.AccountId == _currentUserService.AccountId.Value);
+        }
 
         // Seller directory: Shop.Id is the conversation room key (created lazily on first message)
         // Skip Platform Master Warehouse — not a real merchant chat target
@@ -67,18 +95,18 @@ public class GetConversationsQueryHandler
                         && s.Slug != MasterCatalog.ShopSlug
                         && s.Name != MasterCatalog.ShopName);
 
-        var isPartner = _currentUserService.RoleType == RoleType.Partner;
         HashSet<Guid>? partnerShopIds = null;
         if (isPartner)
         {
             partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
-            if (partnerShopIds == null || partnerShopIds.Count == 0)
+            if (partnerShopIds != null && partnerShopIds.Count > 0)
             {
-                // Partner has 0 referred shops -> strictly 0 conversations!
-                return Result.Success(new PagedList<ConversationDto>(
-                    Array.Empty<ConversationDto>(), 0, request.PageNumber, request.PageSize));
+                shopsQuery = shopsQuery.Where(s => partnerShopIds.Contains(s.Id));
             }
-            shopsQuery = shopsQuery.Where(s => partnerShopIds.Contains(s.Id));
+            else
+            {
+                shopsQuery = shopsQuery.Where(s => false);
+            }
         }
 
         var shops = await shopsQuery.ToListAsync(cancellationToken);
@@ -93,6 +121,7 @@ public class GetConversationsQueryHandler
 
         var shopIds = shops.Select(s => s.Id).ToList();
 
+        // 1. Direct Seller-SuperAdmin convos (ParticipantType == Seller)
         var sellerConvos = await _context.Conversations.AsNoTracking()
             .Where(c => c.ParticipantType == ChatParticipantType.Seller && (shopIds.Contains(c.ParticipantId) || !isPartner))
             .Select(c => new { c.Id, c.ParticipantId })
@@ -101,6 +130,36 @@ public class GetConversationsQueryHandler
         var sellerConvoByShop = sellerConvos
             .GroupBy(c => c.ParticipantId)
             .ToDictionary(g => g.Key, g => g.First().Id);
+
+        // 2. SellerPartner convos (Partner ↔ Referred Shopkeeper)
+        var sellerPartnerConvosQuery = _context.Conversations.AsNoTracking()
+            .Where(c => c.ParticipantType == ChatParticipantType.SellerPartner);
+
+        if (isPartner)
+        {
+            if (partnerShopIds != null && partnerShopIds.Count > 0)
+            {
+                sellerPartnerConvosQuery = sellerPartnerConvosQuery.Where(c => partnerShopIds.Contains(c.ParticipantId));
+            }
+            else
+            {
+                sellerPartnerConvosQuery = sellerPartnerConvosQuery.Where(c => false);
+            }
+        }
+
+        var sellerPartnerConvos = await sellerPartnerConvosQuery.ToListAsync(cancellationToken);
+        var sellerPartnerConvoByShop = sellerPartnerConvos
+            .GroupBy(c => c.ParticipantId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        // 3. Partner ↔ SuperAdmin direct conversations
+        var partnerDirectConvos = await _context.Conversations.AsNoTracking()
+            .Where(c => c.ParticipantType == ChatParticipantType.Partner)
+            .ToListAsync(cancellationToken);
+
+        var partnerConvoByPartnerId = partnerDirectConvos
+            .GroupBy(c => c.ParticipantId)
+            .ToDictionary(g => g.Key, g => g.First());
 
         var customerConvoIds = new List<CustomerRoom>();
 
@@ -129,12 +188,24 @@ public class GetConversationsQueryHandler
             }
         }
 
+        // Aggregate room IDs for message fetching
         var allRoomIds = shopIds
             .Concat(sellerConvos.Select(c => c.Id))
+            .Concat(sellerPartnerConvos.Select(c => c.Id))
+            .Concat(sellerPartnerConvos.Select(c => c.ParticipantId))
+            .Concat(partnerDirectConvos.Select(c => c.Id))
+            .Concat(partnerDirectConvos.Select(c => c.ParticipantId))
             .Concat(customerConvoIds.Select(c => c.Id))
             .Concat(customerConvoIds.Select(c => c.ParticipantId))
             .Distinct()
             .ToList();
+
+        if (isPartner && currentPartner != null)
+        {
+            allRoomIds.Add(currentPartner.Id);
+            if (partnerConvoByPartnerId.TryGetValue(currentPartner.Id, out var pc))
+                allRoomIds.Add(pc.Id);
+        }
 
         // Query max SentAt per ConversationId for all rooms
         var maxDates = await _context.Messages.AsNoTracking()
@@ -155,11 +226,11 @@ public class GetConversationsQueryHandler
             .GroupBy(m => m.ConversationId)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.SentAt).First());
 
+        var currentAccountId = _currentUserService.AccountId ?? Guid.Empty;
         var unreadByConvo = await _context.Messages.AsNoTracking()
             .Where(m => allRoomIds.Contains(m.ConversationId)
                         && !m.IsRead
-                        && (m.SenderRole == ChatSenderRole.Shopkeeper
-                            || m.SenderRole == ChatSenderRole.User))
+                        && m.SenderId != currentAccountId)
             .GroupBy(m => m.ConversationId)
             .Select(g => new { ConversationId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.ConversationId, x => x.Count, cancellationToken);
@@ -169,62 +240,281 @@ public class GetConversationsQueryHandler
             .Where(a => shopAccountIds.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, cancellationToken);
 
-        foreach (var shop in shops)
+        // A) If PARTNER:
+        if (isPartner)
         {
-            shopkeepers.TryGetValue(shop.ShopkeeperId, out var keeper);
-            if (keeper is not null && keeper.Status == ShopkeeperApprovalStatus.Rejected)
-                continue;
-
-            var shopAssociatedRooms = new List<Guid> { shop.Id };
-            if (sellerConvoByShop.TryGetValue(shop.Id, out var sConvoId) && sConvoId != shop.Id)
-                shopAssociatedRooms.Add(sConvoId);
-
-            Eseller.Domain.Entities.Chat.Message? last = null;
-            var unread = 0;
-            foreach (var rId in shopAssociatedRooms)
+            // 1. Direct Channel with SuperAdmin (Default & Always Available!)
+            if (currentPartner != null)
             {
-                if (lastByConvo.TryGetValue(rId, out var m))
+                partnerConvoByPartnerId.TryGetValue(currentPartner.Id, out var partnerConvo);
+                var targetRoomId = partnerConvo?.Id ?? currentPartner.Id;
+                var associatedRooms = new List<Guid> { targetRoomId };
+                if (partnerConvo != null && partnerConvo.Id != currentPartner.Id)
+                    associatedRooms.Add(currentPartner.Id);
+
+                Eseller.Domain.Entities.Chat.Message? last = null;
+                var unread = 0;
+                foreach (var rId in associatedRooms)
                 {
-                    if (last is null || m.SentAt > last.SentAt)
-                        last = m;
+                    if (lastByConvo.TryGetValue(rId, out var m))
+                    {
+                        if (last is null || m.SentAt > last.SentAt) last = m;
+                    }
+                    if (unreadByConvo.TryGetValue(rId, out var cnt)) unread += cnt;
                 }
-                if (unreadByConvo.TryGetValue(rId, out var cnt))
-                {
-                    unread += cnt;
-                }
+
+                var preview = last is null
+                    ? "Official platform management channel"
+                    : string.IsNullOrWhiteSpace(last.Content)
+                        ? (last.AttachmentFileName is not null ? $"📎 {last.AttachmentFileName}" : "Attachment")
+                        : CleanReplyPreview(last.Content);
+
+                conversations.Add(new ConversationDto(
+                    targetRoomId,
+                    currentPartner.Id,
+                    "Platform Management (Super Admin)",
+                    "support@platform.local",
+                    "Official Support Channel",
+                    0,
+                    0,
+                    preview,
+                    last?.SenderId,
+                    last?.SentAt,
+                    unread,
+                    partnerConvo?.CreatedAt ?? currentPartner.CreatedAt,
+                    ParticipantType: "Partner",
+                    LogoUrl: null,
+                    IsReferred: false,
+                    PartnerId: null,
+                    PartnerName: null,
+                    IsReadOnly: false));
             }
 
-            var statusLabel = keeper is null
-                ? "Merchant Support"
-                : keeper.Status == ShopkeeperApprovalStatus.Approved
-                    ? "Verified Merchant"
-                    : "Pending Verification";
+            // 2. Referred Shops for Partner (SellerPartner)
+            foreach (var shop in shops)
+            {
+                shopkeepers.TryGetValue(shop.ShopkeeperId, out var keeper);
+                if (keeper is not null && keeper.Status == ShopkeeperApprovalStatus.Rejected)
+                    continue;
 
-            var email = keeper is not null && shopAccounts.TryGetValue(keeper.AccountId, out var acc)
-                ? acc.Email
-                : string.Empty;
+                sellerPartnerConvoByShop.TryGetValue(shop.Id, out var spConvo);
+                var targetRoomId = spConvo?.Id ?? shop.Id;
+                var associatedRooms = new List<Guid> { targetRoomId };
+                if (spConvo != null && spConvo.Id != shop.Id)
+                    associatedRooms.Add(shop.Id);
 
-            var preview = last is null
-                ? "Direct support channel"
-                : string.IsNullOrWhiteSpace(last.Content)
-                    ? (last.AttachmentFileName is not null ? $"📎 {last.AttachmentFileName}" : "Attachment")
-                    : CleanReplyPreview(last.Content);
+                Eseller.Domain.Entities.Chat.Message? last = null;
+                var unread = 0;
+                foreach (var rId in associatedRooms)
+                {
+                    if (lastByConvo.TryGetValue(rId, out var m))
+                    {
+                        if (last is null || m.SentAt > last.SentAt) last = m;
+                    }
+                    if (unreadByConvo.TryGetValue(rId, out var cnt)) unread += cnt;
+                }
 
-            conversations.Add(new ConversationDto(
-                shop.Id,
-                keeper?.Id ?? Guid.Empty,
-                shop.Name,
-                email,
-                statusLabel,
-                0,
-                0,
-                preview,
-                last?.SenderId,
-                last?.SentAt,
-                unread,
-                last?.SentAt ?? shop.CreatedAt,
-                ParticipantType: "Seller",
-                LogoUrl: shop.LogoUrl));
+                var email = keeper is not null && shopAccounts.TryGetValue(keeper.AccountId, out var acc)
+                    ? acc.Email
+                    : string.Empty;
+
+                var preview = last is null
+                    ? "Direct partner channel"
+                    : string.IsNullOrWhiteSpace(last.Content)
+                        ? (last.AttachmentFileName is not null ? $"📎 {last.AttachmentFileName}" : "Attachment")
+                        : CleanReplyPreview(last.Content);
+
+                conversations.Add(new ConversationDto(
+                    targetRoomId,
+                    keeper?.Id ?? Guid.Empty,
+                    shop.Name,
+                    email,
+                    "Referred Merchant",
+                    0,
+                    0,
+                    preview,
+                    last?.SenderId,
+                    last?.SentAt,
+                    unread,
+                    last?.SentAt ?? shop.CreatedAt,
+                    ParticipantType: "SellerPartner",
+                    LogoUrl: shop.LogoUrl,
+                    IsReferred: true,
+                    PartnerId: currentPartner?.Id,
+                    PartnerName: currentPartner?.ReferralCode,
+                    IsReadOnly: false));
+            }
+        }
+        else
+        {
+            // B) If SUPERADMIN:
+            // 1. Direct Sellers (Shop.PartnerId == null) & Partner Referrals (Shop.PartnerId != null)
+            foreach (var shop in shops)
+            {
+                shopkeepers.TryGetValue(shop.ShopkeeperId, out var keeper);
+                if (keeper is not null && keeper.Status == ShopkeeperApprovalStatus.Rejected)
+                    continue;
+
+                var targetRoomId = sellerConvoByShop.TryGetValue(shop.Id, out var sConvoId) ? sConvoId : shop.Id;
+                var shopAssociatedRooms = new List<Guid> { targetRoomId };
+                if (sConvoId != Guid.Empty && sConvoId != shop.Id)
+                    shopAssociatedRooms.Add(sConvoId);
+
+                Eseller.Domain.Entities.Chat.Message? last = null;
+                var unread = 0;
+                foreach (var rId in shopAssociatedRooms)
+                {
+                    if (lastByConvo.TryGetValue(rId, out var m))
+                    {
+                        if (last is null || m.SentAt > last.SentAt)
+                            last = m;
+                    }
+                    if (unreadByConvo.TryGetValue(rId, out var cnt))
+                    {
+                        unread += cnt;
+                    }
+                }
+
+                var partnerId = shop.PartnerId ?? keeper?.PartnerId;
+                var isReferred = partnerId.HasValue;
+                var partnerName = isReferred ? GetPartnerName(partnerId) : null;
+
+                var statusLabel = isReferred
+                    ? $"Referred by {partnerName}"
+                    : (keeper is null
+                        ? "Merchant Support"
+                        : keeper.Status == ShopkeeperApprovalStatus.Approved
+                            ? "Verified Merchant"
+                            : "Pending Verification");
+
+                var email = keeper is not null && shopAccounts.TryGetValue(keeper.AccountId, out var acc)
+                    ? acc.Email
+                    : string.Empty;
+
+                var preview = last is null
+                    ? (isReferred ? $"Partner referral support ({partnerName})" : "Direct support channel")
+                    : string.IsNullOrWhiteSpace(last.Content)
+                        ? (last.AttachmentFileName is not null ? $"📎 {last.AttachmentFileName}" : "Attachment")
+                        : CleanReplyPreview(last.Content);
+
+                conversations.Add(new ConversationDto(
+                    targetRoomId,
+                    keeper?.Id ?? Guid.Empty,
+                    shop.Name,
+                    email,
+                    statusLabel,
+                    0,
+                    0,
+                    preview,
+                    last?.SenderId,
+                    last?.SentAt,
+                    unread,
+                    last?.SentAt ?? shop.CreatedAt,
+                    ParticipantType: "Seller",
+                    LogoUrl: shop.LogoUrl,
+                    IsReferred: isReferred,
+                    PartnerId: partnerId,
+                    PartnerName: partnerName,
+                    IsReadOnly: false));
+            }
+
+            // 2. Partner's Sellers (Audit view for SuperAdmin — STRICTLY READ ONLY!)
+            foreach (var spConvo in sellerPartnerConvos)
+            {
+                var shop = shops.FirstOrDefault(s => s.Id == spConvo.ParticipantId);
+                if (shop is null) continue;
+
+                shopkeepers.TryGetValue(shop.ShopkeeperId, out var keeper);
+                var partnerId = shop.PartnerId ?? keeper?.PartnerId;
+                var partnerName = GetPartnerName(partnerId);
+
+                lastByConvo.TryGetValue(spConvo.Id, out var last);
+                if (last is null && spConvo.ParticipantId != spConvo.Id)
+                    lastByConvo.TryGetValue(spConvo.ParticipantId, out last);
+
+                // Unread for audit is not tracked as actionable inbox for SuperAdmin
+                var preview = last is null
+                    ? $"Partner ({partnerName}) chat with {shop.Name}"
+                    : string.IsNullOrWhiteSpace(last.Content)
+                        ? (last.AttachmentFileName is not null ? $"📎 {last.AttachmentFileName}" : "Attachment")
+                        : CleanReplyPreview(last.Content);
+
+                var email = keeper is not null && shopAccounts.TryGetValue(keeper.AccountId, out var acc)
+                    ? acc.Email
+                    : string.Empty;
+
+                conversations.Add(new ConversationDto(
+                    spConvo.Id,
+                    shop.Id,
+                    $"{shop.Name} (Partner: {partnerName})",
+                    email,
+                    $"Partner's Merchant ({partnerName})",
+                    0,
+                    0,
+                    preview,
+                    last?.SenderId,
+                    last?.SentAt,
+                    0, // read-only audit does not increment actionable unread badge for SuperAdmin
+                    spConvo.CreatedAt,
+                    ParticipantType: "SellerPartner",
+                    LogoUrl: shop.LogoUrl,
+                    IsReferred: true,
+                    PartnerId: partnerId,
+                    PartnerName: partnerName,
+                    IsReadOnly: true));
+            }
+
+            // 3. SuperAdmin ↔ Partner Direct Channels
+            foreach (var partner in allPartners)
+            {
+                partnerAccounts.TryGetValue(partner.AccountId, out var pAcc);
+                var pName = !string.IsNullOrWhiteSpace(pAcc?.Username)
+                    ? pAcc.Username
+                    : (!string.IsNullOrWhiteSpace(pAcc?.Email) ? pAcc.Email : partner.ReferralCode);
+
+                partnerConvoByPartnerId.TryGetValue(partner.Id, out var pConvo);
+                var targetRoomId = pConvo?.Id ?? partner.Id;
+                var associatedRooms = new List<Guid> { targetRoomId };
+                if (pConvo != null && pConvo.Id != partner.Id)
+                    associatedRooms.Add(partner.Id);
+
+                Eseller.Domain.Entities.Chat.Message? last = null;
+                var unread = 0;
+                foreach (var rId in associatedRooms)
+                {
+                    if (lastByConvo.TryGetValue(rId, out var m))
+                    {
+                        if (last is null || m.SentAt > last.SentAt) last = m;
+                    }
+                    if (unreadByConvo.TryGetValue(rId, out var cnt)) unread += cnt;
+                }
+
+                var preview = last is null
+                    ? $"Direct channel with Partner {pName}"
+                    : string.IsNullOrWhiteSpace(last.Content)
+                        ? (last.AttachmentFileName is not null ? $"📎 {last.AttachmentFileName}" : "Attachment")
+                        : CleanReplyPreview(last.Content);
+
+                conversations.Add(new ConversationDto(
+                    targetRoomId,
+                    partner.Id,
+                    pName,
+                    pAcc?.Email ?? string.Empty,
+                    $"Active Partner ({partner.ReferralCode})",
+                    0,
+                    0,
+                    preview,
+                    last?.SenderId,
+                    last?.SentAt,
+                    unread,
+                    pConvo?.CreatedAt ?? partner.CreatedAt,
+                    ParticipantType: "Partner",
+                    LogoUrl: null,
+                    IsReferred: false,
+                    PartnerId: partner.Id,
+                    PartnerName: pName,
+                    IsReadOnly: false));
+            }
         }
 
         var userIds = customerConvoIds.Select(c => c.ParticipantId).Distinct().ToList();
