@@ -160,6 +160,19 @@ public class AdminController : ControllerBase
             var affiliateByAccount = affiliates.ToDictionary(a => a.AccountId);
             var affiliateById = affiliates.ToDictionary(a => a.Id);
 
+            // Partners lookup for referral attribution
+            var partners = await _context.Partners
+                .AsNoTracking()
+                .ToListAsync(cancellationToken);
+            var partnerById = partners.ToDictionary(p => p.Id);
+            var partnerAccountIds = partners.Select(p => p.AccountId).Distinct().ToList();
+            var partnerAccounts = partnerAccountIds.Count == 0
+                ? new Dictionary<Guid, Domain.Entities.Identity.Account>()
+                : await _context.Accounts
+                    .AsNoTracking()
+                    .Where(a => partnerAccountIds.Contains(a.Id))
+                    .ToDictionaryAsync(a => a.Id, cancellationToken);
+
             var referralClicks = await _context.AffiliateClicks
                 .AsNoTracking()
                 .Where(c => c.Converted)
@@ -204,7 +217,14 @@ public class AdminController : ControllerBase
 
                 string? refByCode = null;
                 string? refByName = null;
-                if (shopId.HasValue && referredByShop.TryGetValue(shopId.Value, out var whoReferredMe))
+                Guid? partnerId = s.PartnerId ?? shop?.PartnerId;
+                if (partnerId.HasValue && partnerById.TryGetValue(partnerId.Value, out var partner))
+                {
+                    refByCode = partner.ReferralCode;
+                    partnerAccounts.TryGetValue(partner.AccountId, out var pAcc);
+                    refByName = pAcc?.Email ?? pAcc?.Username ?? partner.ReferralCode;
+                }
+                else if (shopId.HasValue && referredByShop.TryGetValue(shopId.Value, out var whoReferredMe))
                 {
                     if (affiliateById.TryGetValue(whoReferredMe.AffiliateId, out var parentAffiliate))
                     {
@@ -259,7 +279,9 @@ public class AdminController : ControllerBase
                     referralCode = myRefCode,
                     referralsCount = myRefCount,
                     referredByCode = refByCode,
-                    referredByName = refByName
+                    referredByName = refByName,
+                    partnerId = partnerId,
+                    partnerName = partnerId.HasValue ? refByName : null
                 };
             }).ToList();
 
