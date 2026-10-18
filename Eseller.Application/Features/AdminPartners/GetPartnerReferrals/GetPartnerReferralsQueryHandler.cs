@@ -145,7 +145,7 @@ public class GetPartnerReferralsQueryHandler
         var totalShops = shopDtos.Count;
         var activeShops = shopDtos.Count(s => s.IsActive && s.Status == "Approved");
         var pendingShops = shopDtos.Count(s => s.Status == "Pending");
-        var suspendedShops = shopDtos.Count(s => !s.IsActive || s.Status == "Rejected");
+        var suspendedShops = shopDtos.Count(s => s.Status != "Pending" && (!s.IsActive || s.Status == "Rejected" || s.Status == "Suspended"));
         var totalOrders = shopDtos.Sum(s => s.OrdersCount);
         var totalSales = shopDtos.Sum(s => s.TotalSales);
 
