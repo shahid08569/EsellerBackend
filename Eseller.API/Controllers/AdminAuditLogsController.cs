@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Features.AdminAuditLogs.GetAuditLogs;
+using Eseller.Application.Features.AdminAuditLogs.GetAuditLogs;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -30,7 +30,7 @@ public class AdminAuditLogsController : ControllerBase
         [FromQuery] int pageSize = 50,
         CancellationToken cancellationToken = default)
     {
-        if (pageSize > 200) pageSize = 200;
+        if (pageSize > 500) pageSize = 500;
         if (pageSize < 1) pageSize = 50;
 
         var query = new GetAuditLogsQuery(
