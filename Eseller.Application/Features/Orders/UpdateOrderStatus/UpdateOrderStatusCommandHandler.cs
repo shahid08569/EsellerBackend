@@ -39,20 +39,27 @@ public class UpdateOrderStatusCommandHandler
         if (role != RoleType.SuperAdmin && role != RoleType.Partner)
             return Result.Failure("Only admins can update order status.", "FORBIDDEN");
 
-        if (role == RoleType.Partner)
-        {
-            var hasPerm = await PartnerPermissionChecker.HasPermissionAsync(
-                _context, _currentUserService, "orders:manage", cancellationToken);
-            if (!hasPerm)
-                return Result.Failure("You do not have permission to update order status.", "FORBIDDEN");
-        }
-
         // Block status updates on chat/support channel rows (not commerce orders)
         var order = await _context.OrderRequests
             .FirstOrDefaultAsync(o => o.Id == request.OrderId, cancellationToken);
 
         if (order is null)
             return Result.Failure("Order not found.", "ORDER_NOT_FOUND");
+
+        if (role == RoleType.Partner)
+        {
+            var hasPerm = await PartnerPermissionChecker.HasPermissionAsync(
+                _context, _currentUserService, "orders:manage", cancellationToken);
+            if (!hasPerm)
+                return Result.Failure("You do not have permission to update order status.", "FORBIDDEN");
+
+            var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
+            var isPartnerOrder = await _context.SellerOrders
+                .AnyAsync(so => so.OrderRequestId == order.Id && partnerShopIds != null && partnerShopIds.Contains(so.ShopId), cancellationToken);
+
+            if (!isPartnerOrder)
+                return Result.Failure("Partners can only manage orders for their referred shops.", "FORBIDDEN");
+        }
 
         if (IsChatChannel(order.ShippingAddress))
             return Result.Failure("This is a chat channel, not a commerce order.", "NOT_A_COMMERCE_ORDER");

@@ -34,11 +34,19 @@ public static class PartnerScopeHelper
             return null; // SuperAdmin or other -> unrestricted (no partner filter)
 
         var partnerId = await GetCurrentPartnerIdAsync(context, currentUserService, cancellationToken);
-        if (!partnerId.HasValue)
-            return new HashSet<Guid>(); // Partner without a profile -> strictly 0 shops
+        var partnerAccountGuid = currentUserService.AccountId ?? Guid.Empty;
+        var partnerEntityGuid = partnerId ?? Guid.Empty;
+
+        var partnerShopkeeperIds = await context.Shopkeepers.AsNoTracking()
+            .Where(sk => sk.PartnerId == partnerEntityGuid || sk.PartnerId == partnerAccountGuid)
+            .Select(sk => sk.Id)
+            .ToListAsync(cancellationToken);
 
         var shopIds = await context.Shops.IgnoreQueryFilters().AsNoTracking()
-            .Where(s => s.PartnerId == partnerId.Value && s.DeletedAt == null)
+            .Where(s => s.DeletedAt == null && (
+                s.PartnerId == partnerEntityGuid ||
+                s.PartnerId == partnerAccountGuid ||
+                partnerShopkeeperIds.Contains(s.ShopkeeperId)))
             .Select(s => s.Id)
             .ToListAsync(cancellationToken);
 
@@ -57,11 +65,7 @@ public static class PartnerScopeHelper
         if (currentUserService.RoleType != RoleType.Partner)
             return false;
 
-        var partnerId = await GetCurrentPartnerIdAsync(context, currentUserService, cancellationToken);
-        if (!partnerId.HasValue)
-            return false;
-
-        return await context.Shops.IgnoreQueryFilters().AsNoTracking()
-            .AnyAsync(s => s.Id == shopId && s.PartnerId == partnerId.Value, cancellationToken);
+        var partnerShopIds = await GetPartnerShopIdsAsync(context, currentUserService, cancellationToken);
+        return partnerShopIds != null && partnerShopIds.Contains(shopId);
     }
 }

@@ -194,13 +194,10 @@ public class AdminPlaceOrderCommandHandler
 
         if (role == RoleType.Partner)
         {
-            var partner = await _context.Partners.AsNoTracking()
-                .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
-            var partnerId = partner?.Id ?? Guid.Empty;
-
+            var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
             foreach (var shopId in shopIds)
             {
-                if (!shops.TryGetValue(shopId, out var targetShop) || targetShop.PartnerId != partnerId)
+                if (partnerShopIds == null || !partnerShopIds.Contains(shopId))
                 {
                     return Result.Failure<Guid>(
                         "Partners can only place orders to shops that registered through their own referral link.",

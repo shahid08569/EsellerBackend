@@ -44,21 +44,41 @@ public class GetAdminOrdersQueryHandler
                         || _context.OrderRequestItems.Any(i => i.OrderRequestId == o.Id));
 
         // Strict isolation: Partner can ONLY see orders for shops that joined via their own referral link
+        List<Guid>? partnerShopIdList = null;
         if (role == RoleType.Partner)
         {
             var partner = await _context.Partners.AsNoTracking()
                 .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
-            var partnerId = partner?.Id ?? Guid.Empty;
+            var partnerAccountGuid = _currentUserService.AccountId.Value;
+            var partnerEntityGuid = partner?.Id ?? Guid.Empty;
+
+            var partnerShopkeeperIds = _context.Shopkeepers
+                .Where(sk => sk.PartnerId == partnerEntityGuid || sk.PartnerId == partnerAccountGuid)
+                .Select(sk => sk.Id);
 
             var partnerShopIds = _context.Shops.IgnoreQueryFilters()
-                .Where(s => s.PartnerId == partnerId && s.DeletedAt == null)
+                .Where(s => s.DeletedAt == null && (
+                    s.PartnerId == partnerEntityGuid ||
+                    s.PartnerId == partnerAccountGuid ||
+                    partnerShopkeeperIds.Contains(s.ShopkeeperId)))
                 .Select(s => s.Id);
+
+            partnerShopIdList = await partnerShopIds.ToListAsync(cancellationToken);
 
             var partnerOrderIds = _context.SellerOrders
                 .Where(so => partnerShopIds.Contains(so.ShopId))
                 .Select(so => so.OrderRequestId);
 
-            query = query.Where(o => partnerOrderIds.Contains(o.Id));
+            var partnerOrderIdsFromItems = _context.OrderRequestItems
+                .Where(i => partnerShopIds.Contains(
+                    _context.Products.IgnoreQueryFilters()
+                        .Where(p => _context.ProductVariants.IgnoreQueryFilters()
+                            .Where(v => v.Id == i.ProductVariantId)
+                            .Select(v => v.ProductId).Contains(p.Id))
+                        .Select(p => p.ShopId).FirstOrDefault()))
+                .Select(i => i.OrderRequestId);
+
+            query = query.Where(o => partnerOrderIds.Contains(o.Id) || partnerOrderIdsFromItems.Contains(o.Id));
         }
 
         if (request.Status.HasValue)
@@ -68,11 +88,20 @@ public class GetAdminOrdersQueryHandler
 
         if (request.ShopId.HasValue && request.ShopId.Value != Guid.Empty)
         {
+            var targetShopId = request.ShopId.Value;
             var orderIdsForShop = _context.SellerOrders
-                .Where(so => so.ShopId == request.ShopId.Value)
+                .Where(so => so.ShopId == targetShopId)
                 .Select(so => so.OrderRequestId);
 
-            query = query.Where(o => orderIdsForShop.Contains(o.Id));
+            var orderIdsFromItemsForShop = _context.OrderRequestItems
+                .Where(i => _context.Products.IgnoreQueryFilters()
+                    .Where(p => _context.ProductVariants.IgnoreQueryFilters()
+                        .Where(v => v.Id == i.ProductVariantId)
+                        .Select(v => v.ProductId).Contains(p.Id))
+                    .Select(p => p.ShopId).FirstOrDefault() == targetShopId)
+                .Select(i => i.OrderRequestId);
+
+            query = query.Where(o => orderIdsForShop.Contains(o.Id) || orderIdsFromItemsForShop.Contains(o.Id));
         }
 
         if (!string.IsNullOrWhiteSpace(request.Search))
@@ -107,14 +136,24 @@ public class GetAdminOrdersQueryHandler
         var accountIds = users.Select(u => u.AccountId).Distinct().ToList();
         var accounts = await _context.Accounts
             .Where(a => accountIds.Contains(a.Id))
-            .ToDictionaryAsync(a => a.Id, cancellationToken);
+            .ToListAsync(cancellationToken);
 
-        var userMap = users.ToDictionary(u => u.Id, u => new
-        {
-            u.Name,
-            u.Phone,
-            Email = accounts.TryGetValue(u.AccountId, out var acc) ? acc.Email : ""
-        });
+        var accountMap = accounts
+            .GroupBy(a => a.Id)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var userMap = users
+            .GroupBy(u => u.Id)
+            .ToDictionary(g => g.Key, g =>
+            {
+                var u = g.First();
+                return new
+                {
+                    u.Name,
+                    u.Phone,
+                    Email = accountMap.TryGetValue(u.AccountId, out var acc) ? acc.Email : ""
+                };
+            });
 
         // Load order items
         var items = await _context.OrderRequestItems
@@ -128,31 +167,54 @@ public class GetAdminOrdersQueryHandler
 
         var shopIds = sellerOrders.Select(so => so.ShopId).Distinct().ToList();
         var shops = await _context.Shops
+            .IgnoreQueryFilters()
             .Where(s => shopIds.Contains(s.Id))
-            .ToDictionaryAsync(s => s.Id, cancellationToken);
+            .ToListAsync(cancellationToken);
 
-        var sellerOrderByItem = sellerOrders.ToDictionary(so => so.Id);
+        var shopMap = shops
+            .GroupBy(s => s.Id)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var sellerOrderByItem = sellerOrders
+            .GroupBy(so => so.Id)
+            .ToDictionary(g => g.Key, g => g.First());
 
         var variantIds = items.Select(i => i.ProductVariantId).Distinct().ToList();
         var variants = await _context.ProductVariants
             .IgnoreQueryFilters()
             .Where(pv => variantIds.Contains(pv.Id))
-            .ToDictionaryAsync(pv => pv.Id, cancellationToken);
+            .ToListAsync(cancellationToken);
 
-        var productIds = variants.Values.Select(v => v.ProductId).Distinct().ToList();
+        var variantMap = variants
+            .GroupBy(pv => pv.Id)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var productIds = variants.Select(v => v.ProductId).Distinct().ToList();
         var products = await _context.Products
             .IgnoreQueryFilters()
             .Where(p => productIds.Contains(p.Id))
-            .ToDictionaryAsync(p => p.Id, cancellationToken);
+            .ToListAsync(cancellationToken);
+
+        var productMap = products
+            .GroupBy(p => p.Id)
+            .ToDictionary(g => g.Key, g => g.First());
 
         var itemsByOrder = items.GroupBy(i => i.OrderRequestId).ToDictionary(
             g => g.Key,
-            g => g.Select(i =>
+            g => g.Where(i =>
             {
-                var variant = variants.GetValueOrDefault(i.ProductVariantId);
-                var product = variant is null ? null : products.GetValueOrDefault(variant.ProductId);
+                if (partnerShopIdList == null) return true;
                 var sellerOrder = sellerOrderByItem.GetValueOrDefault(i.SellerOrderId);
-                var shop = sellerOrder is null ? null : shops.GetValueOrDefault(sellerOrder.ShopId);
+                if (sellerOrder != null && partnerShopIdList.Contains(sellerOrder.ShopId)) return true;
+                var variant = variantMap.GetValueOrDefault(i.ProductVariantId);
+                var product = variant is null ? null : productMap.GetValueOrDefault(variant.ProductId);
+                return product != null && partnerShopIdList.Contains(product.ShopId);
+            }).Select(i =>
+            {
+                var variant = variantMap.GetValueOrDefault(i.ProductVariantId);
+                var product = variant is null ? null : productMap.GetValueOrDefault(variant.ProductId);
+                var sellerOrder = sellerOrderByItem.GetValueOrDefault(i.SellerOrderId);
+                var shop = sellerOrder is null ? null : shopMap.GetValueOrDefault(sellerOrder.ShopId);
 
                 return new OrderRequestItemDto(
                     i.Id,
@@ -176,14 +238,15 @@ public class GetAdminOrdersQueryHandler
             .GroupBy(so => so.OrderRequestId)
             .ToDictionary(
                 g => g.Key,
-                g => string.Join(", ", g.Select(so => shops.TryGetValue(so.ShopId, out var s) ? s.Name : "").Where(n => !string.IsNullOrEmpty(n)).Distinct())
+                g => string.Join(", ", g.Where(so => partnerShopIdList == null || partnerShopIdList.Contains(so.ShopId)).Select(so => shopMap.TryGetValue(so.ShopId, out var s) ? s.Name : "").Where(n => !string.IsNullOrEmpty(n)).Distinct())
             );
 
         var primaryShopIdByOrder = sellerOrders
             .GroupBy(so => so.OrderRequestId)
             .ToDictionary(
                 g => g.Key,
-                g => g.Select(so => (Guid?)so.ShopId).FirstOrDefault()
+                g => g.Where(so => partnerShopIdList == null || partnerShopIdList.Contains(so.ShopId)).Select(so => (Guid?)so.ShopId).FirstOrDefault()
+                    ?? g.Select(so => (Guid?)so.ShopId).FirstOrDefault()
             );
 
         var paymentRows = await _context.Payments

@@ -41,7 +41,7 @@ public class AdminOrdersController : ControllerBase
     {
         if (!await PartnerPermissionChecker.HasPermissionAsync(context, currentUserService, "orders:view", cancellationToken))
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to view orders.", errorCode = "FORBIDDEN" });
-        if (pageSize > 200) pageSize = 200;
+        if (pageSize > 500) pageSize = 500;
         if (pageSize < 1) pageSize = 20;
         if (pageNumber < 1) pageNumber = 1;
 

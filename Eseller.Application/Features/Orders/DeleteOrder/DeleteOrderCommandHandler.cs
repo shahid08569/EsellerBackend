@@ -33,19 +33,26 @@ public class DeleteOrderCommandHandler : IRequestHandler<DeleteOrderCommand, Res
         if (role != RoleType.SuperAdmin && role != RoleType.Partner)
             return Result.Failure("Only Super Admin or authorized Partner can delete orders.", "FORBIDDEN");
 
+        var order = await _context.OrderRequests
+            .FirstOrDefaultAsync(o => o.Id == request.OrderId, cancellationToken);
+
+        if (order is null)
+            return Result.Failure("Order not found.", "ORDER_NOT_FOUND");
+
         if (role == RoleType.Partner)
         {
             var hasPerm = await PartnerPermissionChecker.HasPermissionAsync(
                 _context, _currentUserService, "orders:manage", cancellationToken);
             if (!hasPerm)
                 return Result.Failure("You do not have permission to delete orders.", "FORBIDDEN");
+
+            var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
+            var isPartnerOrder = await _context.SellerOrders
+                .AnyAsync(so => so.OrderRequestId == order.Id && partnerShopIds != null && partnerShopIds.Contains(so.ShopId), cancellationToken);
+
+            if (!isPartnerOrder)
+                return Result.Failure("Partners can only manage orders for their referred shops.", "FORBIDDEN");
         }
-
-        var order = await _context.OrderRequests
-            .FirstOrDefaultAsync(o => o.Id == request.OrderId, cancellationToken);
-
-        if (order is null)
-            return Result.Failure("Order not found.", "ORDER_NOT_FOUND");
 
         // 1. Delete Return Requests, Return Items, and Return Refunds for SellerOrders
         var sellerOrders = await _context.SellerOrders

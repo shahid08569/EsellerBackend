@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Application.Common;
 using Eseller.Domain.Enums;
 using MediatR;
@@ -38,6 +38,16 @@ public class GetOrderStatusHistoryQueryHandler
         // Permission check
         var role = _currentUserService.RoleType;
         var isAdmin = role == RoleType.SuperAdmin || role == RoleType.Partner;
+
+        if (role == RoleType.Partner)
+        {
+            var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
+            var isPartnerOrder = await _context.SellerOrders
+                .AnyAsync(so => so.OrderRequestId == order.Id && partnerShopIds != null && partnerShopIds.Contains(so.ShopId), cancellationToken);
+
+            if (!isPartnerOrder)
+                return Result.Failure<IReadOnlyList<OrderStatusHistoryDto>>("Partners can only view order history for their referred shops.", "FORBIDDEN");
+        }
 
         if (!isAdmin)
         {

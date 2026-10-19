@@ -32,13 +32,28 @@ public class UpdateOrderPaymentStatusCommandHandler
 
         var role = _currentUser.RoleType;
         if (role != RoleType.SuperAdmin && role != RoleType.Partner)
-            return Result.Failure("Only Super Admin can update payment status.", "FORBIDDEN");
+            return Result.Failure("Only Super Admin and authorized Partners can update payment status.", "FORBIDDEN");
 
         var order = await _context.OrderRequests
             .FirstOrDefaultAsync(o => o.Id == request.OrderId, cancellationToken);
 
         if (order is null)
             return Result.Failure("Order not found.", "ORDER_NOT_FOUND");
+
+        if (role == RoleType.Partner)
+        {
+            var hasPerm = await PartnerPermissionChecker.HasPermissionAsync(
+                _context, _currentUser, "orders:manage", cancellationToken);
+            if (!hasPerm)
+                return Result.Failure("You do not have permission to update payment status.", "FORBIDDEN");
+
+            var partnerShopIds = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUser, cancellationToken);
+            var isPartnerOrder = await _context.SellerOrders
+                .AnyAsync(so => so.OrderRequestId == order.Id && partnerShopIds != null && partnerShopIds.Contains(so.ShopId), cancellationToken);
+
+            if (!isPartnerOrder)
+                return Result.Failure("Partners can only manage orders for their referred shops.", "FORBIDDEN");
+        }
 
         if (!string.IsNullOrWhiteSpace(order.ShippingAddress)
             && (order.ShippingAddress.StartsWith("CUSTOMER_SUPPORT_", StringComparison.OrdinalIgnoreCase)

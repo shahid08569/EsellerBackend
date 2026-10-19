@@ -103,13 +103,34 @@ public class GetPlatformDashboardQueryHandler
 
         if (partnerId.HasValue)
         {
+            var partnerAccountGuid = _currentUserService.AccountId.Value;
+            var partnerEntityGuid = partnerId.Value;
+
+            var partnerShopkeeperIds = _context.Shopkeepers
+                .Where(sk => sk.PartnerId == partnerEntityGuid || sk.PartnerId == partnerAccountGuid)
+                .Select(sk => sk.Id);
+
             var partnerShopIds = _context.Shops.IgnoreQueryFilters()
-                .Where(s => s.PartnerId == partnerId.Value && s.DeletedAt == null)
+                .Where(s => s.DeletedAt == null && (
+                    s.PartnerId == partnerEntityGuid ||
+                    s.PartnerId == partnerAccountGuid ||
+                    partnerShopkeeperIds.Contains(s.ShopkeeperId)))
                 .Select(s => s.Id);
+
             var partnerOrderIds = _context.SellerOrders
                 .Where(so => partnerShopIds.Contains(so.ShopId))
                 .Select(so => so.OrderRequestId);
-            commerceOrderQuery = commerceOrderQuery.Where(o => partnerOrderIds.Contains(o.Id));
+
+            var partnerOrderIdsFromItems = _context.OrderRequestItems
+                .Where(i => partnerShopIds.Contains(
+                    _context.Products.IgnoreQueryFilters()
+                        .Where(p => _context.ProductVariants.IgnoreQueryFilters()
+                            .Where(v => v.Id == i.ProductVariantId)
+                            .Select(v => v.ProductId).Contains(p.Id))
+                        .Select(p => p.ShopId).FirstOrDefault()))
+                .Select(i => i.OrderRequestId);
+
+            commerceOrderQuery = commerceOrderQuery.Where(o => partnerOrderIds.Contains(o.Id) || partnerOrderIdsFromItems.Contains(o.Id));
         }
 
         var commerceRows = await commerceOrderQuery

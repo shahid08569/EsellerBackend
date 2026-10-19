@@ -6,6 +6,9 @@ namespace Eseller.Application.Common;
 
 public static class PartnerPermissionChecker
 {
+    public const string DefaultPartnerPermissions =
+        "shops:view,shops:manage,products:view,products:manage,catalog:manage,orders:view,orders:manage,orders:place,customers:manage,finance:view,finance:manage,traffic:view,traffic:manage";
+
     public static async Task<bool> HasPermissionAsync(
         IApplicationDbContext context,
         ICurrentUserService currentUserService,
@@ -18,10 +21,12 @@ public static class PartnerPermissionChecker
 
         var partner = await context.Partners.AsNoTracking()
             .FirstOrDefaultAsync(p => p.AccountId == currentUserService.AccountId.Value, cancellationToken);
-        if (partner == null || string.IsNullOrWhiteSpace(partner.Permissions))
-            return false;
 
-        var perms = ParsePermissions(partner.Permissions);
+        var rawPermissions = !string.IsNullOrWhiteSpace(partner?.Permissions)
+            ? partner.Permissions
+            : DefaultPartnerPermissions;
+
+        var perms = ParsePermissions(rawPermissions);
         if (perms.Contains("*") || perms.Contains("all")) return true;
         if (perms.Contains(requiredPermission)) return true;
 
