@@ -65,6 +65,20 @@ public class ApproveShopkeeperCommandHandler
             shop.SetUpdatedAt(_dateTime.UtcNow);
         }
 
+        _context.AuditLogs.Add(new Eseller.Domain.Entities.Identity.AuditLog
+        {
+            Id = Guid.NewGuid(),
+            ActorAccountId = _currentUserService.AccountId,
+            ActorType = _currentUserService.RoleType.ToString(),
+            Action = "APPROVE_SHOPKEEPER",
+            EntityType = "Shopkeeper",
+            EntityId = shopkeeper.Id,
+            OldValues = "Status: Pending",
+            NewValues = $"Status: Approved | Store: {shop?.Name ?? "N/A"}",
+            IpAddress = null,
+            CreatedAt = _dateTime.UtcNow
+        });
+
         await _context.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }

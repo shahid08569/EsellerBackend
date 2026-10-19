@@ -57,6 +57,20 @@ public class RejectShopkeeperCommandHandler
         shopkeeper.RejectionReason = request.Reason;
         shopkeeper.SetUpdatedAt(_dateTime.UtcNow);
 
+        _context.AuditLogs.Add(new Eseller.Domain.Entities.Identity.AuditLog
+        {
+            Id = Guid.NewGuid(),
+            ActorAccountId = _currentUserService.AccountId,
+            ActorType = _currentUserService.RoleType.ToString(),
+            Action = "REJECT_SHOPKEEPER",
+            EntityType = "Shopkeeper",
+            EntityId = shopkeeper.Id,
+            OldValues = "Status: Pending",
+            NewValues = $"Status: Rejected | Reason: {request.Reason}",
+            IpAddress = null,
+            CreatedAt = _dateTime.UtcNow
+        });
+
         await _context.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }

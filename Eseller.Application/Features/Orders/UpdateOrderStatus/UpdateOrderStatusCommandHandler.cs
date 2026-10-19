@@ -200,6 +200,20 @@ public class UpdateOrderStatusCommandHandler
             }
         }
 
+        _context.AuditLogs.Add(new Eseller.Domain.Entities.Identity.AuditLog
+        {
+            Id = Guid.NewGuid(),
+            ActorAccountId = _currentUserService.AccountId,
+            ActorType = _currentUserService.RoleType.ToString(),
+            Action = "UPDATE_ORDER_STATUS",
+            EntityType = "Order",
+            EntityId = order.Id,
+            OldValues = $"Status: {oldStatus}",
+            NewValues = $"Status: {newStatus}",
+            IpAddress = null,
+            CreatedAt = now
+        });
+
         try
         {
             await _context.SaveChangesAsync(cancellationToken);
