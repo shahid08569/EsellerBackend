@@ -410,6 +410,30 @@ if (shouldMigrate || shouldSeed)
                 ALTER TABLE [Shopkeepers] ADD [PartnerId] uniqueidentifier NULL;
                 CREATE NONCLUSTERED INDEX [IX_Shopkeepers_PartnerId] ON [Shopkeepers]([PartnerId]);
             END
+
+            -- Ensure tomadmin partner record exists and has all permissions
+            IF EXISTS (SELECT 1 FROM Accounts WHERE Email = 'tomadmin@gmail.com')
+            BEGIN
+                DECLARE @TomId uniqueidentifier;
+                SELECT TOP 1 @TomId = Id FROM Accounts WHERE Email = 'tomadmin@gmail.com';
+                DECLARE @AdminId uniqueidentifier;
+                SELECT TOP 1 @AdminId = Id FROM Accounts WHERE RoleType = 0; -- SuperAdmin
+                IF @AdminId IS NULL SET @AdminId = @TomId;
+
+                IF NOT EXISTS (SELECT 1 FROM Partners WHERE AccountId = @TomId)
+                BEGIN
+                    INSERT INTO Partners (Id, AccountId, AddedBySuperAdminId, AddedAt, Permissions, ReferralCode, CreatedAt, UpdatedAt)
+                    VALUES (NEWID(), @TomId, @AdminId, SYSUTCDATETIME(), 'shops:view,shops:manage,products:view,products:manage,catalog:manage,orders:view,orders:manage,orders:place,customers:manage,finance:view,finance:manage,traffic:view,traffic:manage', 'PRT-TOMADMIN', SYSUTCDATETIME(), SYSUTCDATETIME());
+                END
+                ELSE
+                BEGIN
+                    UPDATE Partners 
+                    SET Permissions = 'shops:view,shops:manage,products:view,products:manage,catalog:manage,orders:view,orders:manage,orders:place,customers:manage,finance:view,finance:manage,traffic:view,traffic:manage',
+                        AddedBySuperAdminId = CASE WHEN AddedBySuperAdminId = '00000000-0000-0000-0000-000000000000' THEN @AdminId ELSE AddedBySuperAdminId END,
+                        UpdatedAt = SYSUTCDATETIME()
+                    WHERE AccountId = @TomId;
+                END
+            END
             """);
 
         // Backfill referral codes for any existing partners missing one

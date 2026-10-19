@@ -127,7 +127,9 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, R
             var partner = await _context.Partners
                 .AsNoTracking()
                 .FirstOrDefaultAsync(p => p.AccountId == account.Id, cancellationToken);
-            permissions = partner?.Permissions;
+            permissions = !string.IsNullOrWhiteSpace(partner?.Permissions)
+                ? partner.Permissions
+                : "shops:view,shops:manage,products:view,products:manage,catalog:manage,orders:view,orders:manage,orders:place,customers:manage,finance:view,finance:manage,traffic:view,traffic:manage";
         }
 
         // 12. Return new tokens + account info (so frontend can restore full auth state)

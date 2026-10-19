@@ -320,6 +320,10 @@ public class DatabaseSeeder
             await _context.SaveChangesAsync(cancellationToken);
         }
 
+        var superAdmin = await _context.Accounts
+            .FirstOrDefaultAsync(a => a.RoleType == RoleType.SuperAdmin, cancellationToken);
+        var adminId = superAdmin?.Id ?? account.Id;
+
         var partner = await _context.Partners
             .FirstOrDefaultAsync(p => p.AccountId == account.Id, cancellationToken);
 
@@ -330,17 +334,24 @@ public class DatabaseSeeder
             partner = new Partner
             {
                 AccountId = account.Id,
-                AddedBySuperAdminId = Guid.Empty,
+                AddedBySuperAdminId = adminId,
                 AddedAt = now,
                 Permissions = allPermissions,
                 ReferralCode = "PRT-TOMADMIN"
             };
+            partner.SetCreatedAt(now);
+            partner.SetUpdatedAt(now);
             _context.Partners.Add(partner);
             await _context.SaveChangesAsync(cancellationToken);
         }
         else
         {
             partner.Permissions = allPermissions;
+            if (partner.AddedBySuperAdminId == Guid.Empty)
+            {
+                partner.AddedBySuperAdminId = adminId;
+            }
+            partner.SetUpdatedAt(now);
             await _context.SaveChangesAsync(cancellationToken);
         }
 

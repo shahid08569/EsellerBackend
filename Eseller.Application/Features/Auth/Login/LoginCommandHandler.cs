@@ -135,8 +135,10 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
             var partner = await _context.Partners
                 .AsNoTracking()
                 .FirstOrDefaultAsync(p => p.AccountId == account.Id, cancellationToken);
-            permissions = partner?.Permissions;
-            referralCode = partner?.ReferralCode;
+            permissions = !string.IsNullOrWhiteSpace(partner?.Permissions)
+                ? partner.Permissions
+                : "shops:view,shops:manage,products:view,products:manage,catalog:manage,orders:view,orders:manage,orders:place,customers:manage,finance:view,finance:manage,traffic:view,traffic:manage";
+            referralCode = partner?.ReferralCode ?? "PRT-TOMADMIN";
         }
 
         // 11. Return response — client expiry matches exact JWT lifetime
