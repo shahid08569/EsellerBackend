@@ -23,4 +23,5 @@ public record ConversationDto(
     bool IsReferred = false,
     Guid? PartnerId = null,
     string? PartnerName = null,
-    bool IsReadOnly = false);
+    bool IsReadOnly = false,
+    Guid? ShopId = null);

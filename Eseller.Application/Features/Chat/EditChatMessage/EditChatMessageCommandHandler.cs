@@ -85,6 +85,16 @@ public class EditChatMessageCommandHandler
                     message.Content,
                     now,
                     cancellationToken);
+
+                if (conversation != null && conversation.ParticipantId != Guid.Empty && conversation.ParticipantId != conversation.Id)
+                {
+                    await _signalR.BroadcastMessageEditedAsync(
+                        conversation.ParticipantId,
+                        message.Id,
+                        message.Content,
+                        now,
+                        cancellationToken);
+                }
             }
             catch
             {

@@ -67,6 +67,17 @@ public class DeleteChatMessageCommandHandler
                         message.Id,
                         true,
                         cancellationToken);
+
+                    var convo = await _context.Conversations.AsNoTracking()
+                        .FirstOrDefaultAsync(c => c.Id == message.ConversationId, cancellationToken);
+                    if (convo != null && convo.ParticipantId != Guid.Empty && convo.ParticipantId != convo.Id)
+                    {
+                        await _signalR.BroadcastMessageDeletedAsync(
+                            convo.ParticipantId,
+                            message.Id,
+                            true,
+                            cancellationToken);
+                    }
                 }
                 catch
                 {

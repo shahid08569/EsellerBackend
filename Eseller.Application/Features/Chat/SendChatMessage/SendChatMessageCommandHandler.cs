@@ -151,9 +151,7 @@ public class SendChatMessageCommandHandler
             message.AttachmentContentType);
 
         if (conversation.ParticipantId != Guid.Empty
-            && conversation.ParticipantId != conversation.Id
-            && conversation.ParticipantType != ChatParticipantType.SellerPartner
-            && conversation.ParticipantType != ChatParticipantType.Partner)
+            && conversation.ParticipantId != conversation.Id)
         {
             await _notificationService.BroadcastChatMessageAsync(
                 conversation.ParticipantId,

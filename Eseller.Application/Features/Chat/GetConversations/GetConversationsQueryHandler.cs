@@ -342,7 +342,8 @@ public class GetConversationsQueryHandler
                     IsReferred: true,
                     PartnerId: currentPartner?.Id,
                     PartnerName: currentPartner?.ReferralCode,
-                    IsReadOnly: false));
+                    IsReadOnly: false,
+                    ShopId: shop.Id));
             }
         }
         else
@@ -415,7 +416,8 @@ public class GetConversationsQueryHandler
                     IsReferred: isReferred,
                     PartnerId: partnerId,
                     PartnerName: partnerName,
-                    IsReadOnly: false));
+                    IsReadOnly: false,
+                    ShopId: shop.Id));
             }
 
             // 2. Partner's Sellers (Audit view for SuperAdmin — STRICTLY READ ONLY!)
@@ -461,7 +463,8 @@ public class GetConversationsQueryHandler
                     IsReferred: true,
                     PartnerId: partnerId,
                     PartnerName: partnerName,
-                    IsReadOnly: true));
+                    IsReadOnly: true,
+                    ShopId: shop.Id));
             }
 
             // 3. SuperAdmin ↔ Partner Direct Channels
