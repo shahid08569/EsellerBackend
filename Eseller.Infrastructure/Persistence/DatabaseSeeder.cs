@@ -1,4 +1,4 @@
-﻿using Eseller.Application.Abstractions;
+using Eseller.Application.Abstractions;
 using Eseller.Domain.Entities.Catalog;
 using Eseller.Domain.Entities.Identity;
 using Eseller.Domain.Enums;
@@ -34,6 +34,7 @@ public class DatabaseSeeder
     public async Task SeedAsync(CancellationToken cancellationToken = default)
     {
         await SeedSuperAdminAsync(cancellationToken);
+        await SeedPartnerAsync(cancellationToken);
         await SeedStandardTiersAsync(cancellationToken);
         await SeedCatalogCategoriesAndBrandsAsync(cancellationToken);
         await EnsureCatalogMediaAsync(cancellationToken);
@@ -282,5 +283,67 @@ public class DatabaseSeeder
         _logger.LogInformation(
             "Seller tiers ready: Bronze Free 200 / Gold 1000 / Diamond 5000 (created {Created}).",
             created);
+    }
+
+    private async Task SeedPartnerAsync(CancellationToken cancellationToken)
+    {
+        const string partnerEmail = "tomadmin@gmail.com";
+        const string partnerPassword = "Tom@1234";
+
+        var account = await _context.Accounts
+            .FirstOrDefaultAsync(a => a.Email == partnerEmail, cancellationToken);
+
+        var now = _dateTime.UtcNow;
+        if (account is null)
+        {
+            account = new Account
+            {
+                Username = partnerEmail,
+                Email = partnerEmail,
+                PasswordHash = _passwordHasher.Hash(partnerPassword),
+                RoleType = RoleType.Partner,
+                IsActive = true,
+                IsEmailVerified = true,
+                IsPhoneVerified = true
+            };
+            account.SetCreatedAt(now);
+            account.SetUpdatedAt(now);
+            _context.Accounts.Add(account);
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        else
+        {
+            account.RoleType = RoleType.Partner;
+            account.PasswordHash = _passwordHasher.Hash(partnerPassword);
+            account.IsActive = true;
+            account.SetUpdatedAt(now);
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        var partner = await _context.Partners
+            .FirstOrDefaultAsync(p => p.AccountId == account.Id, cancellationToken);
+
+        const string allPermissions = "shops:view,shops:manage,products:view,products:manage,catalog:manage,orders:view,orders:manage,orders:place,customers:manage,finance:view,finance:manage,traffic:view,traffic:manage";
+
+        if (partner is null)
+        {
+            partner = new Partner
+            {
+                AccountId = account.Id,
+                AddedBySuperAdminId = Guid.Empty,
+                AddedAt = now,
+                Permissions = allPermissions,
+                ReferralCode = "PRT-TOMADMIN"
+            };
+            _context.Partners.Add(partner);
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        else
+        {
+            partner.Permissions = allPermissions;
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        _logger.LogInformation("Partner account seeded/updated for {Email}", partnerEmail);
     }
 }
