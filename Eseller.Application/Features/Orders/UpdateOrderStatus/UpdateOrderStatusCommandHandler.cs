@@ -385,7 +385,7 @@ public class UpdateOrderStatusCommandHandler
                 _context.Wallets.Add(wallet);
             }
 
-            var credit = earning.NetAmount > 0 ? earning.NetAmount : earning.CommissionAmount;
+            var credit = earning.GrossAmount > 0 ? earning.GrossAmount : (earning.NetAmount > 0 ? earning.NetAmount : earning.CommissionAmount);
             if (credit < 0) credit = 0;
             wallet.Balance += credit;
             wallet.PendingEarnings = Math.Max(0m, wallet.PendingEarnings - credit);

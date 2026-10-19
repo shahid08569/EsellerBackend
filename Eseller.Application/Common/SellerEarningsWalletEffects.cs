@@ -13,7 +13,7 @@ namespace Eseller.Application.Common;
 public static class SellerEarningsWalletEffects
 {
     public static decimal AmountOf(SellerEarning e) =>
-        e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount;
+        e.GrossAmount > 0 ? e.GrossAmount : (e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount);
 
     /// <summary>Close Pending earnings and decrease Wallet.PendingEarnings (cancel before delivery).</summary>
     public static async Task ReversePendingAsync(

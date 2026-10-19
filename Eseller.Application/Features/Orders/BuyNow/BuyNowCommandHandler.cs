@@ -243,16 +243,15 @@ public class BuyNowCommandHandler
             CreatedAt = now
         });
 
-        // 12.5. Calculate 20% Net Commission Seller Earning
+        // 12.5. Seller Earning with full gross amount
         var grossTotal = variant.Price * request.Quantity;
-        var commissionAmount = Math.Round(grossTotal * 0.20m, 2);
 
         _context.SellerEarnings.Add(new SellerEarning
         {
             SellerOrderId = sellerOrder.Id,
             GrossAmount = grossTotal,
-            CommissionAmount = commissionAmount,
-            NetAmount = commissionAmount,
+            CommissionAmount = grossTotal,
+            NetAmount = grossTotal,
             Status = SellerEarningStatus.Pending
         });
 
@@ -260,7 +259,7 @@ public class BuyNowCommandHandler
             .Where(sk => sk.Id == shop.ShopkeeperId)
             .Select(sk => sk.AccountId)
             .FirstOrDefaultAsync(cancellationToken);
-        if (keeperAccountId != Guid.Empty && commissionAmount > 0)
+        if (keeperAccountId != Guid.Empty && grossTotal > 0)
         {
             var wallet = await _context.Wallets
                 .FirstOrDefaultAsync(w => w.AccountId == keeperAccountId, cancellationToken);
@@ -270,7 +269,7 @@ public class BuyNowCommandHandler
                 {
                     AccountId = keeperAccountId,
                     Balance = 0,
-                    PendingEarnings = commissionAmount
+                    PendingEarnings = grossTotal
                 };
                 wallet.SetCreatedAt(now);
                 wallet.SetUpdatedAt(now);
@@ -278,7 +277,7 @@ public class BuyNowCommandHandler
             }
             else
             {
-                wallet.PendingEarnings += commissionAmount;
+                wallet.PendingEarnings += grossTotal;
                 wallet.SetUpdatedAt(now);
             }
         }

@@ -322,18 +322,17 @@ public class AdminPlaceOrderCommandHandler
             }
         }
 
-        // 8. Create SellerEarnings per shop and credit pending wallet
+        // 8. Create SellerEarnings per shop and credit pending wallet (full order value)
         foreach (var (shopId, shopGross) in grossByShop)
         {
             var sellerOrder = sellerOrders[shopId];
-            var commissionAmount = Math.Round(shopGross * 0.20m, 2);
 
             _context.SellerEarnings.Add(new SellerEarning
             {
                 SellerOrderId = sellerOrder.Id,
                 GrossAmount = shopGross,
-                CommissionAmount = commissionAmount,
-                NetAmount = commissionAmount,
+                CommissionAmount = shopGross,
+                NetAmount = shopGross,
                 Status = SellerEarningStatus.Pending
             });
 
@@ -343,7 +342,7 @@ public class AdminPlaceOrderCommandHandler
                 .Select(sk => sk.AccountId)
                 .FirstOrDefaultAsync(cancellationToken);
 
-            if (keeperAccountId != Guid.Empty && commissionAmount > 0)
+            if (keeperAccountId != Guid.Empty && shopGross > 0)
             {
                 var wallet = await _context.Wallets
                     .FirstOrDefaultAsync(w => w.AccountId == keeperAccountId, cancellationToken);
@@ -353,7 +352,7 @@ public class AdminPlaceOrderCommandHandler
                     {
                         AccountId = keeperAccountId,
                         Balance = 0,
-                        PendingEarnings = commissionAmount
+                        PendingEarnings = shopGross
                     };
                     wallet.SetCreatedAt(now);
                     wallet.SetUpdatedAt(now);
@@ -361,7 +360,7 @@ public class AdminPlaceOrderCommandHandler
                 }
                 else
                 {
-                    wallet.PendingEarnings += commissionAmount;
+                    wallet.PendingEarnings += shopGross;
                     wallet.SetUpdatedAt(now);
                 }
             }

@@ -60,17 +60,58 @@ public class SellerWalletController : ControllerBase
                 .Where(se => sellerOrderIds.Contains(se.SellerOrderId))
                 .ToListAsync(cancellationToken);
 
-        decimal AmountOf(SellerEarning e) => e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount;
+        decimal AmountOf(SellerEarning e) => e.GrossAmount > 0 ? e.GrossAmount : (e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount);
 
         var pendingFromOrders = earnings.Where(e => e.Status == SellerEarningStatus.Pending).Sum(AmountOf);
         var availableFromOrders = earnings.Where(e => e.Status == SellerEarningStatus.Available).Sum(AmountOf);
         var withdrawn = earnings.Where(e => e.Status == SellerEarningStatus.Withdrawn).Sum(AmountOf);
 
-        var wallet = await EnsureWalletAsync(
-            accountId.Value,
-            pendingFromOrders,
-            availableFromOrders,
-            cancellationToken);
+        var pendingToUpdate = earnings.Where(e => e.Status == SellerEarningStatus.Pending && e.GrossAmount > 0 && e.NetAmount != e.GrossAmount).ToList();
+        var availableToUpdate = earnings.Where(e => e.Status == SellerEarningStatus.Available && e.GrossAmount > 0 && e.NetAmount != e.GrossAmount).ToList();
+        if (pendingToUpdate.Count > 0 || availableToUpdate.Count > 0)
+        {
+            foreach (var pe in pendingToUpdate) { pe.NetAmount = pe.GrossAmount; pe.CommissionAmount = pe.GrossAmount; }
+            foreach (var ae in availableToUpdate) { ae.NetAmount = ae.GrossAmount; ae.CommissionAmount = ae.GrossAmount; }
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        var wallet = await _context.Wallets
+            .FirstOrDefaultAsync(w => w.AccountId == accountId.Value, cancellationToken);
+
+        if (wallet is null)
+        {
+            wallet = new Wallet
+            {
+                AccountId = accountId.Value,
+                Balance = availableFromOrders,
+                PendingEarnings = pendingFromOrders,
+                AvailableEarnings = availableFromOrders
+            };
+            wallet.SetCreatedAt(_dateTime.UtcNow);
+            wallet.SetUpdatedAt(_dateTime.UtcNow);
+            _context.Wallets.Add(wallet);
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        else
+        {
+            bool modified = false;
+            if (wallet.PendingEarnings != pendingFromOrders)
+            {
+                wallet.PendingEarnings = pendingFromOrders;
+                modified = true;
+            }
+            if (wallet.AvailableEarnings < availableFromOrders)
+            {
+                wallet.AvailableEarnings = availableFromOrders;
+                wallet.Balance = Math.Max(wallet.Balance, availableFromOrders);
+                modified = true;
+            }
+            if (modified)
+            {
+                wallet.SetUpdatedAt(_dateTime.UtcNow);
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+        }
 
         var pendingWithdrawals = await _context.Withdrawals
             .Where(w => w.AccountId == accountId.Value && w.Status == WithdrawalStatus.Pending)

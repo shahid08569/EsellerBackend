@@ -96,7 +96,7 @@ public class AdminSellerWalletsController : ControllerBase
                 : await _context.SellerEarnings
                     .AsNoTracking()
                     .Where(se => sellerOrderIds.Contains(se.SellerOrderId))
-                    .Select(se => new { se.SellerOrderId, se.Status, se.NetAmount, se.CommissionAmount })
+                    .Select(se => new { se.SellerOrderId, se.Status, se.GrossAmount, se.NetAmount, se.CommissionAmount })
                     .ToListAsync(cancellationToken);
 
             var pendingByKeeper = new Dictionary<Guid, decimal>();
@@ -105,7 +105,7 @@ public class AdminSellerWalletsController : ControllerBase
             {
                 if (!orderIdToKeeper.TryGetValue(e.SellerOrderId, out var keeperId))
                     continue;
-                var amount = e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount;
+                var amount = e.GrossAmount > 0 ? e.GrossAmount : (e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount);
                 if (e.Status == SellerEarningStatus.Pending)
                     pendingByKeeper[keeperId] = pendingByKeeper.GetValueOrDefault(keeperId) + amount;
                 else if (e.Status == SellerEarningStatus.Available)

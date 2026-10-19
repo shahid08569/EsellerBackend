@@ -327,16 +327,15 @@ public class CreateOrderRequestCommandHandler
                     outOfStockProducts[product.Id] = product.Name;
             }
 
-            // Calculate 20% Net Commission Seller Earning
+            // Full gross amount goes to seller earning & wallet pending
             var grossTotal = shopGroup.Sum(line => line.Variant.Price * line.Quantity);
-            var commissionAmount = Math.Round(grossTotal * 0.20m, 2);
 
             _context.SellerEarnings.Add(new SellerEarning
             {
                 SellerOrderId = sellerOrder.Id,
                 GrossAmount = grossTotal,
-                CommissionAmount = commissionAmount,
-                NetAmount = commissionAmount,
+                CommissionAmount = grossTotal,
+                NetAmount = grossTotal,
                 Status = SellerEarningStatus.Pending
             });
 
@@ -346,7 +345,7 @@ public class CreateOrderRequestCommandHandler
                 .Where(s => s.Id == shopGroup.Key)
                 .Join(_context.Shopkeepers, s => s.ShopkeeperId, sk => sk.Id, (_, sk) => sk.AccountId)
                 .FirstOrDefaultAsync(cancellationToken);
-            if (keeperAccountId != Guid.Empty && commissionAmount > 0)
+            if (keeperAccountId != Guid.Empty && grossTotal > 0)
             {
                 var wallet = await _context.Wallets
                     .FirstOrDefaultAsync(w => w.AccountId == keeperAccountId, cancellationToken);
@@ -356,7 +355,7 @@ public class CreateOrderRequestCommandHandler
                     {
                         AccountId = keeperAccountId,
                         Balance = 0,
-                        PendingEarnings = commissionAmount
+                        PendingEarnings = grossTotal
                     };
                     wallet.SetCreatedAt(now);
                     wallet.SetUpdatedAt(now);
@@ -364,7 +363,7 @@ public class CreateOrderRequestCommandHandler
                 }
                 else
                 {
-                    wallet.PendingEarnings += commissionAmount;
+                    wallet.PendingEarnings += grossTotal;
                     wallet.SetUpdatedAt(now);
                 }
             }

@@ -167,7 +167,7 @@ public class GetSellerOrdersQueryHandler
             orderRequests.TryGetValue(so.OrderRequestId, out var parent);
             payments.TryGetValue(so.OrderRequestId, out var payment);
             var total = lines.Sum(i => i.TotalPriceSnapshot);
-            var profit = Math.Round(total * 0.20m, 2);
+            var profit = total;
             var payLabel = payment is null
                 ? "Pending"
                 : payment.Status == PaymentStatus.Completed ? "Paid" : payment.Status.ToString();
