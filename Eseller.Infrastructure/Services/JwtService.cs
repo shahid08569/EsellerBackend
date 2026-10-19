@@ -19,10 +19,25 @@ public class JwtService : IJwtService
         _settings = settings.Value;
     }
 
-    public int AccessTokenExpirationMinutes =>
-        Math.Max(_settings.AccessTokenExpirationMinutes, 1440);
+    public int AccessTokenExpirationMinutes => 1440;
 
-    public string GenerateAccessToken(Guid accountId, string username, RoleType roleType)
+    public int GetAccessTokenExpirationMinutes(RoleType roleType) => roleType switch
+    {
+        RoleType.SuperAdmin => 360, // 6 hours
+        RoleType.Partner => 360,    // 6 hours
+        RoleType.Shopkeeper => 720, // 12 hours
+        _ => 1440                  // 24 hours (Customer / Affiliate / default)
+    };
+
+    public int GetRefreshTokenExpirationMinutes(RoleType roleType) => roleType switch
+    {
+        RoleType.SuperAdmin => 360, // 6 hours
+        RoleType.Partner => 360,    // 6 hours
+        RoleType.Shopkeeper => 720, // 12 hours
+        _ => 43200                 // 30 days
+    };
+
+    public string GenerateAccessToken(Guid accountId, string username, RoleType roleType, DateTime? expiresAt = null)
     {
         var claims = new[]
         {
@@ -35,15 +50,18 @@ public class JwtService : IJwtService
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings.SecretKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
+        var expiry = expiresAt ?? DateTime.UtcNow.AddMinutes(GetAccessTokenExpirationMinutes(roleType));
+
         var token = new JwtSecurityToken(
             issuer: _settings.Issuer,
             audience: _settings.Audience,
             claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(AccessTokenExpirationMinutes),
+            expires: expiry,
             signingCredentials: credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
+
 
     public string GenerateRefreshToken()
     {

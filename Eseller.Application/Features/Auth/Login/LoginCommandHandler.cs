@@ -84,21 +84,26 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
         }
 
         // 5. Generate tokens
+        var accessTokenMinutes = _jwtService.GetAccessTokenExpirationMinutes(account.RoleType);
+        var accessTokenExpiresAt = _dateTime.UtcNow.AddMinutes(accessTokenMinutes);
+
         var accessToken = _jwtService.GenerateAccessToken(
             account.Id,
             account.Username,
-            account.RoleType);
+            account.RoleType,
+            accessTokenExpiresAt);
 
         var refreshToken = _jwtService.GenerateRefreshToken();
         var refreshTokenHash = _jwtService.HashToken(refreshToken);
 
-        // 6. Save refresh token (hashed)
+        // 6. Save refresh token (hashed) with role-based session lifetime
+        var refreshTokenMinutes = _jwtService.GetRefreshTokenExpirationMinutes(account.RoleType);
         var refreshTokenEntity = new Eseller.Domain.Entities.Identity.RefreshToken
         {
             AccountId = account.Id,
             TokenHash = refreshTokenHash,
             FamilyId = Guid.NewGuid(),
-            ExpiresAt = _dateTime.UtcNow.AddDays(30),
+            ExpiresAt = _dateTime.UtcNow.AddMinutes(refreshTokenMinutes),
             CreatedAt = _dateTime.UtcNow
         };
 
@@ -134,7 +139,7 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
             referralCode = partner?.ReferralCode;
         }
 
-        // 11. Return response — client expiry must match JWT lifetime
+        // 11. Return response — client expiry matches exact JWT lifetime
         return Result.Success(new LoginResponse(
             account.Id,
             account.Username,
@@ -142,7 +147,7 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, Result<LoginRes
             account.RoleType.ToString(),
             accessToken,
             refreshToken,
-            _dateTime.UtcNow.AddMinutes(_jwtService.AccessTokenExpirationMinutes),
+            accessTokenExpiresAt,
             permissions,
             referralCode));
     }

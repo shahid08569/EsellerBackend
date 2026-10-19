@@ -80,11 +80,21 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, R
                 "ACCOUNT_INACTIVE");
         }
 
-        // 6. Generate new tokens
+        // 6. Calculate remaining session expiry and generate new tokens
+        var maxRoleMinutes = _jwtService.GetRefreshTokenExpirationMinutes(account.RoleType);
+        var maxAllowedExpiry = _dateTime.UtcNow.AddMinutes(maxRoleMinutes);
+        var sessionExpiry = existingToken.ExpiresAt < maxAllowedExpiry 
+            ? existingToken.ExpiresAt 
+            : maxAllowedExpiry;
+
+        var standardTokenExpiry = _dateTime.UtcNow.AddMinutes(_jwtService.GetAccessTokenExpirationMinutes(account.RoleType));
+        var newAccessTokenExpiresAt = standardTokenExpiry < sessionExpiry ? standardTokenExpiry : sessionExpiry;
+
         var newAccessToken = _jwtService.GenerateAccessToken(
             account.Id,
             account.Username,
-            account.RoleType);
+            account.RoleType,
+            newAccessTokenExpiresAt);
 
         var newRefreshToken = _jwtService.GenerateRefreshToken();
         var newRefreshTokenHash = _jwtService.HashToken(newRefreshToken);
@@ -92,13 +102,13 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, R
         // 7. Revoke old token
         existingToken.Revoke(_dateTime.UtcNow);
 
-        // 8. Create new refresh token (same family)
+        // 8. Create new refresh token (same family, bounded by original session expiry)
         var newRefreshTokenEntity = new RefreshTokenEntity
         {
             AccountId = account.Id,
             TokenHash = newRefreshTokenHash,
             FamilyId = existingToken.FamilyId,
-            ExpiresAt = _dateTime.UtcNow.AddDays(30),
+            ExpiresAt = sessionExpiry,
             CreatedAt = _dateTime.UtcNow
         };
 
@@ -124,7 +134,7 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, R
         return Result.Success(new RefreshTokenResponse(
             newAccessToken,
             newRefreshToken,
-            _dateTime.UtcNow.AddMinutes(_jwtService.AccessTokenExpirationMinutes),
+            newAccessTokenExpiresAt,
             account.Id,
             account.Username,
             account.Email,

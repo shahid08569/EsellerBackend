@@ -116,8 +116,9 @@ public class AuthController : ControllerBase
             });
         }
 
-        // Set refresh token as HttpOnly cookie
-        SetRefreshTokenCookie(result.Value!.RefreshToken);
+        // Set refresh token as HttpOnly cookie with role-based expiry
+        var role = Enum.TryParse<RoleType>(result.Value!.RoleType, out var parsedRole) ? parsedRole : (RoleType?)null;
+        SetRefreshTokenCookie(result.Value!.RefreshToken, role);
 
         // Return only safe data (no refreshToken in JSON)
         return Ok(new
@@ -163,8 +164,9 @@ public class AuthController : ControllerBase
             });
         }
 
-        // ✅ Rotate refresh token cookie
-        SetRefreshTokenCookie(result.Value!.RefreshToken);
+        // ✅ Rotate refresh token cookie with role-based expiry
+        var role = Enum.TryParse<RoleType>(result.Value!.RoleType, out var parsedRole) ? parsedRole : (RoleType?)null;
+        SetRefreshTokenCookie(result.Value!.RefreshToken, role);
 
         // Return account info so frontend can restore full auth state on reload
         return Ok(new
@@ -413,16 +415,24 @@ public class AuthController : ControllerBase
     // ═══════════════════════════════════════════════════════════
     // HELPER — Set HttpOnly Cookie
     // ═══════════════════════════════════════════════════════════
-    private void SetRefreshTokenCookie(string refreshToken)
+    private void SetRefreshTokenCookie(string refreshToken, RoleType? roleType = null)
     {
         var isProduction = !Request.Host.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase);
+
+        int expirationMinutes = roleType switch
+        {
+            RoleType.SuperAdmin => 360, // 6 hours
+            RoleType.Partner => 360,    // 6 hours
+            RoleType.Shopkeeper => 720, // 12 hours
+            _ => Math.Max(_jwtSettings.RefreshTokenExpirationDays, 30) * 1440
+        };
 
         var cookieOptions = new CookieOptions
         {
             HttpOnly = true,
             Secure = isProduction,
             SameSite = isProduction ? SameSiteMode.None : SameSiteMode.Lax,
-            Expires = DateTimeOffset.UtcNow.AddDays(Math.Max(_jwtSettings.RefreshTokenExpirationDays, 30)),
+            Expires = DateTimeOffset.UtcNow.AddMinutes(expirationMinutes),
             Path = "/",
             IsEssential = true
         };
