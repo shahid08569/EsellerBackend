@@ -87,62 +87,24 @@ public class UpdateSellerOrderStatusCommandHandler
 
         if (newStatus == OrderStatus.Delivered)
         {
-            var earning = await _context.SellerEarnings
-                .FirstOrDefaultAsync(se => se.SellerOrderId == sellerOrder.Id
-                                        && se.Status == SellerEarningStatus.Pending, cancellationToken);
             Guid? creditedAccountId = null;
             decimal creditedAmount = 0;
-            if (earning != null)
+
+            var isPaid = await _context.Payments
+                .Where(p => p.OrderRequestId == sellerOrder.OrderRequestId)
+                .OrderByDescending(p => p.CreatedAt)
+                .Select(p => p.Status == PaymentStatus.Completed)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (isPaid)
             {
-                earning.Status = SellerEarningStatus.Available;
+                var credited = await SellerEarningsWalletEffects.ReleasePendingToAvailableAsync(
+                    _context, _dateTime, sellerOrder.OrderRequestId, cancellationToken, [sellerOrder.Id]);
 
-                var shop = await _context.Shops
-                    .IgnoreQueryFilters()
-                    .FirstOrDefaultAsync(s => s.Id == sellerOrder.ShopId, cancellationToken);
-                var keeper = shop is null
-                    ? null
-                    : await _context.Shopkeepers
-                        .FirstOrDefaultAsync(sk => sk.Id == shop.ShopkeeperId, cancellationToken);
-
-                if (keeper is not null)
+                if (credited.Count > 0)
                 {
-                    var wallet = await _context.Wallets
-                        .FirstOrDefaultAsync(w => w.AccountId == keeper.AccountId, cancellationToken);
-                    if (wallet is null)
-                    {
-                        wallet = new Eseller.Domain.Entities.Wallet.Wallet
-                        {
-                            AccountId = keeper.AccountId,
-                            Balance = 0,
-                            PendingEarnings = 0,
-                            AvailableEarnings = 0
-                        };
-                        wallet.SetCreatedAt(now);
-                        wallet.SetUpdatedAt(now);
-                        _context.Wallets.Add(wallet);
-                    }
-
-                    var credit = earning.GrossAmount > 0 ? earning.GrossAmount : (earning.NetAmount > 0 ? earning.NetAmount : earning.CommissionAmount);
-                    if (credit < 0) credit = 0;
-                    wallet.Balance += credit;
-                    wallet.PendingEarnings = Math.Max(0m, wallet.PendingEarnings - credit);
-                    wallet.AvailableEarnings += credit;
-                    wallet.SetUpdatedAt(now);
-
-                    _context.WalletTransactions.Add(new Eseller.Domain.Entities.Wallet.WalletTransaction
-                    {
-                        WalletId = wallet.Id,
-                        Direction = WalletDirection.Credit,
-                        TransactionType = WalletTransactionType.SellerEarning,
-                        Amount = credit,
-                        ReferenceType = "SellerOrder",
-                        ReferenceId = earning.SellerOrderId,
-                        Description = "Seller earning released for delivered order",
-                        CreatedAt = now
-                    });
-
-                    creditedAccountId = keeper.AccountId;
-                    creditedAmount = credit;
+                    creditedAccountId = credited[0].AccountId;
+                    creditedAmount = credited[0].Credit;
                 }
             }
 

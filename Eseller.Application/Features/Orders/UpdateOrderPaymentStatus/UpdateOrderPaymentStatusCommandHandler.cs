@@ -53,6 +53,7 @@ public class UpdateOrderPaymentStatusCommandHandler
             .FirstOrDefaultAsync(cancellationToken);
 
         var now = _dateTime.UtcNow;
+        var oldStatus = payment?.Status;
 
         if (payment is null)
         {
@@ -80,6 +81,41 @@ public class UpdateOrderPaymentStatusCommandHandler
             payment.Status = request.NewStatus;
             payment.SetUpdatedAt(now);
         }
+
+        // When payment becomes Completed (Paid), release pending earnings for any delivered seller orders.
+        if (request.NewStatus == PaymentStatus.Completed && oldStatus != PaymentStatus.Completed)
+        {
+            var deliveredSellerOrderIds = await _context.SellerOrders
+                .Where(so => so.OrderRequestId == order.Id && so.Status == OrderStatus.Delivered)
+                .Select(so => so.Id)
+                .ToListAsync(cancellationToken);
+
+            if (deliveredSellerOrderIds.Count > 0)
+            {
+                await SellerEarningsWalletEffects.ReleasePendingToAvailableAsync(
+                    _context, _dateTime, order.Id, cancellationToken, deliveredSellerOrderIds);
+            }
+        }
+        // If payment was reverted from Completed (Paid) to unpaid (Pending, Failed, etc.), move available earnings back to pending.
+        else if (oldStatus == PaymentStatus.Completed && request.NewStatus != PaymentStatus.Completed)
+        {
+            await SellerEarningsWalletEffects.RevertAvailableToPendingAsync(
+                _context, _dateTime, order.Id, cancellationToken);
+        }
+
+        _context.AuditLogs.Add(new Eseller.Domain.Entities.Identity.AuditLog
+        {
+            Id = Guid.NewGuid(),
+            ActorAccountId = _currentUser.AccountId,
+            ActorType = _currentUser.RoleType.ToString(),
+            Action = "UPDATE_ORDER_PAYMENT_STATUS",
+            EntityType = "OrderPayment",
+            EntityId = order.Id,
+            OldValues = $"Status: {oldStatus?.ToString() ?? "None"}",
+            NewValues = $"Status: {request.NewStatus}",
+            IpAddress = null,
+            CreatedAt = now
+        });
 
         await _context.SaveChangesAsync(cancellationToken);
         return Result.Success();
