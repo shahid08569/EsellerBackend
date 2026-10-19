@@ -66,15 +66,6 @@ public class SellerWalletController : ControllerBase
         var availableFromOrders = earnings.Where(e => e.Status == SellerEarningStatus.Available).Sum(AmountOf);
         var withdrawn = earnings.Where(e => e.Status == SellerEarningStatus.Withdrawn).Sum(AmountOf);
 
-        var pendingToUpdate = earnings.Where(e => e.Status == SellerEarningStatus.Pending && e.GrossAmount > 0 && e.NetAmount != e.GrossAmount).ToList();
-        var availableToUpdate = earnings.Where(e => e.Status == SellerEarningStatus.Available && e.GrossAmount > 0 && e.NetAmount != e.GrossAmount).ToList();
-        if (pendingToUpdate.Count > 0 || availableToUpdate.Count > 0)
-        {
-            foreach (var pe in pendingToUpdate) { pe.NetAmount = pe.GrossAmount; pe.CommissionAmount = pe.GrossAmount; }
-            foreach (var ae in availableToUpdate) { ae.NetAmount = ae.GrossAmount; ae.CommissionAmount = ae.GrossAmount; }
-            await _context.SaveChangesAsync(cancellationToken);
-        }
-
         var wallet = await _context.Wallets
             .FirstOrDefaultAsync(w => w.AccountId == accountId.Value, cancellationToken);
 
@@ -91,26 +82,6 @@ public class SellerWalletController : ControllerBase
             wallet.SetUpdatedAt(_dateTime.UtcNow);
             _context.Wallets.Add(wallet);
             await _context.SaveChangesAsync(cancellationToken);
-        }
-        else
-        {
-            bool modified = false;
-            if (wallet.PendingEarnings != pendingFromOrders)
-            {
-                wallet.PendingEarnings = pendingFromOrders;
-                modified = true;
-            }
-            if (wallet.AvailableEarnings < availableFromOrders)
-            {
-                wallet.AvailableEarnings = availableFromOrders;
-                wallet.Balance = Math.Max(wallet.Balance, availableFromOrders);
-                modified = true;
-            }
-            if (modified)
-            {
-                wallet.SetUpdatedAt(_dateTime.UtcNow);
-                await _context.SaveChangesAsync(cancellationToken);
-            }
         }
 
         var pendingWithdrawals = await _context.Withdrawals

@@ -348,15 +348,15 @@ public class AdminSellerWalletsController : ControllerBase
         Guid fallbackSellerOrderId)
     {
         static decimal AmountOf(SellerEarning e) =>
-            e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount;
+            e.GrossAmount > 0 ? e.GrossAmount : (e.NetAmount > 0 ? e.NetAmount : e.CommissionAmount);
 
         if (rows.Count == 0)
         {
-            if (target == 0 || fallbackSellerOrderId == Guid.Empty) return;
+            if (target <= 0 || fallbackSellerOrderId == Guid.Empty) return;
             _context.SellerEarnings.Add(new SellerEarning
             {
                 SellerOrderId = fallbackSellerOrderId,
-                GrossAmount = target * 5m,
+                GrossAmount = target,
                 CommissionAmount = target,
                 NetAmount = target,
                 Status = status
@@ -367,12 +367,12 @@ public class AdminSellerWalletsController : ControllerBase
         var current = rows.Sum(AmountOf);
         if (current <= 0)
         {
+            rows[0].GrossAmount = target;
             rows[0].NetAmount = target;
             rows[0].CommissionAmount = target;
-            if (rows[0].GrossAmount <= 0)
-                rows[0].GrossAmount = target * 5m;
             for (var i = 1; i < rows.Count; i++)
             {
+                rows[i].GrossAmount = 0;
                 rows[i].NetAmount = 0;
                 rows[i].CommissionAmount = 0;
             }
@@ -387,6 +387,7 @@ public class AdminSellerWalletsController : ControllerBase
                 : Math.Round(AmountOf(rows[i]) / current * target, 2);
             if (share < 0) share = 0;
             allocated += share;
+            rows[i].GrossAmount = share;
             rows[i].NetAmount = share;
             rows[i].CommissionAmount = share;
         }
