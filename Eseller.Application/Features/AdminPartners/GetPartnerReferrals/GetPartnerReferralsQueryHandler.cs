@@ -71,9 +71,21 @@ public class GetPartnerReferralsQueryHandler
         var referralLink = $"https://seller.esellerglobal.com/register?ref={Uri.EscapeDataString(refCode)}";
         var alternateLink = $"https://esellerglobal.com/auth/seller-register?ref={Uri.EscapeDataString(refCode)}";
 
-        // Query all shops referred by this partner
+        // Query all shops referred by this partner (match by partner entity Id OR partner account Id)
+        var partnerEntityId = partner.Id;
+        var partnerAccountId = partner.AccountId;
+
+        // Also find shops via shopkeeper.PartnerId (both entity and account id)
+        var partnerShopkeeperIds = await _context.Shopkeepers.AsNoTracking()
+            .Where(sk => sk.PartnerId == partnerEntityId || sk.PartnerId == partnerAccountId)
+            .Select(sk => sk.Id)
+            .ToListAsync(cancellationToken);
+
         var referredShops = await _context.Shops.IgnoreQueryFilters().AsNoTracking()
-            .Where(s => s.PartnerId == partner.Id && s.DeletedAt == null)
+            .Where(s => s.DeletedAt == null && (
+                s.PartnerId == partnerEntityId ||
+                s.PartnerId == partnerAccountId ||
+                partnerShopkeeperIds.Contains(s.ShopkeeperId)))
             .OrderByDescending(s => s.CreatedAt)
             .ToListAsync(cancellationToken);
 
