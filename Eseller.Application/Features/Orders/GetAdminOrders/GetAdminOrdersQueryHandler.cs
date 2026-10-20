@@ -45,63 +45,90 @@ public class GetAdminOrdersQueryHandler
 
         // Strict isolation: Partner can ONLY see orders for shops that joined via their own referral link
         List<Guid>? partnerShopIdList = null;
+        List<Guid>? scopedShopIds = null;
+
         if (role == RoleType.Partner)
         {
-            var partner = await _context.Partners.AsNoTracking()
-                .FirstOrDefaultAsync(p => p.AccountId == _currentUserService.AccountId.Value, cancellationToken);
-            var partnerAccountGuid = _currentUserService.AccountId.Value;
-            var partnerEntityGuid = partner?.Id ?? Guid.Empty;
+            var partnerShopIdSet = await PartnerScopeHelper.GetPartnerShopIdsAsync(_context, _currentUserService, cancellationToken);
+            partnerShopIdList = partnerShopIdSet != null ? partnerShopIdSet.ToList() : new List<Guid>();
 
-            var partnerShopkeeperIds = _context.Shopkeepers
-                .Where(sk => sk.PartnerId == partnerEntityGuid || sk.PartnerId == partnerAccountGuid)
-                .Select(sk => sk.Id);
+            // Strict isolation: if partner has no referred shops, return empty list immediately
+            if (partnerShopIdList.Count == 0)
+            {
+                return Result.Success(new PagedList<AdminOrderListItemDto>(
+                    new List<AdminOrderListItemDto>(), 0, request.PageNumber, request.PageSize));
+            }
 
-            var partnerShopIds = _context.Shops.IgnoreQueryFilters()
-                .Where(s => s.DeletedAt == null && (
-                    s.PartnerId == partnerEntityGuid ||
-                    s.PartnerId == partnerAccountGuid ||
-                    partnerShopkeeperIds.Contains(s.ShopkeeperId)))
-                .Select(s => s.Id);
+            if (request.ShopId.HasValue && request.ShopId.Value != Guid.Empty)
+            {
+                if (!partnerShopIdList.Contains(request.ShopId.Value))
+                {
+                    // Partner requested a shop outside their referral scope
+                    return Result.Success(new PagedList<AdminOrderListItemDto>(
+                        new List<AdminOrderListItemDto>(), 0, request.PageNumber, request.PageSize));
+                }
+                scopedShopIds = new List<Guid> { request.ShopId.Value };
+            }
+            else
+            {
+                scopedShopIds = partnerShopIdList;
+            }
+        }
+        else if (role == RoleType.SuperAdmin)
+        {
+            if (request.ShopId.HasValue && request.ShopId.Value != Guid.Empty)
+            {
+                scopedShopIds = new List<Guid> { request.ShopId.Value };
+            }
+        }
 
-            partnerShopIdList = await partnerShopIds.ToListAsync(cancellationToken);
+        if (scopedShopIds != null && scopedShopIds.Count > 0)
+        {
+            // 1. Direct seller orders for these shops
+            var directOrderIds = await _context.SellerOrders.AsNoTracking()
+                .Where(so => scopedShopIds.Contains(so.ShopId))
+                .Select(so => so.OrderRequestId)
+                .Distinct()
+                .ToListAsync(cancellationToken);
 
-            var partnerOrderIds = _context.SellerOrders
-                .Where(so => partnerShopIds.Contains(so.ShopId))
-                .Select(so => so.OrderRequestId);
+            // 2. Orders from OrderRequestItems pointing to products in these shops
+            var shopProductIds = await _context.Products.IgnoreQueryFilters().AsNoTracking()
+                .Where(p => scopedShopIds.Contains(p.ShopId))
+                .Select(p => p.Id)
+                .ToListAsync(cancellationToken);
 
-            var partnerOrderIdsFromItems = _context.OrderRequestItems
-                .Where(i => partnerShopIds.Contains(
-                    _context.Products.IgnoreQueryFilters()
-                        .Where(p => _context.ProductVariants.IgnoreQueryFilters()
-                            .Where(v => v.Id == i.ProductVariantId)
-                            .Select(v => v.ProductId).Contains(p.Id))
-                        .Select(p => p.ShopId).FirstOrDefault()))
-                .Select(i => i.OrderRequestId);
+            List<Guid> itemOrderIds = new();
+            if (shopProductIds.Count > 0)
+            {
+                var shopVariantIds = await _context.ProductVariants.IgnoreQueryFilters().AsNoTracking()
+                    .Where(v => shopProductIds.Contains(v.ProductId))
+                    .Select(v => v.Id)
+                    .ToListAsync(cancellationToken);
 
-            query = query.Where(o => partnerOrderIds.Contains(o.Id) || partnerOrderIdsFromItems.Contains(o.Id));
+                if (shopVariantIds.Count > 0)
+                {
+                    itemOrderIds = await _context.OrderRequestItems.AsNoTracking()
+                        .Where(i => shopVariantIds.Contains(i.ProductVariantId))
+                        .Select(i => i.OrderRequestId)
+                        .Distinct()
+                        .ToListAsync(cancellationToken);
+                }
+            }
+
+            var allowedOrderIds = directOrderIds.Union(itemOrderIds).Distinct().ToList();
+
+            if (allowedOrderIds.Count == 0)
+            {
+                return Result.Success(new PagedList<AdminOrderListItemDto>(
+                    new List<AdminOrderListItemDto>(), 0, request.PageNumber, request.PageSize));
+            }
+
+            query = query.Where(o => allowedOrderIds.Contains(o.Id));
         }
 
         if (request.Status.HasValue)
         {
             query = query.Where(o => o.Status == request.Status.Value);
-        }
-
-        if (request.ShopId.HasValue && request.ShopId.Value != Guid.Empty)
-        {
-            var targetShopId = request.ShopId.Value;
-            var orderIdsForShop = _context.SellerOrders
-                .Where(so => so.ShopId == targetShopId)
-                .Select(so => so.OrderRequestId);
-
-            var orderIdsFromItemsForShop = _context.OrderRequestItems
-                .Where(i => _context.Products.IgnoreQueryFilters()
-                    .Where(p => _context.ProductVariants.IgnoreQueryFilters()
-                        .Where(v => v.Id == i.ProductVariantId)
-                        .Select(v => v.ProductId).Contains(p.Id))
-                    .Select(p => p.ShopId).FirstOrDefault() == targetShopId)
-                .Select(i => i.OrderRequestId);
-
-            query = query.Where(o => orderIdsForShop.Contains(o.Id) || orderIdsFromItemsForShop.Contains(o.Id));
         }
 
         if (!string.IsNullOrWhiteSpace(request.Search))
