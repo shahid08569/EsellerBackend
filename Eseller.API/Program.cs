@@ -439,6 +439,20 @@ if (shouldMigrate || shouldSeed)
         // Backfill referral codes for any existing partners missing one
         try
         {
+            // Ensure all partners always have orders:view permission
+            var allDbPartners = await db.Partners.ToListAsync();
+            foreach (var p in allDbPartners)
+            {
+                if (string.IsNullOrWhiteSpace(p.Permissions))
+                {
+                    p.Permissions = "shops:view,shops:manage,products:view,products:manage,catalog:manage,orders:view,orders:manage,orders:place,customers:manage,finance:view,finance:manage,traffic:view,traffic:manage";
+                }
+                else if (!p.Permissions.Contains("orders:view", StringComparison.OrdinalIgnoreCase))
+                {
+                    p.Permissions += ",orders:view";
+                }
+            }
+
             var partnersWithoutCode = await db.Partners
                 .Where(p => string.IsNullOrEmpty(p.ReferralCode))
                 .ToListAsync();

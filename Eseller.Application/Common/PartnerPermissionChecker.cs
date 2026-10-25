@@ -19,6 +19,10 @@ public static class PartnerPermissionChecker
         if (currentUserService.RoleType == RoleType.SuperAdmin) return true;
         if (currentUserService.RoleType != RoleType.Partner) return false;
 
+        // Baseline: Any valid partner is inherently allowed to view orders for their own referred shops
+        if (string.Equals(requiredPermission, "orders:view", StringComparison.OrdinalIgnoreCase))
+            return true;
+
         var partner = await context.Partners.AsNoTracking()
             .FirstOrDefaultAsync(p => p.AccountId == currentUserService.AccountId.Value, cancellationToken);
 

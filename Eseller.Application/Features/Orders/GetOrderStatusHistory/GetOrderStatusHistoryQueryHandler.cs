@@ -45,6 +45,28 @@ public class GetOrderStatusHistoryQueryHandler
             var isPartnerOrder = await _context.SellerOrders
                 .AnyAsync(so => so.OrderRequestId == order.Id && partnerShopIds != null && partnerShopIds.Contains(so.ShopId), cancellationToken);
 
+            if (!isPartnerOrder && partnerShopIds != null && partnerShopIds.Count > 0)
+            {
+                var shopProductIds = await _context.Products.IgnoreQueryFilters().AsNoTracking()
+                    .Where(p => partnerShopIds.Contains(p.ShopId))
+                    .Select(p => p.Id)
+                    .ToListAsync(cancellationToken);
+
+                if (shopProductIds.Count > 0)
+                {
+                    var shopVariantIds = await _context.ProductVariants.IgnoreQueryFilters().AsNoTracking()
+                        .Where(v => shopProductIds.Contains(v.ProductId))
+                        .Select(v => v.Id)
+                        .ToListAsync(cancellationToken);
+
+                    if (shopVariantIds.Count > 0)
+                    {
+                        isPartnerOrder = await _context.OrderRequestItems.AsNoTracking()
+                            .AnyAsync(i => i.OrderRequestId == order.Id && shopVariantIds.Contains(i.ProductVariantId), cancellationToken);
+                    }
+                }
+            }
+
             if (!isPartnerOrder)
                 return Result.Failure<IReadOnlyList<OrderStatusHistoryDto>>("Partners can only view order history for their referred shops.", "FORBIDDEN");
         }
